@@ -14,6 +14,35 @@ namespace WPELibrary
         /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
         protected override void Dispose(bool disposing)
         {
+            if (disposing && (this.byteAnnotationController != null))
+            {
+                this.byteAnnotationController.Dispose();
+                this.byteAnnotationController = null;
+            }
+            if (disposing)
+            {
+                this.tt.Dispose();
+                if (this.cmsSendFolder != null)
+                {
+                    this.cmsSendFolder.Dispose();
+                    this.cmsSendFolder = null;
+                }
+                if (this.cmsByteSweepFolder != null)
+                {
+                    this.cmsByteSweepFolder.Dispose();
+                    this.cmsByteSweepFolder = null;
+                }
+                if (this.cmsByteSweepPreset != null)
+                {
+                    this.cmsByteSweepPreset.Dispose();
+                    this.cmsByteSweepPreset = null;
+                }
+                if (this.tcAdvancedTools != null)
+                {
+                    this.tcAdvancedTools.Dispose();
+                    this.tcAdvancedTools = null;
+                }
+            }
             if (disposing && (components != null))
             {
                 components.Dispose();
@@ -574,38 +603,11 @@ namespace WPELibrary
             this.tlTotal,
             this.tlTotal_CNT,
             this.tlSplit1,
-            this.tlFilterExecute,
-            this.tlFilterExecute_CNT,
-            this.tlSplit4,
-            this.tlQueue,
-            this.tlQueue_CNT,
-            this.tlSplit2,
-            this.tlFilterSocketList,
-            this.tlFilterSocketList_CNT,
-            this.toolStripStatusLabel9,
             this.tlSend,
             this.tlSend_CNT,
             this.tlSplit3,
             this.tlRecv,
-            this.tlRecv_CNT,
-            this.toolStripStatusLabel2,
-            this.tlSendTo,
-            this.tlSendTo_CNT,
-            this.toolStripStatusLabel5,
-            this.tlRecvFrom,
-            this.tlRecvFrom_CNT,
-            this.toolStripStatusLabel8,
-            this.tlWSASend,
-            this.tlWSASend_CNT,
-            this.toolStripStatusLabel11,
-            this.tlWSARecv,
-            this.tlWSARecv_CNT,
-            this.toolStripStatusLabel14,
-            this.tlWSASendTo,
-            this.tlWSASendTo_CNT,
-            this.toolStripStatusLabel17,
-            this.tlWSARecvFrom,
-            this.tlWSARecvFrom_CNT});
+            this.tlRecv_CNT});
             this.ssSocketList.Name = "ssSocketList";
             this.ssSocketList.SizingGrip = false;
             // 

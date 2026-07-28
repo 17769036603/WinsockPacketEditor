@@ -241,6 +241,12 @@ namespace WPELibrary.Lib
         public static string[] MutiLan_229 = { "系统套接字 = 调用滤镜的套接字", "System socket = Socket for calling filters" };
         public static string[] MutiLan_230 = { "系统套接字 = {0}", "System socket = {0}" };
         public static string[] MutiLan_231 = { "设置", "Set" };
+        public static string[] MutiLan_232 = { "逐字节递进:", "Byte sweep:" };
+        public static string[] MutiLan_233 = { "选择区域，每字节发送 255 次", "Select a range; send 255 values per byte" };
+        public static string[] MutiLan_234 = { "请先在封包数据中选择需要逐字节递进的区域", "Select a packet-data range before starting the byte sweep" };
+        public static string[] MutiLan_235 = { "位置 {0}，原值 {1:X2}，当前 {2:X2}，字节 {3}/{4}，本字节 {5}/255", "Offset {0}, original {1:X2}, current {2:X2}, byte {3}/{4}, value {5}/255" };
+        public static string[] MutiLan_236 = { "逐字节递进已完成：{0} 个字节，共发送 {1} 次", "Byte sweep completed: {0} bytes, {1} sends" };
+        public static string[] MutiLan_237 = { "逐字节递进已停止", "Byte sweep stopped" };
 
         #endregion
 
@@ -289,4 +295,3 @@ namespace WPELibrary.Lib
         #endregion
     }
 }
-

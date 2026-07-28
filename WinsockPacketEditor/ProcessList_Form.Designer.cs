@@ -44,6 +44,7 @@ namespace WinsockPacketEditor
             this.bSelected = new System.Windows.Forms.Button();
             this.bRefresh = new System.Windows.Forms.Button();
             this.bCreate = new System.Windows.Forms.Button();
+            this.bSelectEmulator = new System.Windows.Forms.Button();
             this.tlpProcessInfoSearch = new System.Windows.Forms.TableLayoutPanel();
             this.txtProcessSearch = new System.Windows.Forms.TextBox();
             this.pbProcessSearch = new System.Windows.Forms.PictureBox();
@@ -55,9 +56,9 @@ namespace WinsockPacketEditor
             ((System.ComponentModel.ISupportInitialize)(this.pbProcessSearch)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.pbLoading)).BeginInit();
             this.SuspendLayout();
-            // 
+            //
             // tlpProcessInfo
-            // 
+            //
             resources.ApplyResources(this.tlpProcessInfo, "tlpProcessInfo");
             this.tlpProcessInfo.Controls.Add(this.dgvProcessList, 0, 3);
             this.tlpProcessInfo.Controls.Add(this.tlpProcessInfoButton, 0, 6);
@@ -148,8 +149,9 @@ namespace WinsockPacketEditor
             // tlpProcessInfoButton
             // 
             resources.ApplyResources(this.tlpProcessInfoButton, "tlpProcessInfoButton");
-            this.tlpProcessInfoButton.Controls.Add(this.bSelected, 5, 0);
-            this.tlpProcessInfoButton.Controls.Add(this.bRefresh, 3, 0);
+            this.tlpProcessInfoButton.Controls.Add(this.bSelected, 7, 0);
+            this.tlpProcessInfoButton.Controls.Add(this.bRefresh, 5, 0);
+            this.tlpProcessInfoButton.Controls.Add(this.bSelectEmulator, 3, 0);
             this.tlpProcessInfoButton.Controls.Add(this.bCreate, 1, 0);
             this.tlpProcessInfoButton.Name = "tlpProcessInfoButton";
             // 
@@ -173,7 +175,16 @@ namespace WinsockPacketEditor
             this.bCreate.Name = "bCreate";
             this.bCreate.UseVisualStyleBackColor = true;
             this.bCreate.Click += new System.EventHandler(this.bCreate_Click);
-            // 
+            //
+            // bSelectEmulator
+            //
+            resources.ApplyResources(this.bSelectEmulator, "bSelectEmulator");
+            this.bSelectEmulator.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.bSelectEmulator.Margin = new System.Windows.Forms.Padding(3, 4, 3, 4);
+            this.bSelectEmulator.Name = "bSelectEmulator";
+            this.bSelectEmulator.UseVisualStyleBackColor = true;
+            this.bSelectEmulator.Click += new System.EventHandler(this.bSelectEmulator_Click);
+            //
             // tlpProcessInfoSearch
             // 
             resources.ApplyResources(this.tlpProcessInfoSearch, "tlpProcessInfoSearch");
@@ -228,6 +239,7 @@ namespace WinsockPacketEditor
         private System.Windows.Forms.DataGridView dgvProcessList;
         private System.Windows.Forms.TableLayoutPanel tlpProcessInfoButton;
         private System.Windows.Forms.Button bCreate;
+        private System.Windows.Forms.Button bSelectEmulator;
         private System.Windows.Forms.Button bRefresh;
         private System.Windows.Forms.Button bSelected;
         private System.Windows.Forms.TableLayoutPanel tlpProcessInfoSearch;

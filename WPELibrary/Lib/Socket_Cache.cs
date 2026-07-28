@@ -34,7 +34,7 @@ namespace WPELibrary.Lib
             public static string WPE64_URL = "https://www.wpe64.com";
             public static string WPE64_IP = "http://101.132.222.195";
             public static string WPE64_DLL = "WPELibrary.dll";
-            public static string WPE = "Winsock Packet Editor x64";
+            public static string WPE = "小黑封包助手";
             public static Socket_Cache.System.SystemMode StartMode = SystemMode.None;
             public static DateTime StartTime = DateTime.Now;
             public static IntPtr MainHandle = IntPtr.Zero;
@@ -922,6 +922,7 @@ namespace WPELibrary.Lib
             {
                 Socket_Cache.FilterList.SaveFilterList_ToDB();
                 Socket_Cache.SendList.SaveSendList_ToDB();
+                Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
                 Socket_Cache.RobotList.SaveRobotList_ToDB();
             }
 
@@ -937,6 +938,7 @@ namespace WPELibrary.Lib
                     {
                         Socket_Cache.FilterList.LoadFilterList_FromDB();
                         Socket_Cache.SendList.LoadSendList_FromDB();
+                        Socket_Cache.ByteSweepList.LoadByteSweepList_FromDB();
                         Socket_Cache.RobotList.LoadRobotList_FromDB();
                     });
                 }
@@ -1110,7 +1112,16 @@ namespace WPELibrary.Lib
                             {
                                 xeBackUp.Add(xeSendList);
                             }
-                        }                        
+                        }
+
+                        if (Socket_Cache.ByteSweepList.lstPresets.Count > 0)
+                        {
+                            XElement byteSweepList = Socket_Cache.ByteSweepList.GetByteSweepList_XML();
+                            if (byteSweepList != null)
+                            {
+                                xeBackUp.Add(byteSweepList);
+                            }
+                        }
                     }
 
                     //机器人列表
@@ -1414,6 +1425,25 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog("Import SendList", ex.Message);
+                }
+
+                #endregion
+
+                #region//递进预设
+
+                try
+                {
+                    XElement byteSweepList = xdoc.Root.Element("ByteSweepList");
+                    if (byteSweepList != null)
+                    {
+                        Socket_Cache.ByteSweepList.LoadByteSweepList_FromXML(byteSweepList);
+                        Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
+                        Socket_Cache.ByteSweepList.Clear();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog("Import ByteSweepList", ex.Message);
                 }
 
                 #endregion
@@ -9970,7 +10000,7 @@ namespace WPELibrary.Lib
                             {
                                 foreach (Socket_PacketInfo spi in spiList)
                                 {
-                                    Socket_Cache.Send.AddSendCollection(ssi.SCollection, spi.PacketSocket, spi.PacketType, spi.PacketFrom, spi.PacketTo, spi.PacketBuffer);
+                                    Socket_Cache.Send.AddSendCollection(ssi.SCollection, spi.PacketSocket, spi.PacketType, spi.PacketFrom, spi.PacketTo, spi.PacketBuffer, spi.ByteAnnotations);
                                 }                                
                             }
                         }
@@ -9982,7 +10012,7 @@ namespace WPELibrary.Lib
                 }
             }
 
-            public static void AddSendCollection(BindingList<Socket_PacketInfo> SCollection, int Socket, Socket_Cache.SocketPacket.PacketType ptType, string PacketFrom, string PacketTo, byte[] PacketBuffer)
+            public static void AddSendCollection(BindingList<Socket_PacketInfo> SCollection, int Socket, Socket_Cache.SocketPacket.PacketType ptType, string PacketFrom, string PacketTo, byte[] PacketBuffer, IEnumerable<Socket_ByteAnnotationInfo> annotations = null)
             {
                 try
                 {
@@ -9992,6 +10022,7 @@ namespace WPELibrary.Lib
                     spi.PacketFrom = PacketFrom;
                     spi.PacketTo = PacketTo;
                     spi.PacketBuffer = PacketBuffer;
+                    spi.ByteAnnotations = Socket_ByteAnnotationEngine.Clone(annotations);
                     SCollection.Add(spi);
                 }
                 catch (Exception ex)
@@ -10138,7 +10169,7 @@ namespace WPELibrary.Lib
 
             #region//新增发送
 
-            public static void AddSend_New()
+            public static void AddSend_New(string SFolder = "")
             {
                 try
                 {
@@ -10152,7 +10183,7 @@ namespace WPELibrary.Lib
                     string SNotes = string.Empty;
                     BindingList<Socket_PacketInfo> SCollection = new BindingList<Socket_PacketInfo>();
 
-                    Socket_Cache.Send.AddSend(IsEnable, SID, SName, SSystemSocket, SLoopCNT, SLoopINT, SCollection, SNotes);
+                    Socket_Cache.Send.AddSend(IsEnable, SID, SName, SSystemSocket, SLoopCNT, SLoopINT, SCollection, SNotes, SFolder);
                 }
                 catch (Exception ex)
                 {
@@ -10160,13 +10191,19 @@ namespace WPELibrary.Lib
                 }
             }
 
-            public static void AddSend(bool IsEnable, Guid SID, string SName, bool SSystemSocket, int SLoopCNT, int SLoopINT, BindingList<Socket_PacketInfo> SCollection, string SNotes)
+            public static void AddSend(bool IsEnable, Guid SID, string SName, bool SSystemSocket, int SLoopCNT, int SLoopINT, BindingList<Socket_PacketInfo> SCollection, string SNotes, string SFolder = "", int SSortOrder = 0)
             {
                 try
                 {
                     if (SID != Guid.Empty && !string.IsNullOrEmpty(SName))
                     {
-                        Socket_SendInfo ssi = new Socket_SendInfo(IsEnable, SID, SName, SSystemSocket, SLoopCNT, SLoopINT, SCollection, SNotes);
+                        if (SSortOrder <= 0)
+                        {
+                            SSortOrder = Socket_Cache.SendList.lstSend.Count(item =>
+                                string.Equals(item.SFolder, SFolder ?? string.Empty, StringComparison.Ordinal)) + 1;
+                        }
+
+                        Socket_SendInfo ssi = new Socket_SendInfo(IsEnable, SID, SName, SSystemSocket, SLoopCNT, SLoopINT, SCollection, SNotes, SFolder, SSortOrder);
                         Socket_Cache.SendList.SendToList(ssi);
                     }
                 }
@@ -10211,13 +10248,14 @@ namespace WPELibrary.Lib
                     bool IsEnable_Copy = false;
                     Guid SID_New = Guid.NewGuid();
                     string SName_Copy = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_62), ssi.SName);
+                    string SFolder_Copy = ssi.SFolder;
                     bool SSystemSocket_Copy = ssi.SSystemSocket;                
                     int SLoopCNT_Copy = ssi.SLoopCNT;
                     int SLoopINT_Copy = ssi.SLoopINT;
                     BindingList<Socket_PacketInfo> SCollection_Copy = new BindingList<Socket_PacketInfo>(ssi.SCollection.ToList());
                     string SNotes_Copy = ssi.SNotes;
 
-                    Socket_Cache.Send.AddSend(IsEnable_Copy, SID_New, SName_Copy, SSystemSocket_Copy, SLoopCNT_Copy, SLoopINT_Copy, SCollection_Copy, SNotes_Copy);
+                    Socket_Cache.Send.AddSend(IsEnable_Copy, SID_New, SName_Copy, SSystemSocket_Copy, SLoopCNT_Copy, SLoopINT_Copy, SCollection_Copy, SNotes_Copy, SFolder_Copy);
                 }
                 catch (Exception ex)
                 {
@@ -10472,7 +10510,8 @@ namespace WPELibrary.Lib
                             new XElement("Type", spi.PacketType),
                             new XElement("IPFrom", spi.PacketFrom),
                             new XElement("IPTo", spi.PacketTo),
-                            new XElement("Buffer", sBuffer)
+                            new XElement("Buffer", sBuffer),
+                            Socket_ByteAnnotationEngine.ToXElement(spi.ByteAnnotations)
                             );
 
                         xeRoot.Add(xeColl);
@@ -10616,7 +10655,9 @@ namespace WPELibrary.Lib
                                     bBuffer = Socket_Operation.StringToBytes(SocketPacket.EncodingFormat.Hex, xeSend.Element("Data").Value);
                                 }
 
-                                Socket_Cache.Send.AddSendCollection(SendCollection, iSocket, ptType, sIPFrom, sIPTo, bBuffer);
+                                Socket_Cache.Send.AddSendCollection(SendCollection, iSocket, ptType, sIPFrom, sIPTo, bBuffer,
+                                    Socket_ByteAnnotationEngine.FromXElement(
+                                        xeSend.Element("Annotations"), bBuffer == null ? 0 : bBuffer.Length));
                             }
 
                             #endregion
@@ -10659,7 +10700,9 @@ namespace WPELibrary.Lib
                                     bBuffer = Socket_Operation.StringToBytes(SocketPacket.EncodingFormat.Hex, xeCollection.Element("Buffer").Value);
                                 }
 
-                                Socket_Cache.Send.AddSendCollection(SendCollection, iSocket, ptType, sIPFrom, sIPTo, bBuffer);
+                                Socket_Cache.Send.AddSendCollection(SendCollection, iSocket, ptType, sIPFrom, sIPTo, bBuffer,
+                                    Socket_ByteAnnotationEngine.FromXElement(
+                                        xeCollection.Element("Annotations"), bBuffer == null ? 0 : bBuffer.Length));
                             }
 
                             #endregion
@@ -10684,7 +10727,8 @@ namespace WPELibrary.Lib
         {
             public static string AESKey = string.Empty;
             public static List<Socket_Send> lstExecute = new List<Socket_Send>();
-            public static BindingList<Socket_SendInfo> lstSend = new BindingList<Socket_SendInfo>();        
+            public static BindingList<Socket_SendInfo> lstSend = new BindingList<Socket_SendInfo>();
+            public static BindingList<string> lstFolders = new BindingList<string>();
 
             #region//发送列表索引项
 
@@ -10694,10 +10738,62 @@ namespace WPELibrary.Lib
 
                 public Guid SID { get; set; }
 
+                public string SFolder { get; set; }
+
                 public override string ToString()
                 {
-                    return SName;
+                    return string.IsNullOrEmpty(SFolder) ? SName : SFolder + " / " + SName;
                 }
+            }
+
+            #endregion
+
+            #region//发送文件夹
+
+            public static bool AddFolder(string folderName)
+            {
+                string normalizedName = (folderName ?? string.Empty).Trim();
+                if (string.IsNullOrEmpty(normalizedName) ||
+                    lstFolders.Any(item => string.Equals(item, normalizedName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return false;
+                }
+
+                if (Socket_Cache.System.InvokeAction != null)
+                {
+                    Socket_Cache.System.InvokeAction(() => lstFolders.Add(normalizedName));
+                }
+                else
+                {
+                    lstFolders.Add(normalizedName);
+                }
+
+                return true;
+            }
+
+            public static void RenameFolder(string oldName, string newName)
+            {
+                int folderIndex = lstFolders.IndexOf(oldName);
+                if (folderIndex < 0)
+                {
+                    return;
+                }
+
+                lstFolders[folderIndex] = newName;
+                foreach (Socket_SendInfo sendInfo in lstSend.Where(item => item.SFolder == oldName))
+                {
+                    sendInfo.SFolder = newName;
+                }
+            }
+
+            public static void RemoveFolder(string folderName)
+            {
+                foreach (Socket_SendInfo sendInfo in lstSend.Where(item => item.SFolder == folderName))
+                {
+                    sendInfo.SFolder = string.Empty;
+                }
+
+                lstFolders.Remove(folderName);
             }
 
             #endregion
@@ -10845,6 +10941,7 @@ namespace WPELibrary.Lib
                 try
                 {
                     lstSend.Clear();
+                    lstFolders.Clear();
                 }
                 catch (Exception ex)
                 {
@@ -10861,6 +10958,11 @@ namespace WPELibrary.Lib
                 try
                 {
                     Socket_Cache.DataBase.DeleteTable_Send();
+
+                    for (int i = 0; i < Socket_Cache.SendList.lstFolders.Count; i++)
+                    {
+                        Socket_Cache.DataBase.InsertTable_SendFolder(Socket_Cache.SendList.lstFolders[i], i);
+                    }
 
                     foreach (Socket_SendInfo ssi in Socket_Cache.SendList.lstSend)
                     {
@@ -10881,6 +10983,12 @@ namespace WPELibrary.Lib
             {
                 try
                 {
+                    DataTable dtFolders = Socket_Cache.DataBase.SelectTable_SendFolder();
+                    foreach (DataRow folderRow in dtFolders.Rows)
+                    {
+                        Socket_Cache.SendList.AddFolder(folderRow["Name"].ToString());
+                    }
+
                     DataTable dtSend = Socket_Cache.DataBase.SelectTable_Send();
                     foreach (DataRow dataRow in dtSend.Rows)
                     {
@@ -10890,7 +10998,11 @@ namespace WPELibrary.Lib
                         bool SSystemSocket = Convert.ToBoolean(dataRow["SystemSocket"]);
                         int SLoopCNT = Convert.ToInt32(dataRow["LoopCNT"]);
                         int SLoopINT = Convert.ToInt32(dataRow["LoopINT"]);
+                        int SSortOrder = dtSend.Columns.Contains("SortOrder")
+                            ? Convert.ToInt32(dataRow["SortOrder"])
+                            : 0;
                         string SNotes = dataRow["Notes"].ToString();
+                        string SFolder = Socket_Cache.DataBase.SelectSendFolder_ByGuid(SID);
                         BindingList<Socket_PacketInfo> SCollection = new BindingList<Socket_PacketInfo>();
 
                         DataTable dtSCollection = Socket_Cache.DataBase.SelectTable_SendCollection(SID);
@@ -10902,10 +11014,13 @@ namespace WPELibrary.Lib
                             string IPTo = row["IPTo"].ToString();
                             byte[] Buffer = (byte[])row["Buffer"];
 
-                            Socket_Cache.Send.AddSendCollection(SCollection, Socket, ptType, IPFrom, IPTo, Buffer);
+                            string annotations = dtSCollection.Columns.Contains("Annotations") ? row["Annotations"].ToString() : string.Empty;
+                            Socket_Cache.Send.AddSendCollection(SCollection, Socket, ptType, IPFrom, IPTo, Buffer,
+                                Socket_ByteAnnotationEngine.Deserialize(
+                                    annotations, Buffer == null ? 0 : Buffer.Length));
                         }
 
-                        Socket_Cache.Send.AddSend(IsEnable, SID, SName, SSystemSocket, SLoopCNT, SLoopINT, SCollection, SNotes);
+                        Socket_Cache.Send.AddSend(IsEnable, SID, SName, SSystemSocket, SLoopCNT, SLoopINT, SCollection, SNotes, SFolder, SSortOrder);
                     }
                 }
                 catch (Exception ex)
@@ -10998,6 +11113,16 @@ namespace WPELibrary.Lib
                 {
                     XElement xeRoot = new XElement("SendList");               
 
+                    XElement xeFolders = new XElement("Folders");
+                    foreach (string folderName in ssiList
+                        .Select(item => item.SFolder)
+                        .Where(item => !string.IsNullOrEmpty(item))
+                        .Distinct(StringComparer.OrdinalIgnoreCase))
+                    {
+                        xeFolders.Add(new XElement("Folder", new XAttribute("Name", folderName)));
+                    }
+                    xeRoot.Add(xeFolders);
+
                     foreach (Socket_SendInfo ssi in ssiList)
                     {
                         XElement xeSend =
@@ -11005,6 +11130,8 @@ namespace WPELibrary.Lib
                             new XElement("IsEnable", ssi.IsEnable.ToString()),
                             new XElement("ID", ssi.SID.ToString().ToUpper()),
                             new XElement("Name", ssi.SName),
+                            new XElement("Folder", ssi.SFolder),
+                            new XElement("SortOrder", ssi.SSortOrder.ToString()),
                             new XElement("SystemSocket", ssi.SSystemSocket.ToString()),
                             new XElement("LoopCNT", ssi.SLoopCNT.ToString()),
                             new XElement("LoopINT", ssi.SLoopINT.ToString()),
@@ -11024,7 +11151,8 @@ namespace WPELibrary.Lib
                                     new XElement("Socket", spi.PacketSocket),
                                     new XElement("Type", spi.PacketType),
                                     new XElement("IPTo", spi.PacketTo),
-                                    new XElement("Buffer", sBuffer)
+                                    new XElement("Buffer", sBuffer),
+                                    Socket_ByteAnnotationEngine.ToXElement(spi.ByteAnnotations)
                                     );
 
                                 xeCollection.Add(xeColl);
@@ -11138,7 +11266,16 @@ namespace WPELibrary.Lib
             {
                 try
                 {
-                    foreach (XElement xeSend in xdoc.Root.Elements())
+                    XElement foldersElement = xdoc.Root.Element("Folders");
+                    if (foldersElement != null)
+                    {
+                        foreach (XElement folderElement in foldersElement.Elements("Folder"))
+                        {
+                            Socket_Cache.SendList.AddFolder((string)folderElement.Attribute("Name"));
+                        }
+                    }
+
+                    foreach (XElement xeSend in xdoc.Root.Elements("Send"))
                     {
                         bool IsEnable = false;
                         if (xeSend.Element("IsEnable") != null)
@@ -11152,6 +11289,13 @@ namespace WPELibrary.Lib
                         if (xeSend.Element("Name") != null)
                         {
                             SName = xeSend.Element("Name").Value;
+                        }
+
+                        string SFolder = string.Empty;
+                        if (xeSend.Element("Folder") != null)
+                        {
+                            SFolder = xeSend.Element("Folder").Value;
+                            Socket_Cache.SendList.AddFolder(SFolder);
                         }
 
                         bool SSystemSocket = false;
@@ -11170,6 +11314,12 @@ namespace WPELibrary.Lib
                         if (xeSend.Element("LoopINT") != null)
                         {
                             SLoopINT = int.Parse(xeSend.Element("LoopINT").Value);
+                        }
+
+                        int SSortOrder = 0;
+                        if (xeSend.Element("SortOrder") != null)
+                        {
+                            SSortOrder = int.Parse(xeSend.Element("SortOrder").Value);
                         }
 
                         string SNotes = string.Empty;
@@ -11214,11 +11364,13 @@ namespace WPELibrary.Lib
                                     bBuffer = Socket_Operation.StringToBytes(SocketPacket.EncodingFormat.Hex, xeCollection.Element("Buffer").Value);
                                 }
 
-                                Socket_Cache.Send.AddSendCollection(SCollection, iSocket, ptType, sIPFrom, sIPTo, bBuffer);                                
+                                Socket_Cache.Send.AddSendCollection(SCollection, iSocket, ptType, sIPFrom, sIPTo, bBuffer,
+                                    Socket_ByteAnnotationEngine.FromXElement(
+                                        xeCollection.Element("Annotations"), bBuffer == null ? 0 : bBuffer.Length));
                             }
                         }
 
-                        Socket_Cache.Send.AddSend(IsEnable, SID, SName, SSystemSocket, SLoopCNT, SLoopINT, SCollection, SNotes);
+                        Socket_Cache.Send.AddSend(IsEnable, SID, SName, SSystemSocket, SLoopCNT, SLoopINT, SCollection, SNotes, SFolder, SSortOrder);
                     }
                 }
                 catch (Exception ex)
@@ -11232,12 +11384,281 @@ namespace WPELibrary.Lib
 
         #endregion
 
+        #region//逐字节递进预设
+
+        public static class ByteSweepList
+        {
+            public static BindingList<Socket_ByteSweepPresetInfo> lstPresets =
+                new BindingList<Socket_ByteSweepPresetInfo>();
+            public static BindingList<string> lstFolders = new BindingList<string>();
+
+            public static bool AddFolder(string folderName)
+            {
+                string normalized = (folderName ?? string.Empty).Trim();
+                if (string.IsNullOrEmpty(normalized) ||
+                    lstFolders.Any(item => string.Equals(item, normalized, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return false;
+                }
+
+                if (Socket_Cache.System.InvokeAction != null)
+                {
+                    Socket_Cache.System.InvokeAction(() => lstFolders.Add(normalized));
+                }
+                else
+                {
+                    lstFolders.Add(normalized);
+                }
+
+                return true;
+            }
+
+            public static void RenameFolder(string oldName, string newName)
+            {
+                int index = lstFolders.IndexOf(oldName);
+                if (index < 0)
+                {
+                    return;
+                }
+
+                lstFolders[index] = newName;
+                foreach (Socket_ByteSweepPresetInfo preset in lstPresets.Where(item => item.BFolder == oldName))
+                {
+                    preset.BFolder = newName;
+                }
+            }
+
+            public static void RemoveFolder(string folderName)
+            {
+                if (lstPresets.Any(item => string.Equals(item.BFolder, folderName, StringComparison.Ordinal)))
+                {
+                    return;
+                }
+
+                lstFolders.Remove(folderName);
+            }
+
+            public static void AddPreset(Socket_ByteSweepPresetInfo preset)
+            {
+                if (preset == null || !preset.IsValid)
+                {
+                    return;
+                }
+
+                AddFolder(preset.BFolder);
+                if (preset.BSortOrder <= 0)
+                {
+                    preset.BSortOrder = lstPresets.Count(item =>
+                        string.Equals(item.BFolder, preset.BFolder, StringComparison.Ordinal)) + 1;
+                }
+
+                Action add = () => lstPresets.Add(preset);
+                if (Socket_Cache.System.InvokeAction != null)
+                {
+                    Socket_Cache.System.InvokeAction(add);
+                }
+                else
+                {
+                    add();
+                }
+            }
+
+            public static void UpdatePreset(Socket_ByteSweepPresetInfo target, Socket_ByteSweepPresetInfo value)
+            {
+                if (target == null || value == null || !value.IsValid)
+                {
+                    return;
+                }
+
+                AddFolder(value.BFolder);
+                target.BName = value.BName;
+                target.BFolder = value.BFolder;
+                target.BLoopCount = value.BLoopCount;
+                target.BInterval = value.BInterval;
+                target.BNextInterval = value.BNextInterval;
+                target.BStart = value.BStart;
+                target.BLength = value.BLength;
+                target.PacketType = value.PacketType;
+                target.PacketFrom = value.PacketFrom;
+                target.PacketTo = value.PacketTo;
+                target.Buffer = value.Buffer == null ? null : (byte[])value.Buffer.Clone();
+            }
+
+            public static void Clear()
+            {
+                lstPresets.Clear();
+                lstFolders.Clear();
+            }
+
+            public static void SaveByteSweepList_ToDB()
+            {
+                try
+                {
+                    List<string> folders = lstFolders.ToList();
+                    List<Socket_ByteSweepPresetInfo> presets = lstPresets
+                        .Select(item => item.Clone())
+                        .ToList();
+                    if (!Socket_Cache.DataBase.ReplaceByteSweepList(folders, presets))
+                    {
+                        Socket_Operation.DoLog(
+                            nameof(SaveByteSweepList_ToDB),
+                            "递进预设保存失败，数据库已回滚。");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(SaveByteSweepList_ToDB), ex.Message);
+                }
+            }
+
+            public static void LoadByteSweepList_FromDB()
+            {
+                try
+                {
+                    DataTable folders = Socket_Cache.DataBase.SelectTable_ByteSweepFolder();
+                    foreach (DataRow row in folders.Rows)
+                    {
+                        AddFolder(row["Name"].ToString());
+                    }
+
+                    DataTable presets = Socket_Cache.DataBase.SelectTable_ByteSweepPreset();
+                    foreach (DataRow row in presets.Rows)
+                    {
+                        byte[] presetBuffer = row["Buffer"] == DBNull.Value ? null : (byte[])row["Buffer"];
+                        AddPreset(new Socket_ByteSweepPresetInfo
+                        {
+                            IsEnable = Convert.ToBoolean(row["IsEnable"]),
+                            BID = Guid.Parse(row["GUID"].ToString()),
+                            BName = row["Name"].ToString(),
+                            BFolder = row["FolderName"].ToString(),
+                            BSortOrder = Convert.ToInt32(row["SortOrder"]),
+                            BLoopCount = presets.Columns.Contains("LoopCount")
+                                ? Math.Max(1, Convert.ToInt32(row["LoopCount"]))
+                                : 1,
+                            BInterval = Convert.ToInt32(row["Interval"]),
+                            BNextInterval = presets.Columns.Contains("NextInterval")
+                                ? Math.Max(0, Convert.ToInt32(row["NextInterval"]))
+                                : 0,
+                            BStart = Convert.ToInt32(row["StartOffset"]),
+                            BLength = Convert.ToInt32(row["ByteLength"]),
+                            PacketType = Socket_Cache.SocketPacket.GetPacketType_ByString(row["PacketType"].ToString()),
+                            PacketFrom = row["IPFrom"].ToString(),
+                            PacketTo = row["IPTo"].ToString(),
+                            Buffer = presetBuffer,
+                            ByteAnnotations = Socket_ByteAnnotationEngine.Deserialize(
+                                presets.Columns.Contains("Annotations") ? row["Annotations"].ToString() : string.Empty,
+                                presetBuffer == null ? 0 : presetBuffer.Length)
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(LoadByteSweepList_FromDB), ex.Message);
+                }
+            }
+
+            public static XElement GetByteSweepList_XML()
+            {
+                try
+                {
+                    XElement root = new XElement("ByteSweepList");
+                    XElement folders = new XElement("Folders");
+                    foreach (string folder in lstFolders)
+                    {
+                        folders.Add(new XElement("Folder", new XAttribute("Name", folder)));
+                    }
+                    root.Add(folders);
+
+                    foreach (Socket_ByteSweepPresetInfo preset in lstPresets)
+                    {
+                        root.Add(new XElement("Preset",
+                            new XElement("ID", preset.BID.ToString().ToUpper()),
+                            new XElement("IsEnable", preset.IsEnable),
+                            new XElement("Name", preset.BName),
+                            new XElement("Folder", preset.BFolder),
+                            new XElement("SortOrder", preset.BSortOrder),
+                            new XElement("LoopCount", preset.BLoopCount),
+                            new XElement("Interval", preset.BInterval),
+                            new XElement("NextInterval", preset.BNextInterval),
+                            new XElement("StartOffset", preset.BStart),
+                            new XElement("ByteLength", preset.BLength),
+                            new XElement("PacketType", preset.PacketType),
+                            new XElement("IPFrom", preset.PacketFrom ?? string.Empty),
+                            new XElement("IPTo", preset.PacketTo ?? string.Empty),
+                            new XElement("Buffer", Socket_Operation.BytesToString(
+                                SocketPacket.EncodingFormat.Hex, preset.Buffer)),
+                            Socket_ByteAnnotationEngine.ToXElement(preset.ByteAnnotations)));
+                    }
+
+                    return root;
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(GetByteSweepList_XML), ex.Message);
+                }
+
+                return null;
+            }
+
+            public static void LoadByteSweepList_FromXML(XElement root)
+            {
+                if (root == null)
+                {
+                    return;
+                }
+
+                XElement folders = root.Element("Folders");
+                if (folders != null)
+                {
+                    foreach (XElement folder in folders.Elements("Folder"))
+                    {
+                        AddFolder((string)folder.Attribute("Name"));
+                    }
+                }
+
+                foreach (XElement element in root.Elements("Preset"))
+                {
+                    byte[] buffer = Socket_Operation.StringToBytes(
+                        SocketPacket.EncodingFormat.Hex,
+                        (string)element.Element("Buffer") ?? string.Empty);
+                    Guid presetId;
+                    if (!Guid.TryParse((string)element.Element("ID"), out presetId))
+                    {
+                        presetId = Guid.NewGuid();
+                    }
+
+                    AddPreset(new Socket_ByteSweepPresetInfo
+                    {
+                        IsEnable = (bool?)element.Element("IsEnable") ?? false,
+                        BID = presetId,
+                        BName = (string)element.Element("Name") ?? string.Empty,
+                        BFolder = (string)element.Element("Folder") ?? string.Empty,
+                        BSortOrder = (int?)element.Element("SortOrder") ?? 0,
+                        BLoopCount = Math.Max(1, (int?)element.Element("LoopCount") ?? 1),
+                        BInterval = (int?)element.Element("Interval") ?? 1000,
+                        BNextInterval = Math.Max(0, (int?)element.Element("NextInterval") ?? 0),
+                        BStart = (int?)element.Element("StartOffset") ?? 0,
+                        BLength = (int?)element.Element("ByteLength") ?? 1,
+                        PacketType = Socket_Cache.SocketPacket.GetPacketType_ByString(
+                            (string)element.Element("PacketType") ?? string.Empty),
+                        PacketFrom = (string)element.Element("IPFrom") ?? string.Empty,
+                        PacketTo = (string)element.Element("IPTo") ?? string.Empty,
+                        Buffer = buffer,
+                        ByteAnnotations = Socket_ByteAnnotationEngine.FromXElement(
+                            element.Element("Annotations"), buffer == null ? 0 : buffer.Length)
+                    });
+                }
+            }
+        }
+
+        #endregion
+
         #region//数据库
 
         public static class DataBase
         {
             private static string dbPath = @"C:\WPE64Cache";
-            private static string dbName = Socket_Operation.AssemblyVersion + ".db";
+            private static string dbName = "小黑封包助手.db";
             private static string conStr = string.Format("Data Source={0}\\{1};Version=3;", dbPath, dbName);
 
             #region//初始化
@@ -11245,11 +11666,13 @@ namespace WPELibrary.Lib
             public static void InitDB()
             {
                 Socket_Cache.DataBase.InitdbPath();
+                Socket_Cache.DataBase.MigrateLegacyDatabase();
 
                 Socket_Cache.DataBase.CreateTable_SystemConfig();
                 Socket_Cache.DataBase.CreateTable_RunConfig();
                 Socket_Cache.DataBase.CreateTable_Filter();
                 Socket_Cache.DataBase.CreateTable_Send();
+                Socket_Cache.DataBase.CreateTable_ByteSweep();
                 Socket_Cache.DataBase.CreateTable_Robot();
                 Socket_Cache.DataBase.CreateTable_ProxyAccount();
                 Socket_Cache.DataBase.CreateTable_ProxyMapLocal();
@@ -11269,6 +11692,35 @@ namespace WPELibrary.Lib
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
                 }                                
+            }
+
+            private static void MigrateLegacyDatabase()
+            {
+                try
+                {
+                    string databaseFile = Path.Combine(dbPath, dbName);
+                    if (File.Exists(databaseFile))
+                    {
+                        return;
+                    }
+
+                    string legacyDatabase = Directory.GetFiles(dbPath, "*.db")
+                        .Where(file =>
+                        {
+                            Version legacyVersion;
+                            return Version.TryParse(Path.GetFileNameWithoutExtension(file), out legacyVersion);
+                        })
+                        .OrderByDescending(File.GetLastWriteTimeUtc)
+                        .FirstOrDefault();
+                    if (!string.IsNullOrEmpty(legacyDatabase))
+                    {
+                        File.Copy(legacyDatabase, databaseFile, false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
             }
 
             #endregion
@@ -12017,6 +12469,7 @@ namespace WPELibrary.Lib
                         sql += "SystemSocket BOOLEAN DEFAULT 0,";
                         sql += "LoopCNT INTEGER NOT NULL DEFAULT 1,";
                         sql += "LoopINT INTEGER NOT NULL DEFAULT 1000,";
+                        sql += "SortOrder INTEGER NOT NULL DEFAULT 0,";
                         sql += "Notes TEXT";
                         sql += ");";
 
@@ -12027,13 +12480,48 @@ namespace WPELibrary.Lib
                         sql += "IPFrom TEXT NOT NULL,";
                         sql += "IPTo TEXT NOT NULL,";
                         sql += "Buffer BLOB,";
+                        sql += "Annotations TEXT,";
                         sql += "FOREIGN KEY (GUID) REFERENCES Send(GUID)";
+                        sql += ");";
+
+                        sql += "CREATE TABLE IF NOT EXISTS SendFolder (";
+                        sql += "Name TEXT NOT NULL PRIMARY KEY,";
+                        sql += "SortOrder INTEGER NOT NULL DEFAULT 0";
+                        sql += ");";
+
+                        sql += "CREATE TABLE IF NOT EXISTS SendFolderItem (";
+                        sql += "GUID TEXT NOT NULL PRIMARY KEY,";
+                        sql += "FolderName TEXT NOT NULL";
                         sql += ");";
 
                         using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
                         {
                             conn.Open();
                             cmd.ExecuteNonQuery();
+                        }
+                        EnsureTableColumn(conn, "SendCollection", "Annotations", "TEXT");
+
+                        bool hasSortOrder = false;
+                        using (SQLiteCommand cmd = new SQLiteCommand("PRAGMA table_info(Send);", conn))
+                        using (SQLiteDataReader reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                if (string.Equals(reader["name"].ToString(), "SortOrder", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    hasSortOrder = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!hasSortOrder)
+                        {
+                            using (SQLiteCommand cmd = new SQLiteCommand(
+                                "ALTER TABLE Send ADD COLUMN SortOrder INTEGER NOT NULL DEFAULT 0;", conn))
+                            {
+                                cmd.ExecuteNonQuery();
+                            }
                         }
                     }
 
@@ -12055,7 +12543,7 @@ namespace WPELibrary.Lib
                 {
                     using (SQLiteConnection conn = new SQLiteConnection(conStr))
                     {
-                        string sql = "SELECT * FROM Send;";
+                        string sql = "SELECT * FROM Send ORDER BY SortOrder, rowid;";
 
                         using (SQLiteDataAdapter adapter = new SQLiteDataAdapter(sql, conn))
                         {
@@ -12069,6 +12557,50 @@ namespace WPELibrary.Lib
                 }
 
                 return dtReturn;
+            }
+
+            public static DataTable SelectTable_SendFolder()
+            {
+                DataTable dtReturn = new DataTable();
+
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    {
+                        string sql = "SELECT * FROM SendFolder ORDER BY SortOrder, Name;";
+                        using (SQLiteDataAdapter adapter = new SQLiteDataAdapter(sql, conn))
+                        {
+                            adapter.Fill(dtReturn);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+
+                return dtReturn;
+            }
+
+            public static string SelectSendFolder_ByGuid(Guid guid)
+            {
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand("SELECT FolderName FROM SendFolderItem WHERE GUID = @GUID;", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@GUID", guid.ToString().ToUpper());
+                        conn.Open();
+                        object value = cmd.ExecuteScalar();
+                        return value == null || value == DBNull.Value ? string.Empty : value.ToString();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+
+                return string.Empty;
             }
 
             public static DataTable SelectTable_SendCollection(Guid guid)
@@ -12105,7 +12637,9 @@ namespace WPELibrary.Lib
                     using (SQLiteConnection conn = new SQLiteConnection(conStr))
                     {
                         string sql = "DELETE FROM SendCollection;";
+                        sql += "DELETE FROM SendFolderItem;";
                         sql += "DELETE FROM Send;";
+                        sql += "DELETE FROM SendFolder;";
 
                         using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
                         {
@@ -12135,6 +12669,7 @@ namespace WPELibrary.Lib
                         sql += "SystemSocket,";
                         sql += "LoopCNT,";
                         sql += "LoopINT,";
+                        sql += "SortOrder,";
                         sql += "Notes";
                         sql += ") VALUES (";
                         sql += "@GUID,";
@@ -12143,6 +12678,7 @@ namespace WPELibrary.Lib
                         sql += "@SystemSocket,";
                         sql += "@LoopCNT,";
                         sql += "@LoopINT,";
+                        sql += "@SortOrder,";
                         sql += "@Notes";
                         sql += ");";                        
 
@@ -12154,8 +12690,20 @@ namespace WPELibrary.Lib
                             cmd.Parameters.AddWithValue("@SystemSocket", ssi.SSystemSocket);
                             cmd.Parameters.AddWithValue("@LoopCNT", ssi.SLoopCNT);
                             cmd.Parameters.AddWithValue("@LoopINT", ssi.SLoopINT);
+                            cmd.Parameters.AddWithValue("@SortOrder", ssi.SSortOrder);
                             cmd.Parameters.AddWithValue("@Notes", ssi.SNotes);
                             cmd.ExecuteNonQuery();
+                        }
+
+                        if (!string.IsNullOrEmpty(ssi.SFolder))
+                        {
+                            using (SQLiteCommand cmd = new SQLiteCommand(
+                                "INSERT OR REPLACE INTO SendFolderItem (GUID, FolderName) VALUES (@GUID, @FolderName);", conn))
+                            {
+                                cmd.Parameters.AddWithValue("@GUID", ssi.SID.ToString().ToUpper());
+                                cmd.Parameters.AddWithValue("@FolderName", ssi.SFolder);
+                                cmd.ExecuteNonQuery();
+                            }
                         }
 
                         foreach (Socket_PacketInfo spi in ssi.SCollection)
@@ -12166,14 +12714,16 @@ namespace WPELibrary.Lib
                             sql += "Type,";
                             sql += "IPFrom,";
                             sql += "IPTo,";
-                            sql += "Buffer";
+                            sql += "Buffer,";
+                            sql += "Annotations";
                             sql += ") VALUES (";
                             sql += "@GUID,";
                             sql += "@Socket,";
                             sql += "@Type,";
                             sql += "@IPFrom,";
                             sql += "@IPTo,";
-                            sql += "@Buffer";
+                            sql += "@Buffer,";
+                            sql += "@Annotations";
                             sql += ");";
 
                             using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
@@ -12184,6 +12734,7 @@ namespace WPELibrary.Lib
                                 cmd.Parameters.AddWithValue("@IPFrom", spi.PacketFrom);
                                 cmd.Parameters.AddWithValue("@IPTo", spi.PacketTo);
                                 cmd.Parameters.AddWithValue("@Buffer", spi.PacketBuffer);
+                                cmd.Parameters.AddWithValue("@Annotations", Socket_ByteAnnotationEngine.Serialize(spi.ByteAnnotations));
                                 cmd.ExecuteNonQuery();
                             }
                         }
@@ -12192,6 +12743,326 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+            }
+
+            public static void InsertTable_SendFolder(string folderName, int sortOrder)
+            {
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand(
+                        "INSERT OR REPLACE INTO SendFolder (Name, SortOrder) VALUES (@Name, @SortOrder);", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@Name", folderName);
+                        cmd.Parameters.AddWithValue("@SortOrder", sortOrder);
+                        conn.Open();
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+            }
+
+            #endregion
+
+            #region//逐字节递进预设
+
+            private static void EnsureTableColumn(
+                SQLiteConnection conn,
+                string tableName,
+                string columnName,
+                string declaration)
+            {
+                bool exists = false;
+                using (SQLiteCommand check = new SQLiteCommand("PRAGMA table_info(" + tableName + ");", conn))
+                using (SQLiteDataReader reader = check.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        if (string.Equals(reader["name"].ToString(), columnName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            exists = true;
+                            break;
+                        }
+                    }
+                }
+                if (!exists)
+                {
+                    using (SQLiteCommand alter = new SQLiteCommand(
+                        "ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + declaration + ";", conn))
+                    {
+                        alter.ExecuteNonQuery();
+                    }
+                }
+            }
+
+            private static bool CreateTable_ByteSweep()
+            {
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand(
+                        "CREATE TABLE IF NOT EXISTS ByteSweepFolder (" +
+                        "Name TEXT NOT NULL PRIMARY KEY," +
+                        "SortOrder INTEGER NOT NULL DEFAULT 0);" +
+                        "CREATE TABLE IF NOT EXISTS ByteSweepPreset (" +
+                        "GUID TEXT NOT NULL PRIMARY KEY," +
+                        "IsEnable BOOLEAN DEFAULT 0," +
+                        "Name TEXT NOT NULL," +
+                        "FolderName TEXT NOT NULL," +
+                        "SortOrder INTEGER NOT NULL DEFAULT 0," +
+                        "LoopCount INTEGER NOT NULL DEFAULT 1," +
+                        "Interval INTEGER NOT NULL DEFAULT 1000," +
+                        "NextInterval INTEGER NOT NULL DEFAULT 0," +
+                        "StartOffset INTEGER NOT NULL DEFAULT 0," +
+                        "ByteLength INTEGER NOT NULL DEFAULT 1," +
+                        "PacketType INTEGER NOT NULL," +
+                        "IPFrom TEXT," +
+                        "IPTo TEXT," +
+                        "Buffer BLOB," +
+                        "Annotations TEXT);", conn))
+                    {
+                        conn.Open();
+                        cmd.ExecuteNonQuery();
+                        EnsureByteSweepColumn(conn, "LoopCount", "INTEGER NOT NULL DEFAULT 1");
+                        EnsureByteSweepColumn(conn, "NextInterval", "INTEGER NOT NULL DEFAULT 0");
+                        EnsureByteSweepColumn(conn, "Annotations", "TEXT");
+                    }
+
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(CreateTable_ByteSweep), ex.Message);
+                    return false;
+                }
+            }
+
+            private static void EnsureByteSweepColumn(
+                SQLiteConnection conn,
+                string columnName,
+                string declaration)
+            {
+                bool exists = false;
+                using (SQLiteCommand check = new SQLiteCommand("PRAGMA table_info(ByteSweepPreset);", conn))
+                using (SQLiteDataReader reader = check.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        if (string.Equals(reader["name"].ToString(), columnName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            exists = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!exists)
+                {
+                    using (SQLiteCommand alter = new SQLiteCommand(
+                        "ALTER TABLE ByteSweepPreset ADD COLUMN " + columnName + " " + declaration + ";", conn))
+                    {
+                        alter.ExecuteNonQuery();
+                    }
+                }
+            }
+
+            public static DataTable SelectTable_ByteSweepFolder()
+            {
+                DataTable table = new DataTable();
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteDataAdapter adapter = new SQLiteDataAdapter(
+                        "SELECT * FROM ByteSweepFolder ORDER BY SortOrder, Name;", conn))
+                    {
+                        adapter.Fill(table);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(SelectTable_ByteSweepFolder), ex.Message);
+                }
+
+                return table;
+            }
+
+            public static DataTable SelectTable_ByteSweepPreset()
+            {
+                DataTable table = new DataTable();
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteDataAdapter adapter = new SQLiteDataAdapter(
+                        "SELECT * FROM ByteSweepPreset ORDER BY SortOrder, rowid;", conn))
+                    {
+                        adapter.Fill(table);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(SelectTable_ByteSweepPreset), ex.Message);
+                }
+
+                return table;
+            }
+
+            public static bool ReplaceByteSweepList(
+                IEnumerable<string> folders,
+                IEnumerable<Socket_ByteSweepPresetInfo> presets)
+            {
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    {
+                        conn.Open();
+                        using (SQLiteTransaction transaction = conn.BeginTransaction())
+                        {
+                            try
+                            {
+                                using (SQLiteCommand delete = new SQLiteCommand(
+                                    "DELETE FROM ByteSweepPreset;DELETE FROM ByteSweepFolder;", conn))
+                                {
+                                    delete.Transaction = transaction;
+                                    delete.ExecuteNonQuery();
+                                }
+
+                                int sortOrder = 0;
+                                foreach (string folder in folders ?? Enumerable.Empty<string>())
+                                {
+                                    using (SQLiteCommand insertFolder = new SQLiteCommand(
+                                        "INSERT INTO ByteSweepFolder (Name, SortOrder) VALUES (@Name, @SortOrder);", conn))
+                                    {
+                                        insertFolder.Transaction = transaction;
+                                        insertFolder.Parameters.AddWithValue("@Name", folder);
+                                        insertFolder.Parameters.AddWithValue("@SortOrder", sortOrder++);
+                                        insertFolder.ExecuteNonQuery();
+                                    }
+                                }
+
+                                foreach (Socket_ByteSweepPresetInfo preset in
+                                    presets ?? Enumerable.Empty<Socket_ByteSweepPresetInfo>())
+                                {
+                                    using (SQLiteCommand insertPreset = new SQLiteCommand(
+                                        "INSERT INTO ByteSweepPreset (" +
+                                        "GUID,IsEnable,Name,FolderName,SortOrder,LoopCount,Interval,NextInterval,StartOffset,ByteLength," +
+                                        "PacketType,IPFrom,IPTo,Buffer,Annotations) VALUES (" +
+                                        "@GUID,@IsEnable,@Name,@FolderName,@SortOrder,@LoopCount,@Interval,@NextInterval,@StartOffset,@ByteLength," +
+                                        "@PacketType,@IPFrom,@IPTo,@Buffer,@Annotations);", conn))
+                                    {
+                                        insertPreset.Transaction = transaction;
+                                        insertPreset.Parameters.AddWithValue("@GUID", preset.BID.ToString().ToUpper());
+                                        insertPreset.Parameters.AddWithValue("@IsEnable", preset.IsEnable);
+                                        insertPreset.Parameters.AddWithValue("@Name", preset.BName);
+                                        insertPreset.Parameters.AddWithValue("@FolderName", preset.BFolder);
+                                        insertPreset.Parameters.AddWithValue("@SortOrder", preset.BSortOrder);
+                                        insertPreset.Parameters.AddWithValue("@LoopCount", preset.BLoopCount);
+                                        insertPreset.Parameters.AddWithValue("@Interval", preset.BInterval);
+                                        insertPreset.Parameters.AddWithValue("@NextInterval", preset.BNextInterval);
+                                        insertPreset.Parameters.AddWithValue("@StartOffset", preset.BStart);
+                                        insertPreset.Parameters.AddWithValue("@ByteLength", preset.BLength);
+                                        insertPreset.Parameters.AddWithValue("@PacketType", preset.PacketType);
+                                        insertPreset.Parameters.AddWithValue("@IPFrom", preset.PacketFrom ?? string.Empty);
+                                        insertPreset.Parameters.AddWithValue("@IPTo", preset.PacketTo ?? string.Empty);
+                                        insertPreset.Parameters.AddWithValue("@Buffer", preset.Buffer);
+                                        insertPreset.Parameters.AddWithValue("@Annotations", Socket_ByteAnnotationEngine.Serialize(preset.ByteAnnotations));
+                                        insertPreset.ExecuteNonQuery();
+                                    }
+                                }
+
+                                transaction.Commit();
+                                return true;
+                            }
+                            catch
+                            {
+                                transaction.Rollback();
+                                throw;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(ReplaceByteSweepList), ex.Message);
+                    return false;
+                }
+            }
+
+            public static void DeleteTable_ByteSweep()
+            {
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand(
+                        "DELETE FROM ByteSweepPreset;DELETE FROM ByteSweepFolder;", conn))
+                    {
+                        conn.Open();
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(DeleteTable_ByteSweep), ex.Message);
+                }
+            }
+
+            public static void InsertTable_ByteSweepFolder(string folderName, int sortOrder)
+            {
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand(
+                        "INSERT OR REPLACE INTO ByteSweepFolder (Name, SortOrder) VALUES (@Name, @SortOrder);", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@Name", folderName);
+                        cmd.Parameters.AddWithValue("@SortOrder", sortOrder);
+                        conn.Open();
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(InsertTable_ByteSweepFolder), ex.Message);
+                }
+            }
+
+            public static void InsertTable_ByteSweepPreset(Socket_ByteSweepPresetInfo preset)
+            {
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand(
+                        "INSERT INTO ByteSweepPreset (" +
+                        "GUID,IsEnable,Name,FolderName,SortOrder,LoopCount,Interval,NextInterval,StartOffset,ByteLength," +
+                        "PacketType,IPFrom,IPTo,Buffer,Annotations) VALUES (" +
+                        "@GUID,@IsEnable,@Name,@FolderName,@SortOrder,@LoopCount,@Interval,@NextInterval,@StartOffset,@ByteLength," +
+                        "@PacketType,@IPFrom,@IPTo,@Buffer,@Annotations);", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@GUID", preset.BID.ToString().ToUpper());
+                        cmd.Parameters.AddWithValue("@IsEnable", preset.IsEnable);
+                        cmd.Parameters.AddWithValue("@Name", preset.BName);
+                        cmd.Parameters.AddWithValue("@FolderName", preset.BFolder);
+                        cmd.Parameters.AddWithValue("@SortOrder", preset.BSortOrder);
+                        cmd.Parameters.AddWithValue("@LoopCount", preset.BLoopCount);
+                        cmd.Parameters.AddWithValue("@Interval", preset.BInterval);
+                        cmd.Parameters.AddWithValue("@NextInterval", preset.BNextInterval);
+                        cmd.Parameters.AddWithValue("@StartOffset", preset.BStart);
+                        cmd.Parameters.AddWithValue("@ByteLength", preset.BLength);
+                        cmd.Parameters.AddWithValue("@PacketType", preset.PacketType);
+                        cmd.Parameters.AddWithValue("@IPFrom", preset.PacketFrom ?? string.Empty);
+                        cmd.Parameters.AddWithValue("@IPTo", preset.PacketTo ?? string.Empty);
+                        cmd.Parameters.AddWithValue("@Buffer", preset.Buffer);
+                        cmd.Parameters.AddWithValue("@Annotations", Socket_ByteAnnotationEngine.Serialize(preset.ByteAnnotations));
+                        conn.Open();
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(InsertTable_ByteSweepPreset), ex.Message);
                 }
             }
 

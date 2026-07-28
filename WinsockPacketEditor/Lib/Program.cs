@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Threading;
 using System.Windows.Forms;
 using WPELibrary;
 using WPELibrary.Lib;
@@ -34,34 +33,12 @@ namespace WinsockPacketEditor
 
                 Socket_Cache.DataBase.InitDB();
                 Socket_Cache.System.LoadSystemConfig_FromDB();
+                MultiLanguage.SetDefaultLanguage(Socket_Cache.System.DefaultLanguage);
 
                 if (principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator))
                 {
-                    SystemMode_Form systemMode_Form = new SystemMode_Form();
-
-                    if (systemMode_Form.ShowDialog() == DialogResult.OK)
-                    {
-                        switch (Socket_Cache.System.StartMode)
-                        { 
-                            case Socket_Cache.System.SystemMode.Proxy:
-
-                                ThreadPool.SetMinThreads(100, 100);
-                                ThreadPool.SetMaxThreads(Environment.ProcessorCount * 2, 1000);
-
-                                Socket_Form socket_Form = new Socket_Form();
-                                socket_Form.Show();
-
-                                Application.Run(new SocketProxy_Form(socket_Form));
-
-                                break;
-
-                            case Socket_Cache.System.SystemMode.Process:        
-                                
-                                Application.Run(new Injector_Form());
-
-                                break;
-                        }                        
-                    }
+                    // 当前版本固定进入注入模式；代理模式和远程管理入口暂不展示。
+                    Application.Run(new Injector_Form());
                 }
                 else
                 {                    

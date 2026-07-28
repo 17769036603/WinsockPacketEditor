@@ -13,6 +13,7 @@
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <TargetFrameworkProfile />
     <NuGetPackageImportStamp>
     </NuGetPackageImportStamp>
@@ -54,9 +55,6 @@
     <ApplicationIcon>wpe.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Be.Windows.Forms.HexBox, Version=1.6.1.0, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>..\packages\Be.Windows.Forms.HexBox.1.6.1\lib\net40\Be.Windows.Forms.HexBox.dll</HintPath>
-    </Reference>
     <Reference Include="EasyHook, Version=2.7.7097.0, Culture=neutral, PublicKeyToken=4b580fca19d0b0c5, processorArchitecture=MSIL">
       <HintPath>..\packages\EasyHook.2.7.7097\lib\net40\EasyHook.dll</HintPath>
     </Reference>
@@ -161,6 +159,10 @@
     <Compile Include="Lib\NativeMethods\WS2_32.cs" />
     <Compile Include="Lib\NativeMethods\WSock32.cs" />
     <Compile Include="Lib\Socket_Send.cs" />
+    <Compile Include="Lib\Socket_ByteSweepEngine.cs" />
+    <Compile Include="Lib\Socket_ByteSweepPresetInfo.cs" />
+    <Compile Include="Lib\Socket_ByteAnnotationInfo.cs" />
+    <Compile Include="Lib\Socket_ByteAnnotationEngine.cs" />
     <Compile Include="Lib\Socket_SendInfo.cs" />
     <Compile Include="Lib\UserControl\HotkeyTextBox.cs">
       <SubType>Component</SubType>
@@ -266,6 +268,9 @@
     <Compile Include="Socket_Form.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="Socket_Form.ByteSweep.cs">
+      <DependentUpon>Socket_Form.cs</DependentUpon>
+    </Compile>
     <Compile Include="Socket_Form.Designer.cs">
       <DependentUpon>Socket_Form.cs</DependentUpon>
     </Compile>
@@ -295,6 +300,13 @@
     <Compile Include="Socket_SendForm.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="Socket_ByteSweepPresetForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Socket_ByteAnnotationPanel.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Socket_ByteAnnotationController.cs" />
     <Compile Include="Socket_SendForm.Designer.cs">
       <DependentUpon>Socket_SendForm.cs</DependentUpon>
     </Compile>
@@ -310,6 +322,12 @@
     <Compile Include="TextComparison\TextDuplicateForm.Designer.cs">
       <DependentUpon>TextDuplicateForm.cs</DependentUpon>
     </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ThirdParty\Be.Windows.Forms.HexBox\Be.Windows.Forms.HexBox.csproj">
+      <Project>{26C5F25F-B450-4CAF-AD8B-B8D11AE73457}</Project>
+      <Name>Be.Windows.Forms.HexBox</Name>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <Content Include="EasyHook32.dll">
@@ -497,6 +515,9 @@
       <Generator>ResXFileCodeGenerator</Generator>
       <SubType>Designer</SubType>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Properties\Resources.en-US.resx">
+      <DependentUpon>Resources.resx</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Socket_PasswordFrom.en-US.resx">
       <DependentUpon>Socket_PasswordFrom.cs</DependentUpon>

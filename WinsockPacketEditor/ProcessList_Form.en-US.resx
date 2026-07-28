@@ -133,7 +133,22 @@
     <value>Refresh</value>
   </data>
   <data name="bCreate.Text" xml:space="preserve">
-    <value>Program</value>
+    <value>Choose EXE</value>
+  </data>
+  <data name="bSelectEmulator.Text" xml:space="preserve">
+    <value>Select Emulator</value>
+  </data>
+  <data name="bSelectEmulator.ShowAllText" xml:space="preserve">
+    <value>Show All</value>
+  </data>
+  <data name="txtProcessSearch.Label" xml:space="preserve">
+    <value>Search:</value>
+  </data>
+  <data name="dgvProcessList.AccessibleName" xml:space="preserve">
+    <value>Process list</value>
+  </data>
+  <data name="pbLoading.AccessibleName" xml:space="preserve">
+    <value>Loading processes</value>
   </data>
   <assembly alias="System.Drawing" name="System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a" />
   <data name="$this.Icon" type="System.Drawing.Icon, System.Drawing" mimetype="application/x-microsoft.net.object.bytearray.base64">

@@ -74,8 +74,7 @@
             // tlpModeSelect
             // 
             resources.ApplyResources(this.tlpModeSelect, "tlpModeSelect");
-            this.tlpModeSelect.Controls.Add(this.bProcess_Start, 3, 0);
-            this.tlpModeSelect.Controls.Add(this.bProxy_Start, 1, 0);
+            this.tlpModeSelect.Controls.Add(this.bProcess_Start, 1, 0);
             this.tlpModeSelect.Name = "tlpModeSelect";
             // 
             // bProcess_Start
