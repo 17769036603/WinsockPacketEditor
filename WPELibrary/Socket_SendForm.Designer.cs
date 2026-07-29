@@ -378,8 +378,7 @@ namespace WPELibrary
             this.tscbPerLine.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             resources.ApplyResources(this.tscbPerLine, "tscbPerLine");
             this.tscbPerLine.Items.AddRange(new object[] {
-            resources.GetString("tscbPerLine.Items"),
-            resources.GetString("tscbPerLine.Items1")});
+            resources.GetString("tscbPerLine.Items")});
             this.tscbPerLine.Name = "tscbPerLine";
             this.tscbPerLine.SelectedIndexChanged += new System.EventHandler(this.tscbPerLine_SelectedIndexChanged);
             // 
@@ -540,7 +539,7 @@ namespace WPELibrary
             this.hbPacketData.Name = "hbPacketData";
             this.hbPacketData.ShadowSelectionColor = System.Drawing.Color.FromArgb(((int)(((byte)(100)))), ((int)(((byte)(60)))), ((int)(((byte)(188)))), ((int)(((byte)(255)))));
             this.hbPacketData.StringViewVisible = true;
-            this.hbPacketData.UseFixedBytesPerLine = true;
+            this.hbPacketData.UseFixedBytesPerLine = false;
             this.hbPacketData.VScrollBarVisible = true;
             this.hbPacketData.SelectionStartChanged += new System.EventHandler(this.hbPacketData_SelectionStartChanged);
             this.hbPacketData.SelectionLengthChanged += new System.EventHandler(this.hbPacketData_SelectionLengthChanged);
@@ -715,17 +714,7 @@ namespace WPELibrary
             0,
             0,
             0});
-            this.nudSendSocket_Socket.Minimum = new decimal(new int[] {
-            1,
-            0,
-            0,
-            0});
             this.nudSendSocket_Socket.Name = "nudSendSocket_Socket";
-            this.nudSendSocket_Socket.Value = new decimal(new int[] {
-            1,
-            0,
-            0,
-            0});
             // 
             // gbSendType
             // 
@@ -936,7 +925,6 @@ namespace WPELibrary
             resources.ApplyResources(this.bClose, "bClose");
             this.bClose.Name = "bClose";
             this.bClose.UseVisualStyleBackColor = true;
-            this.bClose.Click += new System.EventHandler(this.bClose_Click);
             // 
             // bSendStop
             // 

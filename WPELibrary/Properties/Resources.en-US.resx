@@ -14,7 +14,7 @@
   <data name="ByteAnnotation_OK" xml:space="preserve"><value>OK</value></data>
   <data name="ByteAnnotation_Cancel" xml:space="preserve"><value>Cancel</value></data>
   <data name="ByteAnnotation_SendLocked" xml:space="preserve"><value>Annotations cannot be changed while sending.</value></data>
-  <data name="ByteAnnotation_SelectBytes" xml:space="preserve"><value>Select the bytes to annotate first.</value></data>
+  <data name="ByteAnnotation_SelectBytes" xml:space="preserve"><value>Select bytes, or place the caret on the single byte to annotate.</value></data>
   <data name="ByteAnnotation_NoOverlap" xml:space="preserve"><value>Annotation ranges cannot overlap.</value></data>
   <data name="ByteAnnotation_SelectAnnotation" xml:space="preserve"><value>Select an annotation first.</value></data>
   <data name="ByteAnnotation_Red" xml:space="preserve"><value>Red</value></data>
@@ -37,7 +37,9 @@
   <data name="Main_Settings" xml:space="preserve"><value>Settings</value></data>
   <data name="Main_Start" xml:space="preserve"><value>Start (&amp;K)</value></data>
   <data name="Main_Stop" xml:space="preserve"><value>Stop (&amp;T)</value></data>
-  <data name="Main_Clear" xml:space="preserve"><value>Clear data (&amp;C)</value></data>
+  <data name="Main_Clear" xml:space="preserve"><value>Clear capture (&amp;C)</value></data>
+  <data name="UI_ClearCaptureTitle" xml:space="preserve"><value>Clear current capture</value></data>
+  <data name="UI_ClearCaptureConfirm" xml:space="preserve"><value>Clear the current capture list and statistics? This action cannot be undone.</value></data>
   <data name="Main_Filter" xml:space="preserve"><value>Filters</value></data>
   <data name="Main_Robot" xml:space="preserve"><value>Robot</value></data>
   <data name="Main_GeneralSettings" xml:space="preserve"><value>General</value></data>
@@ -47,14 +49,37 @@
   <data name="Main_Automation" xml:space="preserve"><value>Send and byte sweep</value></data>
   <data name="UI_NewGroup" xml:space="preserve"><value>New group</value></data>
   <data name="UI_RenameGroup" xml:space="preserve"><value>Rename group</value></data>
+  <data name="UI_MoveGroupUp" xml:space="preserve"><value>Move group up</value></data>
+  <data name="UI_MoveGroupDown" xml:space="preserve"><value>Move group down</value></data>
   <data name="UI_DeleteGroup" xml:space="preserve"><value>Delete group</value></data>
   <data name="UI_PacketGroups" xml:space="preserve"><value>Packet groups</value></data>
   <data name="UI_SweepGroups" xml:space="preserve"><value>Sweep groups</value></data>
   <data name="UI_Load" xml:space="preserve"><value>Load</value></data>
   <data name="UI_Save" xml:space="preserve"><value>Save</value></data>
   <data name="UI_NewList" xml:space="preserve"><value>New list</value></data>
+  <data name="UI_NewPacket" xml:space="preserve"><value>New packet</value></data>
+  <data name="UI_CurrentPacketIdentity" xml:space="preserve"><value>Current packet: {0} (Group: {1})</value></data>
+  <data name="UI_CurrentPacketUnsaved" xml:space="preserve"><value>Current packet: Unsaved</value></data>
   <data name="UI_NewPreset" xml:space="preserve"><value>New preset</value></data>
   <data name="UI_SavePreset" xml:space="preserve"><value>Save preset</value></data>
+  <data name="UI_SaveSweepPreset" xml:space="preserve"><value>Save byte-sweep preset</value></data>
+  <data name="UI_UpdateSweepPreset" xml:space="preserve"><value>Update byte-sweep preset</value></data>
+  <data name="UI_DefaultSendPresetName" xml:space="preserve"><value>Packet preset {0}</value></data>
+  <data name="UI_DefaultSendGroup" xml:space="preserve"><value>Default group</value></data>
+  <data name="UI_SendPresetSaved" xml:space="preserve"><value>Send preset saved: {0} / {1}</value></data>
+  <data name="UI_SendPresetUpdated" xml:space="preserve"><value>Send preset updated: {0} / {1}</value></data>
+  <data name="UI_CurrentSocketRequired" xml:space="preserve"><value>No current game connection matches this preset. Capture a packet with the same destination and type, or set the system Socket manually.</value></data>
+  <data name="UI_ContinuousSend" xml:space="preserve"><value>Continuous</value></data>
+  <data name="SendPreset_Title" xml:space="preserve"><value>Save to send preset</value></data>
+  <data name="SendPreset_SavePacketTitle" xml:space="preserve"><value>Save packet preset</value></data>
+  <data name="SendPreset_Type" xml:space="preserve"><value>Preset type</value></data>
+  <data name="SendPreset_TypeSend" xml:space="preserve"><value>Send preset</value></data>
+  <data name="SendPreset_TypeSweep" xml:space="preserve"><value>Byte-sweep preset</value></data>
+  <data name="SendPreset_Name" xml:space="preserve"><value>Preset name</value></data>
+  <data name="SendPreset_Folder" xml:space="preserve"><value>Packet group</value></data>
+  <data name="SendPreset_SweepFolder" xml:space="preserve"><value>Byte-sweep group</value></data>
+  <data name="SendPreset_Required" xml:space="preserve"><value>Enter a preset name and group.</value></data>
+  <data name="SendPreset_Duplicate" xml:space="preserve"><value>A preset with this name already exists in the group.</value></data>
   <data name="UI_SendSelected" xml:space="preserve"><value>Send selected</value></data>
   <data name="UI_StopBatch" xml:space="preserve"><value>Stop batch</value></data>
   <data name="UI_SelectAll" xml:space="preserve"><value>Select all</value></data>
@@ -63,6 +88,7 @@
   <data name="UI_Name" xml:space="preserve"><value>Name</value></data>
   <data name="UI_Order" xml:space="preserve"><value>Order</value></data>
   <data name="UI_Send" xml:space="preserve"><value>Send</value></data>
+  <data name="UI_PacketDetails" xml:space="preserve"><value>Packet details</value></data>
   <data name="UI_Stop" xml:space="preserve"><value>Stop</value></data>
   <data name="UI_SendCount" xml:space="preserve"><value>Send count</value></data>
   <data name="UI_IntervalMs" xml:space="preserve"><value>Interval (ms)</value></data>
@@ -95,9 +121,10 @@
   <data name="UI_SweepProgressTip" xml:space="preserve"><value>Loop: {0}/{1}; position: {2}; original: {3:X2}; current: {4:X2}; sent this loop: {5}; succeeded: {6}; failed: {7}</value></data>
   <data name="UI_GroupExists" xml:space="preserve"><value>The group name is empty or already exists.</value></data>
   <data name="UI_SelectGroupFirst" xml:space="preserve"><value>Create and select a group first.</value></data>
-  <data name="UI_GroupHasSendLists" xml:space="preserve"><value>This group still contains send lists. Move or delete them before deleting the group.</value></data>
+  <data name="UI_GroupHasSendLists" xml:space="preserve"><value>This group still contains packets. Move or delete them before deleting the group.</value></data>
   <data name="UI_ConfirmDeleteEmptyGroup" xml:space="preserve"><value>Delete this empty group?</value></data>
-  <data name="UI_NoSendLists" xml:space="preserve"><value>(No send lists)</value></data>
+  <data name="UI_NoSendLists" xml:space="preserve"><value>(No packets)</value></data>
+  <data name="UI_AddToPacketGroup" xml:space="preserve"><value>Add to packet group</value></data>
   <data name="UI_StartSending" xml:space="preserve"><value>Start sending</value></data>
   <data name="UI_IndividualSendActive" xml:space="preserve"><value>A packet is being sent individually. Stop it before starting the batch.</value></data>
   <data name="UI_SelectSendItems" xml:space="preserve"><value>Select the items to send in the current group.</value></data>
@@ -114,6 +141,8 @@
   <data name="UI_ConfirmDeleteSweepPreset" xml:space="preserve"><value>Delete this byte-sweep preset?</value></data>
   <data name="UI_DeleteSweepPreset" xml:space="preserve"><value>Delete byte-sweep preset</value></data>
   <data name="UI_PresetSaved" xml:space="preserve"><value>Preset saved: {0} / {1}</value></data>
+  <data name="UI_SweepPresetUpdated" xml:space="preserve"><value>Byte-sweep preset updated: {0} / {1}</value></data>
+  <data name="UI_CurrentSweepPresetIdentity" xml:space="preserve"><value>Current byte-sweep preset: {0} (group: {1})</value></data>
   <data name="UI_TrafficStatus" xml:space="preserve"><value>Sent: {0}   Received: {1}</value></data>
   <data name="UI_PacketSendingLocked" xml:space="preserve"><value>This packet is being sent. Stop it before making changes.</value></data>
   <data name="UI_SendNameTip" xml:space="preserve"><value>Double-click to rename; right-click to edit packet data.</value></data>
@@ -123,6 +152,7 @@
   <data name="UI_PacketNotSending" xml:space="preserve"><value>This packet has no active send task</value></data>
   <data name="ByteSweep_NewTitle" xml:space="preserve"><value>New byte-sweep preset</value></data>
   <data name="ByteSweep_EditTitle" xml:space="preserve"><value>Edit byte-sweep preset</value></data>
+  <data name="ByteSweep_EditDetails" xml:space="preserve"><value>Other settings</value></data>
   <data name="ByteSweep_Name" xml:space="preserve"><value>Preset name</value></data>
   <data name="ByteSweep_Folder" xml:space="preserve"><value>Sweep group</value></data>
   <data name="ByteSweep_Start" xml:space="preserve"><value>Start offset</value></data>
@@ -130,6 +160,8 @@
   <data name="ByteSweep_LoopCount" xml:space="preserve"><value>Loop count</value></data>
   <data name="ByteSweep_Interval" xml:space="preserve"><value>Sweep interval (ms)</value></data>
   <data name="ByteSweep_NextInterval" xml:space="preserve"><value>Next preset delay (ms)</value></data>
+  <data name="ByteSweep_OtherSettings" xml:space="preserve"><value>Byte-sweep preset settings</value></data>
+  <data name="ByteSweep_SelectionSummary" xml:space="preserve"><value>Range: position {0}, {1} byte(s); 255 sends each</value></data>
   <data name="ByteSweep_PacketLength" xml:space="preserve"><value>Packet length</value></data>
   <data name="ByteSweep_PacketLengthValue" xml:space="preserve"><value>{0} bytes; fixed 255 sends per byte</value></data>
   <data name="ByteSweep_Cancel" xml:space="preserve"><value>Cancel</value></data>

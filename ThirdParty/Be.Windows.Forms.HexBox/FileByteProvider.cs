@@ -166,7 +166,11 @@ namespace Be.Windows.Forms
 		/// <summary>
 		/// Never used.
 		/// </summary>
-        public event EventHandler LengthChanged;
+        public event EventHandler LengthChanged
+        {
+            add { }
+            remove { }
+        }
 
 		/// <summary>
 		/// Reads a byte from the file.

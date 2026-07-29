@@ -163,12 +163,25 @@ namespace Be.Windows.Forms
 				if (e.Button != MouseButtons.Left)
 					return;
 
+				bool isStringView = GetType() == typeof(StringKeyInterpreter);
+				Rectangle activeByteArea = isStringView
+					? _hexBox._recStringView
+					: _hexBox._recHex;
+				if (_hexBox._byteProvider == null ||
+					_hexBox._byteProvider.Length == 0 ||
+					!activeByteArea.Contains(e.Location))
+				{
+					_mouseDown = false;
+					return;
+				}
+
 				_mouseDown = true;
 
 				if (!_shiftDown)
 				{
 					_bpiStart = new BytePositionInfo(_hexBox._bytePos, _hexBox._byteCharacterPos);
 					_hexBox.ReleaseSelection();
+					UpdateMouseSelection(this, e);
 				}
 				else
 				{
@@ -182,25 +195,14 @@ namespace Be.Windows.Forms
 					return;
 
 				_bpi = GetBytePositionInfo(new Point(e.X, e.Y));
-				long selEnd = _bpi.Index;
 				long realselStart;
 				long realselLength;
-
-				if (selEnd < _bpiStart.Index)
-				{
-					realselStart = selEnd;
-					realselLength = _bpiStart.Index - selEnd;
-				}
-				else if (selEnd > _bpiStart.Index)
-				{
-					realselStart = _bpiStart.Index;
-					realselLength = selEnd - realselStart;
-				}
-				else
-				{
-					realselStart = _hexBox._bytePos;
-					realselLength = 0;
-				}
+				GetInclusiveMouseSelection(
+					_bpiStart.Index,
+					_bpi.Index,
+					_hexBox._byteProvider.Length,
+					out realselStart,
+					out realselLength);
 
 				if (realselStart != _hexBox._bytePos || realselLength != _hexBox._selectionLength)
 				{
@@ -214,6 +216,35 @@ namespace Be.Windows.Forms
 				_mouseDown = false;
 			}
 			#endregion
+
+			internal static void GetInclusiveMouseSelection(
+				long anchorIndex,
+				long currentIndex,
+				long byteCount,
+				out long selectionStart,
+				out long selectionLength)
+			{
+				if (byteCount <= 0)
+				{
+					selectionStart = 0;
+					selectionLength = 0;
+					return;
+				}
+
+				long lastByteIndex = byteCount - 1;
+				long anchor = Math.Max(0, Math.Min(anchorIndex, lastByteIndex));
+				long current = Math.Max(0, Math.Min(currentIndex, lastByteIndex));
+
+				if (anchor == current)
+				{
+					selectionStart = anchor;
+					selectionLength = 1;
+					return;
+				}
+
+				selectionStart = Math.Min(anchor, current);
+				selectionLength = Math.Abs(anchor - current) + 1;
+			}
 
 			#region PrePrcessWmKeyDown methods
 			public virtual bool PreProcessWmKeyDown(ref Message m)
@@ -694,7 +725,13 @@ namespace Be.Windows.Forms
 					if (!isInsertMode && si && _hexBox.InsertActive && cp == 0)
 						isInsertMode = true;
 
-					if (sd && si && sel > 0)
+					// A mouse click intentionally selects one complete byte so the
+					// active target is obvious. Editing that single-byte selection
+					// must still be an in-place write; delete/insert would make
+					// annotation-aware providers treat a nibble edit as a structural
+					// change and could remove the byte annotation.
+					bool replaceSingleByteInPlace = sw && sel == 1;
+					if (sd && si && sel > 0 && !replaceSingleByteInPlace)
 					{
 						_hexBox._byteProvider.DeleteBytes(pos, sel);
 						isInsertMode = true;
@@ -1057,7 +1094,8 @@ namespace Be.Windows.Forms
 				if (!isInsertMode && si && _hexBox.InsertActive)
 					isInsertMode = true;
 
-				if (sd && si && sel > 0)
+				bool replaceSingleByteInPlace = sw && sel == 1;
+				if (sd && si && sel > 0 && !replaceSingleByteInPlace)
 				{
 					_hexBox._byteProvider.DeleteBytes(pos, sel);
 					isInsertMode = true;
@@ -2456,7 +2494,7 @@ namespace Be.Windows.Forms
 
 				bool isSelectedByte = i >= _bytePos && i <= (_bytePos + _selectionLength - 1) && _selectionLength != 0;
 
-				if (isSelectedByte && isKeyInterpreterActive)
+				if (isSelectedByte && (isKeyInterpreterActive || _selectionByteBoxesVisible))
 				{
 					PaintHexStringSelected(g, b, selBrush, selBrushBack, gridPoint);
 				}
@@ -2515,14 +2553,35 @@ namespace Be.Windows.Forms
 				sB = "0" + sB;
 
 			PointF bytePointF = GetBytePointF(gridPoint);
+			PointF byteBoxPointF = bytePointF;
 
 			bool isLastLineChar = (gridPoint.X + 1 == _iHexMaxHBytes);
-			float bcWidth = (isLastLineChar) ? _charSize.Width * 2 : _charSize.Width * 3;
+			float bcWidth = _selectionByteBoxesVisible
+				? _charSize.Width * 2
+				: (isLastLineChar) ? _charSize.Width * 2 : _charSize.Width * 3;
 
 			g.FillRectangle(brushBack, bytePointF.X, bytePointF.Y, bcWidth, _charSize.Height);
 			g.DrawString(sB.Substring(0, 1), Font, brush, bytePointF, _stringFormat);
 			bytePointF.X += _charSize.Width;
 			g.DrawString(sB.Substring(1, 1), Font, brush, bytePointF, _stringFormat);
+
+			if (_selectionByteBoxesVisible)
+			{
+				using (Pen borderPen = new Pen(_selectionByteBoxBorderColor, 2F))
+				{
+					RectangleF border = new RectangleF(
+						byteBoxPointF.X,
+						byteBoxPointF.Y,
+						Math.Max(1F, bcWidth - 1F),
+						Math.Max(1F, _charSize.Height - 1F));
+					g.DrawRectangle(
+						borderPen,
+						border.X,
+						border.Y,
+						border.Width,
+						border.Height);
+				}
+			}
 		}
 
 		void PaintHexAndStringView(Graphics g, long startByte, long endByte)
@@ -2547,7 +2606,7 @@ namespace Be.Windows.Forms
 
 				bool isSelectedByte = i >= _bytePos && i <= (_bytePos + _selectionLength - 1) && _selectionLength != 0;
 
-				if (isSelectedByte && isKeyInterpreterActive)
+				if (isSelectedByte && (isKeyInterpreterActive || _selectionByteBoxesVisible))
 				{
 					PaintHexStringSelected(g, b, selBrush, selBrushBack, gridPoint);
 				}
@@ -3452,6 +3511,16 @@ namespace Be.Windows.Forms
 			get { return _selectionForeColor; }
 			set { _selectionForeColor = value; Invalidate(); }
 		} Color _selectionForeColor = Color.White;
+
+		internal void ConfigureSelectionByteBoxes(bool visible, Color borderColor)
+		{
+			_selectionByteBoxesVisible = visible;
+			_selectionByteBoxBorderColor = borderColor;
+			Invalidate();
+		}
+
+		bool _selectionByteBoxesVisible;
+		Color _selectionByteBoxBorderColor = Color.Navy;
 
 		/// <summary>
 		/// Gets or sets the visibility of a shadow selection.

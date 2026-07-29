@@ -1,14 +1,37 @@
 param(
     [string]$Configuration = "Debug",
+    [string]$BuildDirectory = "",
+    [switch]$SeedSendPackets,
     [Parameter(Mandatory = $true)]
     [string]$OutputDirectory
 )
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$hexBoxDll = Join-Path $repo "WPELibrary\bin\$Configuration\Be.Windows.Forms.HexBox.dll"
-$libraryDll = Join-Path $repo "WPELibrary\bin\$Configuration\WPELibrary.dll"
-$applicationDirectory = Join-Path $repo "WinsockPacketEditor\bin\$Configuration"
+$resolvedBuildDirectory = if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
+    $null
+}
+else {
+    [System.IO.Path]::GetFullPath($BuildDirectory)
+}
+$hexBoxDll = if ($null -eq $resolvedBuildDirectory) {
+    Join-Path $repo "WPELibrary\bin\$Configuration\Be.Windows.Forms.HexBox.dll"
+}
+else {
+    Join-Path $resolvedBuildDirectory "Be.Windows.Forms.HexBox.dll"
+}
+$libraryDll = if ($null -eq $resolvedBuildDirectory) {
+    Join-Path $repo "WPELibrary\bin\$Configuration\WPELibrary.dll"
+}
+else {
+    Join-Path $resolvedBuildDirectory "WPELibrary.dll"
+}
+$applicationDirectory = if ($null -eq $resolvedBuildDirectory) {
+    Join-Path $repo "WinsockPacketEditor\bin\$Configuration"
+}
+else {
+    $resolvedBuildDirectory
+}
 $applicationExe = Get-ChildItem -LiteralPath $applicationDirectory -Filter "*.exe" |
     Where-Object { $_.Name -notlike "EasyHook*Svc.exe" } |
     Select-Object -First 1 -ExpandProperty FullName
@@ -58,6 +81,39 @@ function Capture-Form($form, [string]$fileName) {
     }
 }
 
+function Select-HexByteWithMouse($form, $hexBox, [long]$index) {
+    if (-not $form.Visible) {
+        $form.Show()
+        [System.Windows.Forms.Application]::DoEvents()
+    }
+
+    $instancePrivate = [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic
+    $getBytePoint = $hexBox.GetType().GetMethod(
+        "GetBytePointF",
+        $instancePrivate,
+        $null,
+        [Type[]]@([long]),
+        $null)
+    $onMouseDown = $hexBox.GetType().GetMethod(
+        "OnMouseDown",
+        $instancePrivate)
+    $onMouseUp = [System.Windows.Forms.Control].GetMethod(
+        "OnMouseUp",
+        $instancePrivate)
+    $point = [System.Drawing.PointF]$getBytePoint.Invoke(
+        $hexBox,
+        [object[]]@($index))
+    $mouseArgs = [System.Windows.Forms.MouseEventArgs]::new(
+        [System.Windows.Forms.MouseButtons]::Left,
+        1,
+        [int][Math]::Floor($point.X + $hexBox.CharSize.Width),
+        [int][Math]::Floor($point.Y + ($hexBox.CharSize.Height / 2)),
+        0)
+    $onMouseDown.Invoke($hexBox, [object[]]@($mouseArgs))
+    $onMouseUp.Invoke($hexBox, [object[]]@($mouseArgs))
+}
+
 $injector = New-Object WinsockPacketEditor.Injector_Form
 try {
     Capture-Form $injector "01-startup.png"
@@ -84,9 +140,9 @@ $preset.BLoopCount = 1
 $preset.BInterval = 1000
 $preset.BNextInterval = 0
 $preset.Buffer = [byte[]](0x01, 0x02, 0x03, 0x04)
-$presetForm = [WPELibrary.Socket_ByteSweepPresetForm]::new($preset, $true)
+$presetForm = [WPELibrary.Socket_ByteSweepPresetForm]::new($preset, $false)
 try {
-    Capture-Form $presetForm "03-byte-sweep-preset.png"
+    Capture-Form $presetForm "03-byte-sweep-preset-edit.png"
 }
 finally {
     $presetForm.Dispose()
@@ -104,10 +160,84 @@ $packet.PacketLen = 4
 $sendForm = [WPELibrary.Socket_SendForm]::new($packet)
 try {
     Capture-Form $sendForm "05-send-packet.png"
+    $sendHexBox = Get-PrivateField $sendForm "hbPacketData"
+    Select-HexByteWithMouse $sendForm $sendHexBox 2
+    Capture-Form $sendForm "05a-send-single-byte-click.png"
+    $setSendRunningState = $sendForm.GetType().GetMethod(
+        "SetSendRunningState",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $setSendRunningState.Invoke($sendForm, [object[]]@($true))
+    Capture-Form $sendForm "05b-send-running-state.png"
+    $setSendRunningState.Invoke($sendForm, [object[]]@($false))
 }
 finally {
     $sendForm.Close()
     $sendForm.Dispose()
+}
+
+$sweepSendForm = [WPELibrary.Socket_SendForm]::new($packet, $preset)
+try {
+    Capture-Form $sweepSendForm "06-byte-sweep-send-edit.png"
+    $setSweepRunningState = $sweepSendForm.GetType().GetMethod(
+        "SetSendRunningState",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $beginSweepHighlight = $sweepSendForm.GetType().GetMethod(
+        "BeginByteSweepHighlight",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $restoreSweepHighlight = $sweepSendForm.GetType().GetMethod(
+        "RestoreByteSweepHighlight",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $beginLiveDisplay = $sweepSendForm.GetType().GetMethod(
+        "BeginByteSweepLiveDisplay",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $updateLiveDisplay = $sweepSendForm.GetType().GetMethod(
+        "UpdateByteSweepLiveDisplay",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $endLiveDisplay = $sweepSendForm.GetType().GetMethod(
+        "EndByteSweepLiveDisplay",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $sweepHexBox = Get-PrivateField $sweepSendForm "hbPacketData"
+    $setSweepRunningState.Invoke($sweepSendForm, [object[]]@($true))
+    $beginLiveDisplay.Invoke($sweepSendForm, $null)
+    $beginSweepHighlight.Invoke($sweepSendForm, $null)
+    $sweepHexBox.Select(0, 1)
+    $updateLiveDisplay.Invoke(
+        $sweepSendForm,
+        [object[]]@([long]0, [byte]0x01, [byte]0xA5))
+    Capture-Form $sweepSendForm "06b-byte-sweep-live-value.png"
+    $endLiveDisplay.Invoke($sweepSendForm, $null)
+    $restoreSweepHighlight.Invoke($sweepSendForm, $null)
+    $setSweepRunningState.Invoke($sweepSendForm, [object[]]@($false))
+}
+finally {
+    $sweepSendForm.Close()
+    $sweepSendForm.Dispose()
+}
+
+[WPELibrary.Lib.Socket_Cache+ByteSweepList]::lstFolders.Add("Preview sweep group")
+$sendPresetForm = [Activator]::CreateInstance(
+    [WPELibrary.Socket_SendPresetForm],
+    [object[]]@(
+        "Packet name",
+        "Target group",
+        $null,
+        $true))
+try {
+    $presetType = Get-PrivateField $sendPresetForm "cbbPresetType"
+    $presetType.SelectedIndex = 1
+    Capture-Form $sendPresetForm "06-send-preset.png"
+}
+finally {
+    $sendPresetForm.Close()
+    $sendPresetForm.Dispose()
+    [WPELibrary.Lib.Socket_Cache+ByteSweepList]::lstFolders.Remove("Preview sweep group")
 }
 
 $databaseType = [WPELibrary.Lib.Socket_Cache+DataBase]
@@ -128,6 +258,33 @@ try {
     $dbNameField.SetValue($null, "ui-audit.db")
     $connectionField.SetValue($null, "Data Source=$temporaryDatabase;Version=3;")
     [WPELibrary.Lib.Socket_Cache+DataBase]::InitDB()
+
+    if ($SeedSendPackets) {
+        [WPELibrary.Lib.Socket_Cache+SendList]::AddFolder("Preview group")
+        $singleByteAnnotation = New-Object WPELibrary.Lib.Socket_ByteAnnotationInfo
+        $singleByteAnnotation.Start = 2
+        $singleByteAnnotation.Length = 1
+        $singleByteAnnotation.Note = "Single byte"
+        $singleByteAnnotation.Color = [WPELibrary.Lib.Socket_ByteAnnotationColor]::Yellow
+        $packet.ByteAnnotations.Add($singleByteAnnotation)
+        $createPresetMethod = [WPELibrary.Socket_SendForm].GetMethod(
+            "CreateSendPreset",
+            [System.Reflection.BindingFlags]::Static -bor
+            [System.Reflection.BindingFlags]::NonPublic)
+        $previewSend = $createPresetMethod.Invoke(
+            $null,
+            [object[]]@($packet.PSObject.BaseObject, "Single packet", "Preview group", 1, 1000))
+        [WPELibrary.Lib.Socket_Cache+SendList]::SendToList($previewSend)
+
+        $namedSendForm = [WPELibrary.Socket_SendForm]::new($previewSend.SCollection[0])
+        try {
+            Capture-Form $namedSendForm "07-named-send-packet.png"
+        }
+        finally {
+            $namedSendForm.Close()
+            $namedSendForm.Dispose()
+        }
+    }
 
     $mainForm = New-Object WPELibrary.Socket_Form
     try {

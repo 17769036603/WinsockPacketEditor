@@ -78,9 +78,19 @@ namespace WPELibrary
         private void Add()
         {
             if (!canEdit()) { ShowMessage("ByteAnnotation_SendLocked"); return; }
-            if (hexBox.ByteProvider == null || hexBox.SelectionLength <= 0) { ShowMessage("ByteAnnotation_SelectBytes"); return; }
-            int start = checked((int)hexBox.SelectionStart);
-            int length = checked((int)hexBox.SelectionLength);
+            int start;
+            int length;
+            if (hexBox.ByteProvider == null ||
+                !TryGetAnnotationRange(
+                    hexBox.ByteProvider.Length,
+                    hexBox.SelectionStart,
+                    hexBox.SelectionLength,
+                    out start,
+                    out length))
+            {
+                ShowMessage("ByteAnnotation_SelectBytes");
+                return;
+            }
             if (Socket_ByteAnnotationEngine.Overlaps(annotations, start, length, null)) { ShowMessage("ByteAnnotation_NoOverlap"); return; }
             Socket_ByteAnnotationInfo item = new Socket_ByteAnnotationInfo { Start = start, Length = length, Color = Socket_ByteAnnotationColor.Yellow };
             using (Socket_ByteAnnotationDialog dialog = new Socket_ByteAnnotationDialog(item))
@@ -90,6 +100,36 @@ namespace WPELibrary
                     Refresh();
                     OnChanged();
                 }
+        }
+
+        internal static bool TryGetAnnotationRange(
+            long providerLength,
+            long selectionStart,
+            long selectionLength,
+            out int start,
+            out int length)
+        {
+            start = 0;
+            length = 0;
+            if (providerLength <= 0 ||
+                selectionStart < 0 ||
+                selectionStart >= providerLength ||
+                selectionStart > int.MaxValue)
+            {
+                return false;
+            }
+
+            long normalizedLength = selectionLength <= 0
+                ? 1
+                : Math.Min(selectionLength, providerLength - selectionStart);
+            if (normalizedLength <= 0 || normalizedLength > int.MaxValue)
+            {
+                return false;
+            }
+
+            start = (int)selectionStart;
+            length = (int)normalizedLength;
+            return true;
         }
 
         private void Edit()

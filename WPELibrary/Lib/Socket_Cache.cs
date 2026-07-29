@@ -38,7 +38,51 @@ namespace WPELibrary.Lib
             public static Socket_Cache.System.SystemMode StartMode = SystemMode.None;
             public static DateTime StartTime = DateTime.Now;
             public static IntPtr MainHandle = IntPtr.Zero;
-            public static int SystemSocket = 0;
+            private static int systemSocket;
+            private static int manualSystemSocket;
+            private static readonly object systemSocketSync = new object();
+
+            public static int SystemSocket
+            {
+                get
+                {
+                    lock (systemSocketSync)
+                    {
+                        return systemSocket;
+                    }
+                }
+                set
+                {
+                    int normalized = Math.Max(0, value);
+                    lock (systemSocketSync)
+                    {
+                        manualSystemSocket = normalized;
+                        systemSocket = normalized;
+                    }
+                }
+            }
+
+            public static int ManualSystemSocket
+            {
+                get
+                {
+                    lock (systemSocketSync)
+                    {
+                        return manualSystemSocket;
+                    }
+                }
+            }
+
+            internal static int ResolveSystemSocket(int matchedSocket)
+            {
+                lock (systemSocketSync)
+                {
+                    systemSocket = matchedSocket > 0
+                        ? matchedSocket
+                        : manualSystemSocket;
+                    return systemSocket;
+                }
+            }
             public static bool ShowDebug = false;
             public static bool IsRemote = false;
             public static string Remote_URL, Remote_UserName, Remote_PassWord;
@@ -934,13 +978,12 @@ namespace WPELibrary.Lib
             {
                 try
                 {
-                    Task.Run(() =>
-                    {
-                        Socket_Cache.FilterList.LoadFilterList_FromDB();
-                        Socket_Cache.SendList.LoadSendList_FromDB();
-                        Socket_Cache.ByteSweepList.LoadByteSweepList_FromDB();
-                        Socket_Cache.RobotList.LoadRobotList_FromDB();
-                    });
+                    // 启动阶段必须在返回前完成加载。原来的后台任务会与退出保存并发，
+                    // 用户快速关闭程序时可能用尚未加载完成的空列表覆盖数据库。
+                    Socket_Cache.FilterList.LoadFilterList_FromDB();
+                    Socket_Cache.SendList.LoadSendList_FromDB();
+                    Socket_Cache.ByteSweepList.LoadByteSweepList_FromDB();
+                    Socket_Cache.RobotList.LoadRobotList_FromDB();
                 }
                 catch (Exception ex)
                 {
@@ -5889,6 +5932,71 @@ namespace WPELibrary.Lib
             public static FindOptions FindOptions = new FindOptions();
             public static Socket_PacketInfo spiSelect;
             public static BindingList<Socket_PacketInfo> lstRecPacket = new BindingList<Socket_PacketInfo>();
+
+            public static int FindLatestMatchingSocket(
+                IEnumerable<Socket_PacketInfo> capturedPackets,
+                IEnumerable<Socket_PacketInfo> packetTemplates)
+            {
+                if (capturedPackets == null || packetTemplates == null)
+                {
+                    return 0;
+                }
+
+                List<Socket_PacketInfo> templates = packetTemplates
+                    .Where(item => item != null && !string.IsNullOrWhiteSpace(item.PacketTo))
+                    .ToList();
+                if (templates.Count == 0)
+                {
+                    return 0;
+                }
+
+                int matchedSocket = 0;
+                foreach (Socket_PacketInfo captured in capturedPackets)
+                {
+                    if (captured == null || captured.PacketSocket <= 0)
+                    {
+                        continue;
+                    }
+
+                    bool matches = templates.Any(template =>
+                        template.PacketType == captured.PacketType &&
+                        string.Equals(
+                            template.PacketTo.Trim(),
+                            (captured.PacketTo ?? string.Empty).Trim(),
+                            StringComparison.OrdinalIgnoreCase));
+                    if (matches)
+                    {
+                        matchedSocket = captured.PacketSocket;
+                    }
+                }
+
+                return matchedSocket;
+            }
+
+            public static int ResolveCurrentSocket(IEnumerable<Socket_PacketInfo> packetTemplates)
+            {
+                List<Socket_PacketInfo> templates = packetTemplates == null
+                    ? new List<Socket_PacketInfo>()
+                    : packetTemplates.Where(item => item != null).ToList();
+                int matchedSocket = 0;
+
+                Action resolve = () =>
+                {
+                    matchedSocket = FindLatestMatchingSocket(
+                        Socket_Cache.SocketList.lstRecPacket,
+                        templates);
+                };
+                if (Socket_Cache.System.InvokeAction != null)
+                {
+                    Socket_Cache.System.InvokeAction(resolve);
+                }
+                else
+                {
+                    resolve();
+                }
+
+                return Socket_Cache.System.ResolveSystemSocket(matchedSocket);
+            }
        
             #region//封包入列表
 
@@ -10252,7 +10360,18 @@ namespace WPELibrary.Lib
                     bool SSystemSocket_Copy = ssi.SSystemSocket;                
                     int SLoopCNT_Copy = ssi.SLoopCNT;
                     int SLoopINT_Copy = ssi.SLoopINT;
-                    BindingList<Socket_PacketInfo> SCollection_Copy = new BindingList<Socket_PacketInfo>(ssi.SCollection.ToList());
+                    BindingList<Socket_PacketInfo> SCollection_Copy = new BindingList<Socket_PacketInfo>();
+                    foreach (Socket_PacketInfo packet in ssi.SCollection)
+                    {
+                        Socket_Cache.Send.AddSendCollection(
+                            SCollection_Copy,
+                            packet.PacketSocket,
+                            packet.PacketType,
+                            packet.PacketFrom,
+                            packet.PacketTo,
+                            packet.PacketBuffer == null ? null : (byte[])packet.PacketBuffer.Clone(),
+                            packet.ByteAnnotations);
+                    }
                     string SNotes_Copy = ssi.SNotes;
 
                     Socket_Cache.Send.AddSend(IsEnable_Copy, SID_New, SName_Copy, SSystemSocket_Copy, SLoopCNT_Copy, SLoopINT_Copy, SCollection_Copy, SNotes_Copy, SFolder_Copy);
@@ -10309,11 +10428,11 @@ namespace WPELibrary.Lib
                     if (SendListIndex > -1 && SendListIndex < Socket_Cache.SendList.lstSend.Count)
                     {
                         Guid SID = Socket_Cache.SendList.lstSend[SendListIndex].SID;
-                        
-                        Task.Run(() => DoSendAsync(SID))
-                          .ConfigureAwait(false)
-                          .GetAwaiter()
-                          .GetResult();
+
+                        // WM_HOTKEY is handled on the UI thread. DoSendAsync resolves
+                        // the current socket through the UI dispatcher, so blocking
+                        // this thread here would deadlock the dispatcher.
+                        _ = DoSendAsync(SID);
                     }
                 }
                 catch (Exception ex)
@@ -10336,8 +10455,23 @@ namespace WPELibrary.Lib
                         {
                             if (ssi.SCollection.Count > 0)
                             {
+                                int resolvedSocket =
+                                    Socket_Cache.SocketList.ResolveCurrentSocket(ssi.SCollection);
+                                if (resolvedSocket <= 0)
+                                {
+                                    Socket_Operation.DoLog(
+                                        nameof(DoSendAsync),
+                                        MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_49));
+                                    return null;
+                                }
+
                                 ssReturn = new Socket_Send();
-                                await Task.Run(() => ssReturn.StartSend(ssi.SName, ssi.SSystemSocket, ssi.SLoopCNT, ssi.SLoopINT, ssi.SCollection));
+                                await Task.Run(() => ssReturn.StartSend(
+                                    ssi.SName,
+                                    resolvedSocket,
+                                    ssi.SLoopCNT,
+                                    ssi.SLoopINT,
+                                    ssi.SCollection));
                             }
                         }
                     }
@@ -10786,6 +10920,46 @@ namespace WPELibrary.Lib
                 }
             }
 
+            public static bool MoveFolder(string folderName, int offset)
+            {
+                bool moved = false;
+                Action move = () =>
+                {
+                    int currentIndex = lstFolders.IndexOf(folderName);
+                    int targetIndex = currentIndex + offset;
+                    if (currentIndex < 0 ||
+                        targetIndex < 0 ||
+                        targetIndex >= lstFolders.Count)
+                    {
+                        return;
+                    }
+
+                    lstFolders.RaiseListChangedEvents = false;
+                    try
+                    {
+                        lstFolders.RemoveAt(currentIndex);
+                        lstFolders.Insert(targetIndex, folderName);
+                        moved = true;
+                    }
+                    finally
+                    {
+                        lstFolders.RaiseListChangedEvents = true;
+                        lstFolders.ResetBindings();
+                    }
+                };
+
+                if (Socket_Cache.System.InvokeAction != null)
+                {
+                    Socket_Cache.System.InvokeAction(move);
+                }
+                else
+                {
+                    move();
+                }
+
+                return moved;
+            }
+
             public static void RemoveFolder(string folderName)
             {
                 foreach (Socket_SendInfo sendInfo in lstSend.Where(item => item.SFolder == folderName))
@@ -11114,10 +11288,18 @@ namespace WPELibrary.Lib
                     XElement xeRoot = new XElement("SendList");               
 
                     XElement xeFolders = new XElement("Folders");
-                    foreach (string folderName in ssiList
+                    List<string> selectedFolders = ssiList
                         .Select(item => item.SFolder)
                         .Where(item => !string.IsNullOrEmpty(item))
-                        .Distinct(StringComparer.OrdinalIgnoreCase))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    foreach (string folderName in lstFolders.Where(folder =>
+                        selectedFolders.Contains(folder, StringComparer.OrdinalIgnoreCase)))
+                    {
+                        xeFolders.Add(new XElement("Folder", new XAttribute("Name", folderName)));
+                    }
+                    foreach (string folderName in selectedFolders.Where(folder =>
+                        !lstFolders.Contains(folder, StringComparer.OrdinalIgnoreCase)))
                     {
                         xeFolders.Add(new XElement("Folder", new XAttribute("Name", folderName)));
                     }
@@ -11482,6 +11664,8 @@ namespace WPELibrary.Lib
                 target.PacketFrom = value.PacketFrom;
                 target.PacketTo = value.PacketTo;
                 target.Buffer = value.Buffer == null ? null : (byte[])value.Buffer.Clone();
+                target.ByteAnnotations =
+                    Socket_ByteAnnotationEngine.Clone(value.ByteAnnotations);
             }
 
             public static void Clear()

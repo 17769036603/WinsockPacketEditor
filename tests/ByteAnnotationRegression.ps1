@@ -1,11 +1,28 @@
 param(
-    [string]$Configuration = "Debug"
+    [string]$Configuration = "Debug",
+    [string]$BuildDirectory = ""
 )
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$hexBoxDll = Join-Path $repo "WPELibrary\bin\$Configuration\Be.Windows.Forms.HexBox.dll"
-$libraryDll = Join-Path $repo "WPELibrary\bin\$Configuration\WPELibrary.dll"
+$resolvedBuildDirectory = if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
+    $null
+}
+else {
+    [System.IO.Path]::GetFullPath($BuildDirectory)
+}
+$hexBoxDll = if ($null -eq $resolvedBuildDirectory) {
+    Join-Path $repo "WPELibrary\bin\$Configuration\Be.Windows.Forms.HexBox.dll"
+}
+else {
+    Join-Path $resolvedBuildDirectory "Be.Windows.Forms.HexBox.dll"
+}
+$libraryDll = if ($null -eq $resolvedBuildDirectory) {
+    Join-Path $repo "WPELibrary\bin\$Configuration\WPELibrary.dll"
+}
+else {
+    Join-Path $resolvedBuildDirectory "WPELibrary.dll"
+}
 
 Add-Type -Path $hexBoxDll
 Add-Type -Path $libraryDll
@@ -82,8 +99,16 @@ catch [System.ArgumentOutOfRangeException] {
 }
 Assert-Equal $startBeforeFailure $providerAnnotation.Start "failed byte edits must not mutate annotations"
 Assert-Equal $lengthBeforeFailure $provider.Length "failed byte edits must not mutate bytes"
+$provider.WriteByte(4, 0x7F)
+Assert-Equal 1 $providerItems.Count "an in-place byte write must not remove its annotation"
+Assert-Equal $startBeforeFailure $providerAnnotation.Start "an in-place byte write must not move its annotation"
 
-$sqliteDll = Join-Path $repo "WPELibrary\bin\$Configuration\System.Data.SQLite.dll"
+$sqliteDll = if ($null -eq $resolvedBuildDirectory) {
+    Join-Path $repo "WPELibrary\bin\$Configuration\System.Data.SQLite.dll"
+}
+else {
+    Join-Path $resolvedBuildDirectory "System.Data.SQLite.dll"
+}
 Add-Type -Path $sqliteDll
 $databaseType = [WPELibrary.Lib.Socket_Cache+DataBase]
 $bindingFlags = [System.Reflection.BindingFlags]::Static -bor [System.Reflection.BindingFlags]::NonPublic
@@ -131,11 +156,20 @@ CREATE TABLE ByteSweepPreset (GUID TEXT NOT NULL PRIMARY KEY, IsEnable BOOLEAN D
     $packet.PacketTo = "127.0.0.1:2"
     $packet.PacketBuffer = [byte[]](1, 2, 3)
     $packet.ByteAnnotations.Add($normalized[0])
-    $collection = New-Object 'System.ComponentModel.BindingList[WPELibrary.Lib.Socket_PacketInfo]'
-    $collection.Add($packet)
-    $sendId = [Guid]::NewGuid()
-    $sendInfo = New-Object WPELibrary.Lib.Socket_SendInfo($true, $sendId, "test", $false, 1, 0, $collection, "")
+    $createPreset = [WPELibrary.Socket_SendForm].GetMethod(
+        "CreateSendPreset",
+        [System.Reflection.BindingFlags]::Static -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $sendInfo = $createPreset.Invoke(
+        $null,
+        [object[]]@($packet.PSObject.BaseObject, "test", "test group", 3, 25))
+    $sendId = $sendInfo.SID
     [WPELibrary.Lib.Socket_Cache+DataBase]::InsertTable_Send($sendInfo)
+    $savedSendPresets = [WPELibrary.Lib.Socket_Cache+DataBase]::SelectTable_Send()
+    Assert-Equal 1 $savedSendPresets.Rows.Count "saved send preset must be reloadable from SQLite"
+    Assert-Equal "test" $savedSendPresets.Rows[0]["Name"].ToString() "send preset name must survive SQLite persistence"
+    Assert-Equal 3 ([int]$savedSendPresets.Rows[0]["LoopCNT"]) "send preset count must survive SQLite persistence"
+    Assert-Equal 25 ([int]$savedSendPresets.Rows[0]["LoopINT"]) "send preset interval must survive SQLite persistence"
     $savedSend = [WPELibrary.Lib.Socket_Cache+DataBase]::SelectTable_SendCollection($sendId)
     $sendRoundTrip = [WPELibrary.Lib.Socket_ByteAnnotationEngine]::Deserialize($savedSend.Rows[0]["Annotations"].ToString(), 3)
     Assert-Equal 1 $sendRoundTrip.Count "send collection annotations must survive SQLite persistence"
@@ -168,18 +202,41 @@ finally {
 
 $sendFormSource = Get-Content (Join-Path $repo "WPELibrary\Socket_SendForm.cs") -Raw -Encoding UTF8
 $mainFormSource = Get-Content (Join-Path $repo "WPELibrary\Socket_Form.cs") -Raw -Encoding UTF8
+$mainFormDesignerSource = Get-Content (Join-Path $repo "WPELibrary\Socket_Form.Designer.cs") -Raw -Encoding UTF8
 $controllerSource = Get-Content (Join-Path $repo "WPELibrary\Socket_ByteAnnotationController.cs") -Raw -Encoding UTF8
 $hexBoxSource = Get-Content (Join-Path $repo "ThirdParty\Be.Windows.Forms.HexBox\HexBox.cs") -Raw -Encoding UTF8
 $wpePackages = Get-Content (Join-Path $repo "WPELibrary\packages.config") -Raw -Encoding UTF8
 $appPackages = Get-Content (Join-Path $repo "WinsockPacketEditor\packages.config") -Raw -Encoding UTF8
 
 Assert-Equal $true ($sendFormSource.Contains("this.workingByteAnnotations = Socket_ByteAnnotationEngine.Clone(this.SPI.ByteAnnotations);")) "send form must edit an annotation working copy"
-Assert-Equal $true ($sendFormSource.Contains("this.SPI.ByteAnnotations = Socket_ByteAnnotationEngine.Clone(this.workingByteAnnotations);")) "send form Save must commit the annotation working copy"
-Assert-Equal $true ($mainFormSource.Contains("this.byteAnnotationController.Changed += this.ByteAnnotationController_Changed;")) "annotation-only byte-sweep edits must have a commit callback"
+Assert-Equal $true (
+    $sendFormSource.Contains("this.SPI.ByteAnnotations =") -and
+    $sendFormSource.Contains("Socket_ByteAnnotationEngine.Clone(this.workingByteAnnotations);")
+) "send form Save must commit the annotation working copy"
+Assert-Equal $false ($mainFormSource.Contains("Socket_ByteAnnotationController")) "main workspace must not expose the byte annotation panel"
+Assert-Equal $false ($mainFormDesignerSource.Contains("byteAnnotationController")) "main workspace designer must not retain the annotation controller"
+Assert-Equal $true ($sendFormSource.Contains("new Socket_ByteAnnotationController(")) "send form must retain the byte annotation panel"
 Assert-Equal $true ($mainFormSource.Contains("this.CommitPacketDataEdits();`r`n            this.StopByteSweep();") -or $mainFormSource.Contains("this.CommitPacketDataEdits();`n            this.StopByteSweep();")) "form close must commit the active byte-sweep editor before persistence"
 Assert-Equal $true ($controllerSource.Contains("layout.ColumnStyles[column].Width = collapsed ? 28F : 220F;")) "annotation panel must support collapse and expand"
 Assert-Equal $true ($controllerSource.Contains("internal sealed class Socket_ByteAnnotationController : IDisposable")) "annotation controller must release owned resources"
+Assert-Equal $true ($controllerSource.Contains("long normalizedLength = selectionLength <= 0")) "a caret-only annotation must normalize to one exact byte"
+$controllerType = [WPELibrary.Socket_SendForm].Assembly.GetType(
+    "WPELibrary.Socket_ByteAnnotationController",
+    $true)
+$rangeMethod = $controllerType.GetMethod(
+    "TryGetAnnotationRange",
+    [System.Reflection.BindingFlags]::Static -bor
+    [System.Reflection.BindingFlags]::NonPublic)
+$caretRangeArguments = [object[]]@([long]10, [long]3, [long]0, 0, 0)
+Assert-Equal $true ($rangeMethod.Invoke($null, $caretRangeArguments)) "a byte caret must produce a valid annotation range"
+Assert-Equal 3 $caretRangeArguments[3] "caret annotation must retain the current byte offset"
+Assert-Equal 1 $caretRangeArguments[4] "caret annotation must cover exactly one byte"
+$selectionRangeArguments = [object[]]@([long]10, [long]3, [long]3, 0, 0)
+Assert-Equal $true ($rangeMethod.Invoke($null, $selectionRangeArguments)) "an explicit byte selection must remain valid"
+Assert-Equal 3 $selectionRangeArguments[4] "an explicit byte selection must preserve its exact length"
 Assert-Equal $true ($hexBoxSource.Contains("ByteStyleBrushCache styleBrushes")) "HexBox annotation brushes must be cached per paint pass"
+Assert-Equal $true ($hexBoxSource.Contains("bool replaceSingleByteInPlace = sw && sel == 1;")) "a clicked single-byte selection must be edited in place"
+Assert-Equal $true ($hexBoxSource.Contains("sel > 0 && !replaceSingleByteInPlace")) "single-byte typing must not use structural delete and insert"
 Assert-Equal $false ($wpePackages.Contains("Be.Windows.Forms.HexBox")) "WPELibrary must not retain the obsolete HexBox package reference"
 Assert-Equal $false ($appPackages.Contains("Be.Windows.Forms.HexBox")) "application must not retain the obsolete HexBox package reference"
 [xml](Get-Content (Join-Path $repo "WPELibrary\Properties\Resources.resx") -Raw -Encoding UTF8) | Out-Null

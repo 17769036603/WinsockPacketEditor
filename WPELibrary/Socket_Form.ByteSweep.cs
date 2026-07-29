@@ -508,6 +508,7 @@ namespace WPELibrary
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
                     Socket_Cache.ByteSweepList.AddPreset(dialog.Result);
+                    Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
                     this.selectedByteSweepFolder = dialog.Result.BFolder;
                     this.RefreshByteSweepFolderTree();
                     this.tcAutomation.SelectedTab = this.tpByteSweepList;
@@ -536,10 +537,46 @@ namespace WPELibrary
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
                     Socket_Cache.ByteSweepList.UpdatePreset(preset, dialog.Result);
+                    Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
                     this.selectedByteSweepFolder = preset.BFolder;
                     this.RefreshByteSweepFolderTree();
+                    if (dialog.EditDetailsRequested)
+                    {
+                        Socket_PacketInfo packet = CreatePacketFromByteSweepPreset(preset);
+                        using (Socket_SendForm sendForm =
+                            new Socket_SendForm(packet, preset))
+                        {
+                            sendForm.ShowDialog(this);
+                        }
+                        this.selectedByteSweepFolder = preset.BFolder;
+                        this.RefreshByteSweepFolderTree();
+                    }
                 }
             }
+        }
+
+        private static Socket_PacketInfo CreatePacketFromByteSweepPreset(
+            Socket_ByteSweepPresetInfo preset)
+        {
+            byte[] buffer = preset.Buffer == null
+                ? new byte[0]
+                : (byte[])preset.Buffer.Clone();
+            return new Socket_PacketInfo
+            {
+                PacketTime = DateTime.Now,
+                PacketSocket = Socket_Cache.System.SystemSocket,
+                PacketType = preset.PacketType,
+                PacketFrom = preset.PacketFrom,
+                PacketTo = preset.PacketTo,
+                RawBuffer = (byte[])buffer.Clone(),
+                PacketBuffer = buffer,
+                PacketData = Socket_Operation.GetPacketData_Hex(
+                    buffer.AsSpan(),
+                    Socket_Cache.SocketPacket.PacketData_MaxLen),
+                PacketLen = buffer.Length,
+                ByteAnnotations =
+                    Socket_ByteAnnotationEngine.Clone(preset.ByteAnnotations)
+            };
         }
 
         private void cmsByteSweepPreset_Edit_Click(object sender, EventArgs e)
@@ -559,6 +596,7 @@ namespace WPELibrary
                 MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK)
             {
                 Socket_Cache.ByteSweepList.lstPresets.Remove(preset);
+                Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
                 this.RefreshByteSweepView();
             }
         }
@@ -571,6 +609,7 @@ namespace WPELibrary
             {
                 item.IsEnable = select;
             }
+            Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
             this.RefreshByteSweepView();
         }
 
@@ -591,6 +630,7 @@ namespace WPELibrary
             if (columnName == "cByteSweepEnable" && !this.byteSweepRunning)
             {
                 preset.IsEnable = !preset.IsEnable;
+                Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
                 this.RefreshByteSweepView();
             }
             else if (columnName == "cByteSweepSend")
@@ -640,6 +680,7 @@ namespace WPELibrary
             {
                 items[index].BSortOrder = index + 1;
             }
+            Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
             this.RefreshByteSweepView();
         }
 
@@ -697,7 +738,6 @@ namespace WPELibrary
             provider.Changed += this.PacketDataProvider_Changed;
             provider.LengthChanged += this.PacketDataProvider_Changed;
             this.hbPacketData.ByteProvider = provider;
-            this.byteAnnotationController.Bind(this.packetDataEditingPacket.ByteAnnotations);
             if (preset.IsValid)
             {
                 this.hbPacketData.Select(preset.BStart, preset.BLength);
@@ -727,6 +767,35 @@ namespace WPELibrary
             this.StopByteSweep();
         }
 
+        private static Dictionary<Guid, int> ResolveByteSweepSockets(
+            IEnumerable<Socket_ByteSweepPresetInfo> presets,
+            out Socket_ByteSweepPresetInfo unresolvedPreset)
+        {
+            Dictionary<Guid, int> resolvedSockets = new Dictionary<Guid, int>();
+            unresolvedPreset = null;
+
+            foreach (Socket_ByteSweepPresetInfo preset in presets)
+            {
+                Socket_PacketInfo packetTemplate = new Socket_PacketInfo
+                {
+                    PacketType = preset.PacketType,
+                    PacketFrom = preset.PacketFrom,
+                    PacketTo = preset.PacketTo
+                };
+                int resolvedSocket = Socket_Cache.SocketList.ResolveCurrentSocket(
+                    new[] { packetTemplate });
+                if (resolvedSocket <= 0)
+                {
+                    unresolvedPreset = preset;
+                    return null;
+                }
+
+                resolvedSockets[preset.BID] = resolvedSocket;
+            }
+
+            return resolvedSockets;
+        }
+
         private async void StartByteSweepPresets(IEnumerable<Socket_ByteSweepPresetInfo> source)
         {
             List<Socket_ByteSweepPresetInfo> presets = source
@@ -739,13 +808,6 @@ namespace WPELibrary
                 return;
             }
 
-            if (Socket_Cache.System.SystemSocket <= 0)
-            {
-                MessageBox.Show(this, "请先在封包列表中设置当前系统 Socket。", "递进发送",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
             Socket_ByteSweepPresetInfo invalid = presets.FirstOrDefault(item => !item.IsValid);
             if (invalid != null)
             {
@@ -754,7 +816,17 @@ namespace WPELibrary
                 return;
             }
 
-            int socket = Socket_Cache.System.SystemSocket;
+            Socket_ByteSweepPresetInfo unresolvedPreset;
+            Dictionary<Guid, int> presetSockets = ResolveByteSweepSockets(
+                presets,
+                out unresolvedPreset);
+            if (presetSockets == null)
+            {
+                MessageBox.Show(this, UiText("UI_CurrentSocketRequired"), "递进发送",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             this.byteSweepRunning = true;
             this.byteSweepTotalSend = 0;
             this.byteSweepSuccess = 0;
@@ -767,6 +839,7 @@ namespace WPELibrary
                 for (int presetIndex = 0; presetIndex < presets.Count; presetIndex++)
                 {
                     Socket_ByteSweepPresetInfo preset = presets[presetIndex];
+                    int socket = presetSockets[preset.BID];
                     if (this.byteSweepCts.IsCancellationRequested)
                     {
                         break;

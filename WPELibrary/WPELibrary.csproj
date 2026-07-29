@@ -300,6 +300,9 @@
     <Compile Include="Socket_SendForm.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="Socket_SendPresetForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="Socket_ByteSweepPresetForm.cs">
       <SubType>Form</SubType>
     </Compile>

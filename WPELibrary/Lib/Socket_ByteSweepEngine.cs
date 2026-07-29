@@ -64,8 +64,6 @@ namespace WPELibrary.Lib
             {
                 byte originalValue = baseline[position];
                 int byteNumber = position - start + 1;
-                Report(reportProgress, result, position, originalValue, originalValue, byteNumber, length, 0);
-
                 try
                 {
                     for (int valueNumber = 1; valueNumber <= 255; valueNumber++)
@@ -100,7 +98,9 @@ namespace WPELibrary.Lib
                         }
 
                         DateTime now = DateTime.UtcNow;
-                        if (valueNumber == 255 || (now - lastProgress).TotalMilliseconds >= 100)
+                        if (valueNumber == 1 ||
+                            valueNumber == 255 ||
+                            (now - lastProgress).TotalMilliseconds >= 100)
                         {
                             Report(reportProgress, result, position, originalValue, currentValue, byteNumber, length, valueNumber);
                             lastProgress = now;
