@@ -14,7 +14,9 @@ namespace WPELibrary
         private readonly Socket_ByteAnnotationPanel panel;
         private readonly ToolTip toolTip = new ToolTip();
         private readonly TableLayoutPanel layout;
-        private readonly int column;
+        private readonly int row;
+        private readonly SizeType expandedRowSizeType;
+        private readonly float expandedRowHeight;
         private readonly ToolStripSeparator menuSeparator;
         private readonly ToolStripItem addMenuItem;
         private readonly ToolStripItem editMenuItem;
@@ -31,13 +33,15 @@ namespace WPELibrary
         {
             this.hexBox = hexBox;
             this.layout = layout;
-            this.column = column;
+            this.row = row;
             this.canEdit = canEdit ?? delegate { return true; };
             while (layout.ColumnStyles.Count <= column)
-                layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220F));
+                layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             layout.ColumnCount = Math.Max(layout.ColumnCount, column + 1);
-            layout.ColumnStyles[column].SizeType = SizeType.Absolute;
-            layout.ColumnStyles[column].Width = 220F;
+            while (layout.RowStyles.Count <= row)
+                layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            this.expandedRowSizeType = layout.RowStyles[row].SizeType;
+            this.expandedRowHeight = layout.RowStyles[row].Height;
 
             panel = new Socket_ByteAnnotationPanel();
             layout.Controls.Add(panel, column, row);
@@ -190,7 +194,10 @@ namespace WPELibrary
         private void Panel_CollapseRequested(object sender, EventArgs e)
         {
             collapsed = !collapsed;
-            layout.ColumnStyles[column].Width = collapsed ? 28F : 220F;
+            layout.RowStyles[row].SizeType =
+                collapsed ? SizeType.Absolute : expandedRowSizeType;
+            layout.RowStyles[row].Height =
+                collapsed ? 28F : expandedRowHeight;
             panel.SetCollapsed(collapsed);
         }
         private void HexBox_Disposed(object sender, EventArgs e) { Dispose(); }

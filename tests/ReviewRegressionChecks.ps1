@@ -66,6 +66,24 @@ Assert-Contains $sendForm "this.byteSweepProviderHadChanges =" `
     "Temporary live display must preserve the provider's original dirty state."
 Assert-Contains $sendForm "Socket_Cache.SendList.SaveSendList_ToDB();" `
     "Confirmed normal preset saves must persist immediately."
+Assert-Contains $sendForm "this.StartSend(false, false);" `
+    "The left Start action must always launch normal sending."
+Assert-Contains $sendForm "this.StartSend(true, false);" `
+    "The lower Start action must launch only the sequential sweep path."
+Assert-Contains $sendForm "this.StartSend(true, true);" `
+    "The right editor Start action must launch its selected sweep mode."
+Assert-Contains $sendForm "sweepRunning && !this.byteSweepStartedFromEditorPanel" `
+    "The lower Stop action must be enabled only for a sweep started there."
+Assert-Contains $sendForm "sweepRunning && this.byteSweepStartedFromEditorPanel" `
+    "The right Stop action must be enabled only for a sweep started there."
+Assert-Contains $sendForm "this.hbPacketData.MouseUp += this.hbPacketData_ByteSweepPickMouseUp;" `
+    "Two-byte position pickers must consume the final HexBox click position."
+Assert-Contains $sendForm "this.hbPacketData.SelectionLength = 1;" `
+    "Picking a combination byte must normalize the HexBox selection to one byte."
+Assert-Contains $sendForm "this.byteSweepLiveValueActive ||" `
+    "Live-preview cleanup must include byte A state."
+Assert-Contains $sendForm "this.byteSweepLiveSecondValueActive;" `
+    "Live-preview cleanup must include byte B state independently."
 $saveHandler = [regex]::Match(
     $sendForm,
     '(?s)private void bSave_Click\(object sender, EventArgs e\).*?private bool ApplyCurrentPacketEdits').Value
@@ -86,9 +104,17 @@ Assert-Contains $hexBox "bool replaceSingleByteInPlace = sw && sel == 1;" `
 $sweepEngine = Read-SourceFile "WPELibrary\Lib\Socket_ByteSweepEngine.cs"
 Assert-NotContains $sweepEngine "originalValue, originalValue, byteNumber, length, 0" `
     "Live sweep progress must not report an original value that was never sent."
+Assert-Contains $sweepEngine "(now - lastProgress).TotalMilliseconds >= 100" `
+    "Pair-combination progress must be throttled so long runs do not flood the UI queue."
+$byteSweepMainForm = Read-SourceFile "WPELibrary\Socket_Form.ByteSweep.cs"
+Assert-Contains $byteSweepMainForm "RestoreByteSweepLivePreview(preset);" `
+    "Batch sweep completion must restore the preset baseline after live preview."
+Assert-Contains $byteSweepMainForm "if (this.byteSweepRunning)" `
+    "Batch sweep selection changes must not commit temporary live-preview bytes."
 
 $resources = Read-SourceFile "WPELibrary\Properties\Resources.resx"
 $englishResources = Read-SourceFile "WPELibrary\Properties\Resources.en-US.resx"
+$sweepEditor = Read-SourceFile "WPELibrary\Socket_ByteSweepEditorPanel.cs"
 Assert-Contains $socketForm 'UiText("UI_ClearCaptureConfirm")' `
     "Clearing the current capture must require an explicit confirmation."
 Assert-Contains $socketForm "MessageBoxButtons.YesNo" `
@@ -97,6 +123,27 @@ Assert-Contains $resources 'name="UI_ClearCaptureConfirm"' `
     "The Chinese resources must include the clear-current-capture confirmation."
 Assert-Contains $englishResources "Clear capture (&amp;C)" `
     "The English clear action must describe its current-capture scope."
+foreach ($resourceKey in @(
+    "ByteSweep_StartAction",
+    "ByteSweep_StopAction",
+    "ByteSweep_SequentialHeader",
+    "ByteSweep_PairMode",
+    "ByteSweep_PairProgress",
+    "ByteSweep_PickFirst",
+    "ByteSweep_PickSecond",
+    "ByteSweep_PickDuplicate"
+)) {
+    Assert-Contains $resources ('name="' + $resourceKey + '"') `
+        "Chinese byte-sweep resources must include $resourceKey."
+    Assert-Contains $englishResources ('name="' + $resourceKey + '"') `
+        "English byte-sweep resources must include $resourceKey."
+}
+Assert-Contains $sweepEditor "this.mode.Enabled = !this.busy;" `
+    "Concurrent sends must lock the right sweep mode selector."
+Assert-Contains $sweepEditor "this.loopCount.Enabled = !this.busy;" `
+    "Concurrent sends must lock right sweep loop settings."
+Assert-Contains $sweepEditor "position == (int)other.Value" `
+    "Two-byte position picking must reject duplicate A/B positions."
 
 $cache = Read-SourceFile "WPELibrary\Lib\Socket_Cache.cs"
 $loadSystemList = [regex]::Match(
@@ -117,6 +164,8 @@ Assert-Contains $cache "transaction.Commit();" `
     "Byte-sweep persistence must commit only after all rows are written."
 Assert-Contains $cache "transaction.Rollback();" `
     "Byte-sweep persistence must roll back failed replacements."
+Assert-Contains $cache 'AddWithValue("@Mode", (int)preset.BMode)' `
+    "Byte-sweep mode must be persisted as a stable integer value."
 Assert-Contains $cache "Guid.TryParse((string)element.Element(""ID""), out presetId)" `
     "Byte-sweep import must preserve valid preset identifiers."
 Assert-Contains $cache "BID = presetId" `

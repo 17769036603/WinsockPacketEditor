@@ -5943,7 +5943,7 @@ namespace WPELibrary.Lib
                 }
 
                 List<Socket_PacketInfo> templates = packetTemplates
-                    .Where(item => item != null && !string.IsNullOrWhiteSpace(item.PacketTo))
+                    .Where(item => item != null)
                     .ToList();
                 if (templates.Count == 0)
                 {
@@ -5959,11 +5959,25 @@ namespace WPELibrary.Lib
                     }
 
                     bool matches = templates.Any(template =>
-                        template.PacketType == captured.PacketType &&
-                        string.Equals(
+                    {
+                        if (template.PacketType != captured.PacketType)
+                        {
+                            return false;
+                        }
+
+                        // Older presets may not contain a destination address. In that case,
+                        // use the latest captured socket for the same packet type; presets
+                        // with an address still require an exact type + destination match.
+                        if (string.IsNullOrWhiteSpace(template.PacketTo))
+                        {
+                            return true;
+                        }
+
+                        return string.Equals(
                             template.PacketTo.Trim(),
                             (captured.PacketTo ?? string.Empty).Trim(),
-                            StringComparison.OrdinalIgnoreCase));
+                            StringComparison.OrdinalIgnoreCase);
+                    });
                     if (matches)
                     {
                         matchedSocket = captured.PacketSocket;
@@ -11658,6 +11672,13 @@ namespace WPELibrary.Lib
                 target.BLoopCount = value.BLoopCount;
                 target.BInterval = value.BInterval;
                 target.BNextInterval = value.BNextInterval;
+                target.BMode = value.BMode;
+                target.BCombinationFirstPosition = value.BCombinationFirstPosition;
+                target.BCombinationFirstInterval = value.BCombinationFirstInterval;
+                target.BCombinationFirstLength = value.BCombinationFirstLength;
+                target.BCombinationSecondPosition = value.BCombinationSecondPosition;
+                target.BCombinationSecondInterval = value.BCombinationSecondInterval;
+                target.BCombinationSecondLength = value.BCombinationSecondLength;
                 target.BStart = value.BStart;
                 target.BLength = value.BLength;
                 target.PacketType = value.PacketType;
@@ -11723,6 +11744,23 @@ namespace WPELibrary.Lib
                             BNextInterval = presets.Columns.Contains("NextInterval")
                                 ? Math.Max(0, Convert.ToInt32(row["NextInterval"]))
                                 : 0,
+                            BMode = presets.Columns.Contains("Mode") &&
+                                Convert.ToInt32(row["Mode"]) ==
+                                    (int)Socket_ByteSweepMode.PairCombination
+                                ? Socket_ByteSweepMode.PairCombination
+                                : Socket_ByteSweepMode.Sequential,
+                            BCombinationFirstPosition = presets.Columns.Contains("FirstPosition")
+                                ? Convert.ToInt32(row["FirstPosition"]) : 0,
+                            BCombinationFirstInterval = presets.Columns.Contains("FirstInterval")
+                                ? Math.Max(0, Convert.ToInt32(row["FirstInterval"])) : 0,
+                            BCombinationFirstLength = presets.Columns.Contains("FirstLength")
+                                ? Math.Max(1, Convert.ToInt32(row["FirstLength"])) : 255,
+                            BCombinationSecondPosition = presets.Columns.Contains("SecondPosition")
+                                ? Convert.ToInt32(row["SecondPosition"]) : 0,
+                            BCombinationSecondInterval = presets.Columns.Contains("SecondInterval")
+                                ? Math.Max(0, Convert.ToInt32(row["SecondInterval"])) : 0,
+                            BCombinationSecondLength = presets.Columns.Contains("SecondLength")
+                                ? Math.Max(1, Convert.ToInt32(row["SecondLength"])) : 255,
                             BStart = Convert.ToInt32(row["StartOffset"]),
                             BLength = Convert.ToInt32(row["ByteLength"]),
                             PacketType = Socket_Cache.SocketPacket.GetPacketType_ByString(row["PacketType"].ToString()),
@@ -11764,6 +11802,13 @@ namespace WPELibrary.Lib
                             new XElement("LoopCount", preset.BLoopCount),
                             new XElement("Interval", preset.BInterval),
                             new XElement("NextInterval", preset.BNextInterval),
+                            new XElement("Mode", (int)preset.BMode),
+                            new XElement("FirstPosition", preset.BCombinationFirstPosition),
+                            new XElement("FirstInterval", preset.BCombinationFirstInterval),
+                            new XElement("FirstLength", preset.BCombinationFirstLength),
+                            new XElement("SecondPosition", preset.BCombinationSecondPosition),
+                            new XElement("SecondInterval", preset.BCombinationSecondInterval),
+                            new XElement("SecondLength", preset.BCombinationSecondLength),
                             new XElement("StartOffset", preset.BStart),
                             new XElement("ByteLength", preset.BLength),
                             new XElement("PacketType", preset.PacketType),
@@ -11821,6 +11866,16 @@ namespace WPELibrary.Lib
                         BLoopCount = Math.Max(1, (int?)element.Element("LoopCount") ?? 1),
                         BInterval = (int?)element.Element("Interval") ?? 1000,
                         BNextInterval = Math.Max(0, (int?)element.Element("NextInterval") ?? 0),
+                        BMode = ((int?)element.Element("Mode") ?? 0) ==
+                            (int)Socket_ByteSweepMode.PairCombination
+                            ? Socket_ByteSweepMode.PairCombination
+                            : Socket_ByteSweepMode.Sequential,
+                        BCombinationFirstPosition = (int?)element.Element("FirstPosition") ?? 0,
+                        BCombinationFirstInterval = Math.Max(0, (int?)element.Element("FirstInterval") ?? 0),
+                        BCombinationFirstLength = Math.Max(1, (int?)element.Element("FirstLength") ?? 255),
+                        BCombinationSecondPosition = (int?)element.Element("SecondPosition") ?? 0,
+                        BCombinationSecondInterval = Math.Max(0, (int?)element.Element("SecondInterval") ?? 0),
+                        BCombinationSecondLength = Math.Max(1, (int?)element.Element("SecondLength") ?? 255),
                         BStart = (int?)element.Element("StartOffset") ?? 0,
                         BLength = (int?)element.Element("ByteLength") ?? 1,
                         PacketType = Socket_Cache.SocketPacket.GetPacketType_ByString(
@@ -13001,6 +13056,13 @@ namespace WPELibrary.Lib
                         "LoopCount INTEGER NOT NULL DEFAULT 1," +
                         "Interval INTEGER NOT NULL DEFAULT 1000," +
                         "NextInterval INTEGER NOT NULL DEFAULT 0," +
+                        "Mode INTEGER NOT NULL DEFAULT 0," +
+                        "FirstPosition INTEGER NOT NULL DEFAULT 0," +
+                        "FirstInterval INTEGER NOT NULL DEFAULT 0," +
+                        "FirstLength INTEGER NOT NULL DEFAULT 255," +
+                        "SecondPosition INTEGER NOT NULL DEFAULT 0," +
+                        "SecondInterval INTEGER NOT NULL DEFAULT 0," +
+                        "SecondLength INTEGER NOT NULL DEFAULT 255," +
                         "StartOffset INTEGER NOT NULL DEFAULT 0," +
                         "ByteLength INTEGER NOT NULL DEFAULT 1," +
                         "PacketType INTEGER NOT NULL," +
@@ -13013,6 +13075,13 @@ namespace WPELibrary.Lib
                         cmd.ExecuteNonQuery();
                         EnsureByteSweepColumn(conn, "LoopCount", "INTEGER NOT NULL DEFAULT 1");
                         EnsureByteSweepColumn(conn, "NextInterval", "INTEGER NOT NULL DEFAULT 0");
+                        EnsureByteSweepColumn(conn, "Mode", "INTEGER NOT NULL DEFAULT 0");
+                        EnsureByteSweepColumn(conn, "FirstPosition", "INTEGER NOT NULL DEFAULT 0");
+                        EnsureByteSweepColumn(conn, "FirstInterval", "INTEGER NOT NULL DEFAULT 0");
+                        EnsureByteSweepColumn(conn, "FirstLength", "INTEGER NOT NULL DEFAULT 255");
+                        EnsureByteSweepColumn(conn, "SecondPosition", "INTEGER NOT NULL DEFAULT 0");
+                        EnsureByteSweepColumn(conn, "SecondInterval", "INTEGER NOT NULL DEFAULT 0");
+                        EnsureByteSweepColumn(conn, "SecondLength", "INTEGER NOT NULL DEFAULT 255");
                         EnsureByteSweepColumn(conn, "Annotations", "TEXT");
                     }
 
@@ -13132,9 +13201,9 @@ namespace WPELibrary.Lib
                                 {
                                     using (SQLiteCommand insertPreset = new SQLiteCommand(
                                         "INSERT INTO ByteSweepPreset (" +
-                                        "GUID,IsEnable,Name,FolderName,SortOrder,LoopCount,Interval,NextInterval,StartOffset,ByteLength," +
+                                        "GUID,IsEnable,Name,FolderName,SortOrder,LoopCount,Interval,NextInterval,Mode,FirstPosition,FirstInterval,FirstLength,SecondPosition,SecondInterval,SecondLength,StartOffset,ByteLength," +
                                         "PacketType,IPFrom,IPTo,Buffer,Annotations) VALUES (" +
-                                        "@GUID,@IsEnable,@Name,@FolderName,@SortOrder,@LoopCount,@Interval,@NextInterval,@StartOffset,@ByteLength," +
+                                        "@GUID,@IsEnable,@Name,@FolderName,@SortOrder,@LoopCount,@Interval,@NextInterval,@Mode,@FirstPosition,@FirstInterval,@FirstLength,@SecondPosition,@SecondInterval,@SecondLength,@StartOffset,@ByteLength," +
                                         "@PacketType,@IPFrom,@IPTo,@Buffer,@Annotations);", conn))
                                     {
                                         insertPreset.Transaction = transaction;
@@ -13146,6 +13215,13 @@ namespace WPELibrary.Lib
                                         insertPreset.Parameters.AddWithValue("@LoopCount", preset.BLoopCount);
                                         insertPreset.Parameters.AddWithValue("@Interval", preset.BInterval);
                                         insertPreset.Parameters.AddWithValue("@NextInterval", preset.BNextInterval);
+                                        insertPreset.Parameters.AddWithValue("@Mode", (int)preset.BMode);
+                                        insertPreset.Parameters.AddWithValue("@FirstPosition", preset.BCombinationFirstPosition);
+                                        insertPreset.Parameters.AddWithValue("@FirstInterval", preset.BCombinationFirstInterval);
+                                        insertPreset.Parameters.AddWithValue("@FirstLength", preset.BCombinationFirstLength);
+                                        insertPreset.Parameters.AddWithValue("@SecondPosition", preset.BCombinationSecondPosition);
+                                        insertPreset.Parameters.AddWithValue("@SecondInterval", preset.BCombinationSecondInterval);
+                                        insertPreset.Parameters.AddWithValue("@SecondLength", preset.BCombinationSecondLength);
                                         insertPreset.Parameters.AddWithValue("@StartOffset", preset.BStart);
                                         insertPreset.Parameters.AddWithValue("@ByteLength", preset.BLength);
                                         insertPreset.Parameters.AddWithValue("@PacketType", preset.PacketType);
@@ -13220,9 +13296,9 @@ namespace WPELibrary.Lib
                     using (SQLiteConnection conn = new SQLiteConnection(conStr))
                     using (SQLiteCommand cmd = new SQLiteCommand(
                         "INSERT INTO ByteSweepPreset (" +
-                        "GUID,IsEnable,Name,FolderName,SortOrder,LoopCount,Interval,NextInterval,StartOffset,ByteLength," +
+                        "GUID,IsEnable,Name,FolderName,SortOrder,LoopCount,Interval,NextInterval,Mode,FirstPosition,FirstInterval,FirstLength,SecondPosition,SecondInterval,SecondLength,StartOffset,ByteLength," +
                         "PacketType,IPFrom,IPTo,Buffer,Annotations) VALUES (" +
-                        "@GUID,@IsEnable,@Name,@FolderName,@SortOrder,@LoopCount,@Interval,@NextInterval,@StartOffset,@ByteLength," +
+                        "@GUID,@IsEnable,@Name,@FolderName,@SortOrder,@LoopCount,@Interval,@NextInterval,@Mode,@FirstPosition,@FirstInterval,@FirstLength,@SecondPosition,@SecondInterval,@SecondLength,@StartOffset,@ByteLength," +
                         "@PacketType,@IPFrom,@IPTo,@Buffer,@Annotations);", conn))
                     {
                         cmd.Parameters.AddWithValue("@GUID", preset.BID.ToString().ToUpper());
@@ -13233,6 +13309,13 @@ namespace WPELibrary.Lib
                         cmd.Parameters.AddWithValue("@LoopCount", preset.BLoopCount);
                         cmd.Parameters.AddWithValue("@Interval", preset.BInterval);
                         cmd.Parameters.AddWithValue("@NextInterval", preset.BNextInterval);
+                        cmd.Parameters.AddWithValue("@Mode", (int)preset.BMode);
+                        cmd.Parameters.AddWithValue("@FirstPosition", preset.BCombinationFirstPosition);
+                        cmd.Parameters.AddWithValue("@FirstInterval", preset.BCombinationFirstInterval);
+                        cmd.Parameters.AddWithValue("@FirstLength", preset.BCombinationFirstLength);
+                        cmd.Parameters.AddWithValue("@SecondPosition", preset.BCombinationSecondPosition);
+                        cmd.Parameters.AddWithValue("@SecondInterval", preset.BCombinationSecondInterval);
+                        cmd.Parameters.AddWithValue("@SecondLength", preset.BCombinationSecondLength);
                         cmd.Parameters.AddWithValue("@StartOffset", preset.BStart);
                         cmd.Parameters.AddWithValue("@ByteLength", preset.BLength);
                         cmd.Parameters.AddWithValue("@PacketType", preset.PacketType);

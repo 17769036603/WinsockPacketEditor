@@ -310,6 +310,7 @@
       <SubType>UserControl</SubType>
     </Compile>
     <Compile Include="Socket_ByteAnnotationController.cs" />
+    <Compile Include="Socket_ByteSweepEditorPanel.cs" />
     <Compile Include="Socket_SendForm.Designer.cs">
       <DependentUpon>Socket_SendForm.cs</DependentUpon>
     </Compile>

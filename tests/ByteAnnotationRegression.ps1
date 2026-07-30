@@ -217,7 +217,9 @@ Assert-Equal $false ($mainFormSource.Contains("Socket_ByteAnnotationController")
 Assert-Equal $false ($mainFormDesignerSource.Contains("byteAnnotationController")) "main workspace designer must not retain the annotation controller"
 Assert-Equal $true ($sendFormSource.Contains("new Socket_ByteAnnotationController(")) "send form must retain the byte annotation panel"
 Assert-Equal $true ($mainFormSource.Contains("this.CommitPacketDataEdits();`r`n            this.StopByteSweep();") -or $mainFormSource.Contains("this.CommitPacketDataEdits();`n            this.StopByteSweep();")) "form close must commit the active byte-sweep editor before persistence"
-Assert-Equal $true ($controllerSource.Contains("layout.ColumnStyles[column].Width = collapsed ? 28F : 220F;")) "annotation panel must support collapse and expand"
+Assert-Equal $true (
+    $controllerSource.Contains("collapsed ? 28F : expandedRowHeight")
+) "annotation panel must collapse vertically without changing the shared sweep column width"
 Assert-Equal $true ($controllerSource.Contains("internal sealed class Socket_ByteAnnotationController : IDisposable")) "annotation controller must release owned resources"
 Assert-Equal $true ($controllerSource.Contains("long normalizedLength = selectionLength <= 0")) "a caret-only annotation must normalize to one exact byte"
 $controllerType = [WPELibrary.Socket_SendForm].Assembly.GetType(

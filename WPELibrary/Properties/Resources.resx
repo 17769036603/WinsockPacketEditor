@@ -408,7 +408,8 @@
   <data name="UI_SweepContext" xml:space="preserve"><value>{0} · 已选 {1} · 预计 {2} · {3}</value></data>
   <data name="UI_SweepContextTip" xml:space="preserve"><value>当前分组：{0}；已选择：{1}；预计发送：{2}；实际发送：{3}；成功：{4}；失败：{5}；{6}</value></data>
   <data name="UI_NotSelected" xml:space="preserve"><value>未选择</value></data>
-  <data name="UI_SweepProgress" xml:space="preserve"><value>{0} · 轮 {1}/{2} · 字节 {3}/{4} · {5}/255</value></data>
+  <data name="UI_SweepProgress" xml:space="preserve"><value>当前封包：{0} · 轮 {1}/{2} · 字节 {3}/{4} · {5}/255</value></data>
+  <data name="UI_SweepActive" xml:space="preserve"><value>当前封包</value></data>
   <data name="UI_SweepProgressTip" xml:space="preserve"><value>循环：{0}/{1}；位置：{2}；原值：{3:X2}；当前：{4:X2}；本轮发送：{5}；成功：{6}；失败：{7}</value></data>
   <data name="UI_GroupExists" xml:space="preserve"><value>分组名称为空或已经存在。</value></data>
   <data name="UI_SelectGroupFirst" xml:space="preserve"><value>请先新建并选择一个分组。</value></data>
@@ -461,4 +462,42 @@
   <data name="ByteSweep_Required" xml:space="preserve"><value>请输入预设名称和递进分组。</value></data>
   <data name="ByteSweep_RangeInvalid" xml:space="preserve"><value>递进范围超出封包长度。</value></data>
   <data name="ByteSweep_Duplicate" xml:space="preserve"><value>当前分组中已存在同名预设。</value></data>
+  <data name="ByteSweep_ControlTitle" xml:space="preserve"><value>递进控制</value></data>
+  <data name="ByteSweep_Mode" xml:space="preserve"><value>模式</value></data>
+  <data name="ByteSweep_SequentialMode" xml:space="preserve"><value>普通递进</value></data>
+  <data name="ByteSweep_PairMode" xml:space="preserve"><value>双字节组合</value></data>
+  <data name="ByteSweep_RangeEstimate" xml:space="preserve"><value>范围 / 预计</value></data>
+  <data name="ByteSweep_NoSelection" xml:space="preserve"><value>未选择范围</value></data>
+  <data name="ByteSweep_NormalInterval" xml:space="preserve"><value>普通间隔(ms)</value></data>
+  <data name="ByteSweep_FirstPosition" xml:space="preserve"><value>字节A位置</value></data>
+  <data name="ByteSweep_FirstLength" xml:space="preserve"><value>字节A长度</value></data>
+  <data name="ByteSweep_FirstInterval" xml:space="preserve"><value>字节A间隔(ms)</value></data>
+  <data name="ByteSweep_SecondPosition" xml:space="preserve"><value>字节B位置</value></data>
+  <data name="ByteSweep_SecondLength" xml:space="preserve"><value>字节B长度</value></data>
+  <data name="ByteSweep_SecondInterval" xml:space="preserve"><value>字节B间隔(ms)</value></data>
+  <data name="ByteSweep_Status" xml:space="preserve"><value>状态</value></data>
+  <data name="ByteSweep_Idle" xml:space="preserve"><value>空闲</value></data>
+  <data name="ByteSweep_Running" xml:space="preserve"><value>递进中</value></data>
+  <data name="ByteSweep_StartAction" xml:space="preserve"><value>开始递进</value></data>
+  <data name="ByteSweep_StopAction" xml:space="preserve"><value>停止递进</value></data>
+  <data name="ByteSweep_SequentialHeader" xml:space="preserve"><value>普通单字节递进</value></data>
+  <data name="ByteSweep_SaveSequentialPreset" xml:space="preserve"><value>保存普通递进预设</value></data>
+  <data name="ByteSweep_UpdateSequentialPreset" xml:space="preserve"><value>更新普通递进预设</value></data>
+  <data name="ByteSweep_PairEstimateFormat" xml:space="preserve"><value>A{0} × B{1} × {2}轮；预计 {3}</value></data>
+  <data name="ByteSweep_SequentialEstimateFormat" xml:space="preserve"><value>位置 {0}，{1} 字节；预计 {2}</value></data>
+  <data name="ByteSweep_PairInvalid" xml:space="preserve"><value>组合递进需要选择两个不同且位于封包范围内的字节位置。</value></data>
+  <data name="ByteSweep_PairTitle" xml:space="preserve"><value>双字节组合递进</value></data>
+  <data name="ByteSweep_PairError" xml:space="preserve"><value>双字节组合递进发生错误：{0}</value></data>
+  <data name="ByteSweep_PairStopped" xml:space="preserve"><value>双字节组合递进已停止</value></data>
+  <data name="ByteSweep_PairCompleted" xml:space="preserve"><value>双字节组合递进已完成：A {0} × B {1} × 循环 {2}，共发送 {3} 次</value></data>
+  <data name="ByteSweep_PairProgress" xml:space="preserve"><value>组合递进：轮 {0}/{1} · A={2:X2} ({3}/{4}) · B={5:X2} ({6}/{7}) · {8}/{9}</value></data>
+  <data name="ByteSweep_BatchInvalid" xml:space="preserve"><value>预设“{0}”的封包或递进范围无效，请先编辑。</value></data>
+  <data name="ByteSweep_BatchTitle" xml:space="preserve"><value>递进发送</value></data>
+  <data name="ByteSweep_BatchError" xml:space="preserve"><value>递进任务发生错误：{0}</value></data>
+  <data name="ByteSweep_BatchPairProgress" xml:space="preserve"><value>组合递进：{0} · 轮 {1}/{2} · A={3:X2} ({4}/{5}) · B={6:X2} ({7}/{8}) · {9}/{10}</value></data>
+  <data name="ByteSweep_PickFirst" xml:space="preserve"><value>选取 A</value></data>
+  <data name="ByteSweep_PickSecond" xml:space="preserve"><value>选取 B</value></data>
+  <data name="ByteSweep_PickInstruction" xml:space="preserve"><value>请点击左侧封包选择字节 {0}</value></data>
+  <data name="ByteSweep_PickDuplicate" xml:space="preserve"><value>字节 A 和字节 B 不能是同一个位置，请重新选择。</value></data>
+  <data name="ByteSweep_PickComplete" xml:space="preserve"><value>已选择字节 {0}：位置 {1}</value></data>
 </root>

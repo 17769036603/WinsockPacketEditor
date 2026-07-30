@@ -3003,6 +3003,11 @@ namespace WPELibrary
 
         private void PacketDataProvider_Changed(object sender, EventArgs e)
         {
+            if (this.byteSweepLivePreviewUpdating)
+            {
+                return;
+            }
+
             this.CommitPacketDataEdits();
         }
 

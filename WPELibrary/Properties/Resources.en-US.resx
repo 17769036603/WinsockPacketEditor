@@ -117,7 +117,8 @@
   <data name="UI_SweepContext" xml:space="preserve"><value>{0} · {1} selected · {2} planned · {3}</value></data>
   <data name="UI_SweepContextTip" xml:space="preserve"><value>Current group: {0}; selected: {1}; planned: {2}; sent: {3}; succeeded: {4}; failed: {5}; {6}</value></data>
   <data name="UI_NotSelected" xml:space="preserve"><value>Not selected</value></data>
-  <data name="UI_SweepProgress" xml:space="preserve"><value>{0} · loop {1}/{2} · byte {3}/{4} · {5}/255</value></data>
+  <data name="UI_SweepProgress" xml:space="preserve"><value>Current preset: {0} · loop {1}/{2} · byte {3}/{4} · {5}/255</value></data>
+  <data name="UI_SweepActive" xml:space="preserve"><value>Current preset</value></data>
   <data name="UI_SweepProgressTip" xml:space="preserve"><value>Loop: {0}/{1}; position: {2}; original: {3:X2}; current: {4:X2}; sent this loop: {5}; succeeded: {6}; failed: {7}</value></data>
   <data name="UI_GroupExists" xml:space="preserve"><value>The group name is empty or already exists.</value></data>
   <data name="UI_SelectGroupFirst" xml:space="preserve"><value>Create and select a group first.</value></data>
@@ -170,4 +171,42 @@
   <data name="ByteSweep_Required" xml:space="preserve"><value>Enter a preset name and sweep group.</value></data>
   <data name="ByteSweep_RangeInvalid" xml:space="preserve"><value>The sweep range exceeds the packet length.</value></data>
   <data name="ByteSweep_Duplicate" xml:space="preserve"><value>A preset with this name already exists in the selected group.</value></data>
+  <data name="ByteSweep_ControlTitle" xml:space="preserve"><value>Sweep control</value></data>
+  <data name="ByteSweep_Mode" xml:space="preserve"><value>Mode</value></data>
+  <data name="ByteSweep_SequentialMode" xml:space="preserve"><value>Sequential sweep</value></data>
+  <data name="ByteSweep_PairMode" xml:space="preserve"><value>Two-byte combination</value></data>
+  <data name="ByteSweep_RangeEstimate" xml:space="preserve"><value>Range / planned</value></data>
+  <data name="ByteSweep_NoSelection" xml:space="preserve"><value>No range selected</value></data>
+  <data name="ByteSweep_NormalInterval" xml:space="preserve"><value>Normal interval (ms)</value></data>
+  <data name="ByteSweep_FirstPosition" xml:space="preserve"><value>Byte A position</value></data>
+  <data name="ByteSweep_FirstLength" xml:space="preserve"><value>Byte A length</value></data>
+  <data name="ByteSweep_FirstInterval" xml:space="preserve"><value>Byte A interval (ms)</value></data>
+  <data name="ByteSweep_SecondPosition" xml:space="preserve"><value>Byte B position</value></data>
+  <data name="ByteSweep_SecondLength" xml:space="preserve"><value>Byte B length</value></data>
+  <data name="ByteSweep_SecondInterval" xml:space="preserve"><value>Byte B interval (ms)</value></data>
+  <data name="ByteSweep_Status" xml:space="preserve"><value>Status</value></data>
+  <data name="ByteSweep_Idle" xml:space="preserve"><value>Idle</value></data>
+  <data name="ByteSweep_Running" xml:space="preserve"><value>Sweeping</value></data>
+  <data name="ByteSweep_StartAction" xml:space="preserve"><value>Start sweep</value></data>
+  <data name="ByteSweep_StopAction" xml:space="preserve"><value>Stop sweep</value></data>
+  <data name="ByteSweep_SequentialHeader" xml:space="preserve"><value>Sequential byte sweep</value></data>
+  <data name="ByteSweep_SaveSequentialPreset" xml:space="preserve"><value>Save sequential preset</value></data>
+  <data name="ByteSweep_UpdateSequentialPreset" xml:space="preserve"><value>Update sequential preset</value></data>
+  <data name="ByteSweep_PairEstimateFormat" xml:space="preserve"><value>A{0} × B{1} × {2} loop(s); planned {3}</value></data>
+  <data name="ByteSweep_SequentialEstimateFormat" xml:space="preserve"><value>Position {0}, {1} byte(s); planned {2}</value></data>
+  <data name="ByteSweep_PairInvalid" xml:space="preserve"><value>Combination sweep requires two different byte positions inside the packet.</value></data>
+  <data name="ByteSweep_PairTitle" xml:space="preserve"><value>Two-byte combination sweep</value></data>
+  <data name="ByteSweep_PairError" xml:space="preserve"><value>Two-byte combination sweep failed: {0}</value></data>
+  <data name="ByteSweep_PairStopped" xml:space="preserve"><value>Two-byte combination sweep stopped</value></data>
+  <data name="ByteSweep_PairCompleted" xml:space="preserve"><value>Two-byte combination completed: A {0} × B {1} × {2} loop(s), {3} sends</value></data>
+  <data name="ByteSweep_PairProgress" xml:space="preserve"><value>Combination: loop {0}/{1} · A={2:X2} ({3}/{4}) · B={5:X2} ({6}/{7}) · {8}/{9}</value></data>
+  <data name="ByteSweep_BatchInvalid" xml:space="preserve"><value>Preset "{0}" has an invalid packet or sweep range. Edit it first.</value></data>
+  <data name="ByteSweep_BatchTitle" xml:space="preserve"><value>Byte-sweep send</value></data>
+  <data name="ByteSweep_BatchError" xml:space="preserve"><value>Byte-sweep task failed: {0}</value></data>
+  <data name="ByteSweep_BatchPairProgress" xml:space="preserve"><value>Combination: {0} · loop {1}/{2} · A={3:X2} ({4}/{5}) · B={6:X2} ({7}/{8}) · {9}/{10}</value></data>
+  <data name="ByteSweep_PickFirst" xml:space="preserve"><value>Pick A</value></data>
+  <data name="ByteSweep_PickSecond" xml:space="preserve"><value>Pick B</value></data>
+  <data name="ByteSweep_PickInstruction" xml:space="preserve"><value>Click a byte in the packet to select byte {0}</value></data>
+  <data name="ByteSweep_PickDuplicate" xml:space="preserve"><value>Byte A and byte B must use different positions. Pick another byte.</value></data>
+  <data name="ByteSweep_PickComplete" xml:space="preserve"><value>Byte {0} selected at position {1}</value></data>
 </root>

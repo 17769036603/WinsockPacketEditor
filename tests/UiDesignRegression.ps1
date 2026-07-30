@@ -1,6 +1,7 @@
 param(
     [string]$Configuration = "Debug",
-    [string]$BuildDirectory = ""
+    [string]$BuildDirectory = "",
+    [string]$AuditScreenshotPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -69,6 +70,38 @@ function Assert-True([bool]$condition, [string]$message) {
         throw $message
     }
 }
+
+$packetType = [WPELibrary.Lib.Socket_Cache+SocketPacket+PacketType]::WS2_Send
+$capturedSocketA = New-Object WPELibrary.Lib.Socket_PacketInfo
+$capturedSocketA.PacketType = $packetType
+$capturedSocketA.PacketTo = "198.51.100.10:1000"
+$capturedSocketA.PacketSocket = 101
+$capturedSocketB = New-Object WPELibrary.Lib.Socket_PacketInfo
+$capturedSocketB.PacketType = $packetType
+$capturedSocketB.PacketTo = "198.51.100.20:2000"
+$capturedSocketB.PacketSocket = 202
+$emptyTargetTemplate = New-Object WPELibrary.Lib.Socket_PacketInfo
+$emptyTargetTemplate.PacketType = $packetType
+$capturedPackets = New-Object 'System.Collections.Generic.List[WPELibrary.Lib.Socket_PacketInfo]'
+$capturedPackets.Add($capturedSocketA)
+$capturedPackets.Add($capturedSocketB)
+$emptyTemplates = New-Object 'System.Collections.Generic.List[WPELibrary.Lib.Socket_PacketInfo]'
+$emptyTemplates.Add($emptyTargetTemplate)
+Assert-True (
+    [WPELibrary.Lib.Socket_Cache+SocketList]::FindLatestMatchingSocket(
+        $capturedPackets,
+        $emptyTemplates) -eq 202
+) "A legacy preset without a destination must use the latest captured socket of the same packet type."
+$wrongTargetTemplate = New-Object WPELibrary.Lib.Socket_PacketInfo
+$wrongTargetTemplate.PacketType = $packetType
+$wrongTargetTemplate.PacketTo = "198.51.100.99:9999"
+$wrongTargetTemplates = New-Object 'System.Collections.Generic.List[WPELibrary.Lib.Socket_PacketInfo]'
+$wrongTargetTemplates.Add($wrongTargetTemplate)
+Assert-True (
+    [WPELibrary.Lib.Socket_Cache+SocketList]::FindLatestMatchingSocket(
+        $capturedPackets,
+        $wrongTargetTemplates) -eq 0
+) "A preset with a destination must still require an exact destination match."
 
 $forwardSelection = Get-InclusiveMouseSelection 3 5 10
 Assert-True (
@@ -232,6 +265,48 @@ Assert-True (
     @($script:byteSweepProgressValues |
         Where-Object { $_.CurrentValue -eq $_.OriginalValue }).Count -eq 0
 ) "Every displayed sweep value must come from a completed non-original send."
+
+$pairSentValues = [System.Collections.Generic.List[string]]::new()
+$pairSend = [System.Management.Automation.LanguagePrimitives]::ConvertTo(
+    {
+        param([byte[]]$buffer)
+        [void]$pairSentValues.Add(("{0:X2}:{1:X2}" -f $buffer[0], $buffer[1]))
+        return $true
+    },
+    $sendDelegateType)
+$pairProgressValues = [System.Collections.Generic.List[WPELibrary.Lib.Socket_ByteSweepProgress]]::new()
+$pairProgress = [System.Management.Automation.LanguagePrimitives]::ConvertTo(
+    {
+        param([WPELibrary.Lib.Socket_ByteSweepProgress]$progress)
+        [void]$pairProgressValues.Add($progress)
+    },
+    $progressDelegateType)
+$pairBaseline = [byte[]](0x10, 0x20)
+$pairResult = [WPELibrary.Lib.Socket_ByteSweepEngine]::ExecutePairCombination(
+    $pairBaseline,
+    0,
+    3,
+    0,
+    1,
+    2,
+    0,
+    $pairSend,
+    [System.Threading.CancellationToken]::None,
+    $pairProgress)
+Assert-True (
+    $pairResult.TotalSend -eq 6 -and
+    $pairSentValues.Count -eq 6 -and
+    @($pairSentValues | Select-Object -Unique).Count -eq 6
+) "A pair combination must send every configured first/second value combination exactly once."
+Assert-True (
+    $pairBaseline[0] -eq 0x10 -and $pairBaseline[1] -eq 0x20
+) "A pair combination must preserve its baseline."
+Assert-True (
+    $pairProgressValues.Count -ge 2 -and
+    $pairProgressValues.Count -lt $pairResult.TotalSend -and
+    $pairProgressValues[-1].TotalSend -eq $pairResult.TotalSend -and
+    $pairProgressValues[-1].IsPairCombination
+) "Pair progress must include first/final state without queueing one UI update per send."
 
 $script:byteSweepSentValues.Clear()
 $executeSweepLoops = [WPELibrary.Socket_SendForm].GetMethod(
@@ -397,7 +472,8 @@ $packet.RawBuffer = [byte[]](0x01, 0x02)
 $packet.PacketLen = 2
 $sendForm = [WPELibrary.Socket_SendForm]::new($packet)
 try {
-    Assert-True ($sendForm.MinimumSize.Width -ge 950) "Send dialog must not shrink until its controls are clipped."
+    Assert-True ($sendForm.MinimumSize.Width -ge 1200) "Send dialog must preserve usable packet, detail, and sweep columns at scaled DPI."
+    Assert-True ($sendForm.MinimumSize.Height -ge 620) "Send dialog must preserve its complete compact lower action area."
     $saveButton = Get-PrivateField $sendForm "bSave"
     $startButton = Get-PrivateField $sendForm "bSend"
     $closeButton = Get-PrivateField $sendForm "bClose"
@@ -430,6 +506,11 @@ try {
     ) "The primary send action must use the clearer Start label."
 
     $stopButton = Get-PrivateField $sendForm "bSendStop"
+    $normalSweepStartButton = Get-PrivateField $sendForm "bStartByteSweep"
+    $normalSweepStopButton = Get-PrivateField $sendForm "bStopByteSweep"
+    $normalSweepEditor = Get-PrivateField $sendForm "byteSweepEditorPanel"
+    $normalSweepEditorMode = Get-PrivateField $normalSweepEditor "mode"
+    $normalSweepEditorStop = Get-PrivateField $normalSweepEditor "stop"
     $sendGroup = Get-PrivateField $sendForm "gbSendType"
     $sendTimesInput = Get-PrivateField $sendForm "nudSendType_Times"
     $sendHexBox = Get-PrivateField $sendForm "hbPacketData"
@@ -474,6 +555,10 @@ try {
     $setSendRunningState.Invoke($sendForm, [object[]]@($true))
     Assert-True $sendGroup.Enabled "The send group must remain enabled while running so Stop stays actionable."
     Assert-True $stopButton.Enabled "Starting a send must enable the Stop button."
+    Assert-True (-not $normalSweepStartButton.Enabled) "A normal send must disable the separate sweep Start action."
+    Assert-True (-not $normalSweepStopButton.Enabled) "A normal send must not enable the lower sweep Stop action."
+    Assert-True (-not $normalSweepEditorStop.Enabled) "A normal send must not enable the right sweep Stop action."
+    Assert-True (-not $normalSweepEditorMode.Enabled) "A normal send must lock right-editor sweep settings against concurrent edits."
     Assert-True (-not $startButton.Enabled) "Starting a send must disable the Start button."
     Assert-True (-not $sendTimesInput.Enabled) "Running parameters must remain locked while Stop stays enabled."
     Assert-True (-not $saveButton.Enabled) "Preset saving must remain disabled during a send."
@@ -481,6 +566,7 @@ try {
     $setSendRunningState.Invoke($sendForm, [object[]]@($false))
     Assert-True $startButton.Enabled "Completing or stopping a send must re-enable Start."
     Assert-True (-not $stopButton.Enabled) "Completing or stopping a send must disable Stop again."
+    Assert-True $normalSweepEditorMode.Enabled "Completing or stopping a send must unlock right-editor sweep settings."
     Assert-True (
         $sendHexBox.ReadOnly -eq $originalPacketEditorReadOnly
     ) "Completing or stopping a send must restore the packet editor's original read-only state."
@@ -550,9 +636,30 @@ try {
     $loopCountInput = Get-PrivateField $sweepEditForm "nudByteSweepLoopCount"
     $intervalInput = Get-PrivateField $sweepEditForm "nudByteSweepInterval"
     $nextIntervalInput = Get-PrivateField $sweepEditForm "nudByteSweepNextInterval"
+    $legacySweepSettings = Get-PrivateField $sweepEditForm "tlpByteSweepSettings"
+    $legacyModeSelector = Get-PrivateField $sweepEditForm "cbbByteSweepMode"
+    $legacySecondPosition = Get-PrivateField $sweepEditForm "nudByteSweepSecondPosition"
+    $legacySecondLength = Get-PrivateField $sweepEditForm "nudByteSweepSecondLength"
     $sweepHexBox = Get-PrivateField $sweepEditForm "hbPacketData"
     $perLineSelector = Get-PrivateField $sweepEditForm "tscbPerLine"
     $sweepSaveButton = Get-PrivateField $sweepEditForm "bSaveByteSweepPreset"
+    $sweepStartButton = Get-PrivateField $sweepEditForm "bStartByteSweep"
+    $sweepStopButton = Get-PrivateField $sweepEditForm "bStopByteSweep"
+    $sweepSidePanel = Get-PrivateField $sweepEditForm "pnlByteSweepSide"
+    $sweepEditorPanel = Get-PrivateField $sweepEditForm "byteSweepEditorPanel"
+    $sweepEditorLayout = Get-PrivateField $sweepEditorPanel "layout"
+    $sweepEditorMode = Get-PrivateField $sweepEditorPanel "mode"
+    $sweepEditorSummary = Get-PrivateField $sweepEditorPanel "selection"
+    $sweepEditorInterval = Get-PrivateField $sweepEditorPanel "interval"
+    $sweepEditorFirstPosition = Get-PrivateField $sweepEditorPanel "firstPosition"
+    $sweepEditorPickFirst = Get-PrivateField $sweepEditorPanel "pickFirst"
+    $sweepEditorSecondPosition = Get-PrivateField $sweepEditorPanel "secondPosition"
+    $sweepEditorSecondLength = Get-PrivateField $sweepEditorPanel "secondLength"
+    $sweepEditorPickSecond = Get-PrivateField $sweepEditorPanel "pickSecond"
+    $sweepEditorSave = Get-PrivateField $sweepEditorPanel "save"
+    $sweepEditorStart = Get-PrivateField $sweepEditorPanel "send"
+    $sweepEditorStop = Get-PrivateField $sweepEditorPanel "stop"
+    $annotationController = Get-PrivateField $sweepEditForm "byteAnnotationController"
     $socketGroup = Get-PrivateField $sweepEditForm "gbSendSocket"
     $sendGroup = Get-PrivateField $sweepEditForm "gbSendType"
     $progressionGroup = Get-PrivateField $sweepEditForm "gbSendStep"
@@ -565,6 +672,19 @@ try {
         $parameterLayout.GetCellPosition($sendGroup).Column -eq 0 -and
         $parameterLayout.GetCellPosition($progressionGroup).Column -eq 1
     ) "Send and progression panels must be arranged left to right."
+    Assert-True (
+        $legacySweepSettings.ColumnCount -eq 6 -and
+        $legacySecondPosition.Parent -eq $legacySweepSettings -and
+        $legacySecondLength.Parent -eq $legacySweepSettings
+    ) "The original progression section must retain its backing fields for synchronized execution."
+    Assert-True (
+        -not $legacyModeSelector.Visible -and
+        $legacySweepSettings.RowStyles[0].Height -gt 0 -and
+        $legacySweepSettings.RowStyles[1].Height -eq 0 -and
+        $legacySweepSettings.RowStyles[2].Height -eq 0 -and
+        -not $legacySecondPosition.Visible -and
+        -not $legacySecondLength.Visible
+    ) "The lower progression section must remain a single-mode surface; pair selection belongs only to the right editor."
     Assert-True (-not $socketGroup.TabStop) "The hidden Socket panel must not participate in keyboard navigation."
     Assert-True ($sendButton.Parent.Name -eq "tlpSendActions") "Send actions must remain inside the send panel."
     Assert-True (
@@ -574,8 +694,83 @@ try {
     ) "Hiding normal preset save in sweep editing must let Start and Stop share the full action row."
     Assert-True (-not $idleSweepStatus.Visible) "Idle sweep guidance must not be duplicated in the status bar."
     Assert-True (
-        $sweepSaveButton.Parent.Name -eq "tlpByteSweepSettings"
-    ) "Sweep preset saving must remain inside the progression panel."
+        $sweepSaveButton.Parent.Name -eq "tlpByteSweepActions" -and
+        $sweepStartButton.Parent -eq $sweepSaveButton.Parent -and
+        $sweepStopButton.Parent -eq $sweepSaveButton.Parent
+    ) "The lower sequential sweep area must provide its own Save, Start, and Stop actions."
+    Assert-True (
+        $sweepSaveButton.Parent.GetCellPosition($sweepStartButton).Column -eq 0 -and
+        $sweepSaveButton.Parent.GetCellPosition($sweepStopButton).Column -eq 1 -and
+        $sweepSaveButton.Parent.GetCellPosition($sweepSaveButton).Column -eq 2
+    ) "The lower sweep actions must be ordered Start, Stop, then Save."
+    Assert-True (
+        -not [string]::IsNullOrWhiteSpace($sweepEditorStart.AccessibleName) -and
+        -not [string]::IsNullOrWhiteSpace($sweepEditorStop.AccessibleName) -and
+        $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorStart) -eq 0 -and
+        $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorStop) -eq 1 -and
+        $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorSave) -eq 2
+    ) "The right sweep editor must provide its own accessible Start and Stop actions."
+    Assert-True ($sweepSidePanel.RowCount -eq 2 -and $sweepSidePanel.Controls.Count -eq 2) "The right packet panel must preserve annotation and add a separate sweep section."
+    Assert-True ($sweepEditorPanel.GetType().Name -eq "Socket_ByteSweepEditorPanel") "The right sweep section must use the reusable editor panel."
+    Assert-True ($sweepEditorSecondPosition.Parent -ne $null -and $sweepEditorSecondLength.Parent -ne $null) "The right sweep section must include visible byte B position and length inputs."
+    Assert-True (
+        $sweepSidePanel.ColumnStyles[0].SizeType -eq
+        [System.Windows.Forms.SizeType]::Percent
+    ) "The annotation section must not reduce the width of the shared sweep column."
+    Assert-True (
+        $sweepEditorLayout.RowStyles[3].Height -gt 0 -and
+        $sweepEditorLayout.RowStyles[5].Height -eq 0
+    ) "Sequential mode must show only its relevant interval fields."
+    $sweepEditorMode.SelectedIndex = 1
+    [System.Windows.Forms.Application]::DoEvents()
+    Assert-True (
+        $sweepEditorLayout.RowStyles[3].Height -eq 0 -and
+        $sweepEditorLayout.RowStyles[5].Height -gt 0 -and
+        $sweepEditorLayout.RowStyles[10].Height -gt 0 -and
+        $sweepEditorPickFirst.Parent -ne $null -and
+        $sweepEditorPickSecond.Parent -ne $null
+    ) "Pair mode must reveal both A and B fields without leaving the normal interval row."
+    Assert-True (
+        $sweepEditorSummary.Text.Contains("A") -and
+        $sweepEditorSummary.Text.Contains("B") -and
+        $sweepEditorSummary.Text.Contains("65025")
+    ) "Pair mode must show the estimated combination count. Actual: $($sweepEditorSummary.Text)"
+    foreach ($accessibleControl in @(
+        $sweepEditorMode,
+        $sweepEditorInterval,
+        $sweepEditorFirstPosition,
+        $sweepEditorPickFirst,
+        $sweepEditorSecondPosition,
+        $sweepEditorSecondLength,
+        $sweepEditorPickSecond
+    )) {
+        Assert-True (
+            -not [string]::IsNullOrWhiteSpace($accessibleControl.AccessibleName)
+        ) "Every sweep input must have an accessible name."
+    }
+    $collapseAnnotation = $annotationController.GetType().GetMethod(
+        "Panel_CollapseRequested",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $collapseAnnotation.Invoke(
+        $annotationController,
+        [object[]]@($null, [System.EventArgs]::Empty))
+    Assert-True (
+        $sweepSidePanel.RowStyles[0].SizeType -eq
+        [System.Windows.Forms.SizeType]::Absolute -and
+        $sweepSidePanel.RowStyles[0].Height -eq 28 -and
+        $sweepSidePanel.ColumnStyles[0].SizeType -eq
+        [System.Windows.Forms.SizeType]::Percent
+    ) "Collapsing annotations must reduce only the annotation row, not the sweep editor width."
+    $collapseAnnotation.Invoke(
+        $annotationController,
+        [object[]]@($null, [System.EventArgs]::Empty))
+    Assert-True (
+        $sweepSidePanel.RowStyles[0].SizeType -eq
+        [System.Windows.Forms.SizeType]::Percent
+    ) "Expanding annotations must restore the original row sizing."
+    $sweepEditorMode.SelectedIndex = 0
+    [System.Windows.Forms.Application]::DoEvents()
     Assert-True ($perLineSelector.Items.Count -eq 1) "Send page must expose only the adaptive packet layout."
     Assert-True ($perLineSelector.SelectedIndex -eq 0) "Send page must select the adaptive packet layout by default."
     Assert-True (-not $sweepHexBox.UseFixedBytesPerLine) "Send page packet data must resize its bytes per line with the window."
@@ -583,9 +778,103 @@ try {
     Assert-True ($loopCountInput.Value -eq $preset.BLoopCount) "Sweep edit page must restore the preset loop count."
     Assert-True ($intervalInput.Value -eq $preset.BInterval) "Sweep edit page must restore the preset interval."
     Assert-True ($nextIntervalInput.Value -eq $preset.BNextInterval) "Sweep edit page must restore the next-preset interval."
+    Assert-True ($loopCountInput.Controls.Count -gt 0 -and -not $loopCountInput.Controls[0].Visible) "Sweep loop count must use direct numeric input without spinner buttons."
+    Assert-True ($intervalInput.Controls.Count -gt 0 -and -not $intervalInput.Controls[0].Visible) "Sweep interval must use direct numeric input without spinner buttons."
+    Assert-True ($nextIntervalInput.Controls.Count -gt 0 -and -not $nextIntervalInput.Controls[0].Visible) "Sweep next interval must use direct numeric input without spinner buttons."
     Assert-True ($sweepHexBox.SelectionStart -eq $preset.BStart) "Sweep edit page must restore the selected start."
     Assert-True ($sweepHexBox.SelectionLength -eq $preset.BLength) "Sweep edit page must restore the selected length."
     Assert-True $sweepSaveButton.Enabled "Sweep edit page must enable direct update for a valid selection."
+
+    if (-not [string]::IsNullOrWhiteSpace($AuditScreenshotPath)) {
+        $sweepEditForm.ClientSize = [System.Drawing.Size]::new(1400, 950)
+        $sweepEditForm.StartPosition =
+            [System.Windows.Forms.FormStartPosition]::Manual
+        $sweepEditForm.Location = [System.Drawing.Point]::new(-32000, -32000)
+        $sweepEditForm.ShowInTaskbar = $false
+        $sweepEditForm.Show()
+        $sweepEditorMode.SelectedIndex = 1
+        $sweepEditorFirstPosition.Value = 0
+        $sweepEditorSecondPosition.Value = 1
+        $sweepEditForm.PerformLayout()
+        [System.Windows.Forms.Application]::DoEvents()
+        $screenshotDirectory = Split-Path -Parent $AuditScreenshotPath
+        if (-not [string]::IsNullOrWhiteSpace($screenshotDirectory)) {
+            [void][System.IO.Directory]::CreateDirectory($screenshotDirectory)
+        }
+        $bitmap = [System.Drawing.Bitmap]::new(
+            $sweepEditForm.Width,
+            $sweepEditForm.Height)
+        try {
+            $sweepEditForm.DrawToBitmap(
+                $bitmap,
+                [System.Drawing.Rectangle]::new(
+                    [System.Drawing.Point]::Empty,
+                    $sweepEditForm.Size))
+            $bitmap.Save(
+                $AuditScreenshotPath,
+                [System.Drawing.Imaging.ImageFormat]::Png)
+        }
+        finally {
+            $bitmap.Dispose()
+            $sweepEditForm.Hide()
+        }
+    }
+
+    $buttonOnClick = [System.Windows.Forms.Button].GetMethod(
+        "OnClick",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $pickTargetField = $sweepEditForm.GetType().GetField(
+        "byteSweepPositionPickTarget",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $pickMouseUp = $sweepEditForm.GetType().GetMethod(
+        "hbPacketData_ByteSweepPickMouseUp",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $leftMouseUp = [System.Windows.Forms.MouseEventArgs]::new(
+        [System.Windows.Forms.MouseButtons]::Left,
+        1,
+        0,
+        0,
+        0)
+
+    $buttonOnClick.Invoke(
+        $sweepEditorPickSecond,
+        [object[]]@([System.EventArgs]::Empty))
+    Assert-True (
+        $pickTargetField.GetValue($sweepEditForm) -eq 2
+    ) "Pick B must arm packet-byte selection for byte B."
+    $sweepHexBox.SelectionStart = 0
+    $sweepHexBox.SelectionLength = 1
+    $pickMouseUp.Invoke(
+        $sweepEditForm,
+        [object[]]@($sweepHexBox, $leftMouseUp))
+    Assert-True (
+        $pickTargetField.GetValue($sweepEditForm) -eq 2 -and
+        $sweepEditorSecondPosition.Value -eq 1
+    ) "Picking the same position as byte A must keep Pick B armed and preserve its old value."
+    $sweepHexBox.SelectionStart = 1
+    $pickMouseUp.Invoke(
+        $sweepEditForm,
+        [object[]]@($sweepHexBox, $leftMouseUp))
+    Assert-True (
+        $pickTargetField.GetValue($sweepEditForm) -eq 0 -and
+        $sweepEditorSecondPosition.Value -eq 1 -and
+        $sweepHexBox.SelectionLength -eq 1
+    ) "Clicking a valid packet byte must fill byte B and finish selection."
+
+    $buttonOnClick.Invoke(
+        $sweepEditorPickFirst,
+        [object[]]@([System.EventArgs]::Empty))
+    $sweepHexBox.SelectionStart = 0
+    $pickMouseUp.Invoke(
+        $sweepEditForm,
+        [object[]]@($sweepHexBox, $leftMouseUp))
+    Assert-True (
+        $pickTargetField.GetValue($sweepEditForm) -eq 0 -and
+        $sweepEditorFirstPosition.Value -eq 0
+    ) "Clicking a valid packet byte must fill byte A and finish selection."
 
     $beginLiveDisplay = $sweepEditForm.GetType().GetMethod(
         "BeginByteSweepLiveDisplay",
@@ -627,6 +916,42 @@ try {
         -not $sweepHexBox.ByteProvider.HasChanges()
     ) "A clean packet provider must remain clean after temporary live display is restored."
 
+    $updatePairLiveDisplay = $sweepEditForm.GetType().GetMethod(
+        "UpdateByteSweepLivePairDisplay",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $restoreDisplayedValue = $sweepEditForm.GetType().GetMethod(
+        "RestoreByteSweepDisplayedValue",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $firstLiveActive = $sweepEditForm.GetType().GetField(
+        "byteSweepLiveValueActive",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $pairLiveProgress = [WPELibrary.Lib.Socket_ByteSweepProgress]::new()
+    $pairLiveProgress.PairFirstPosition = 0
+    $pairLiveProgress.PairSecondPosition = 1
+    $pairLiveProgress.PairFirstValue = 0x33
+    $pairLiveProgress.PairSecondValue = 0x44
+    $beginLiveDisplay.Invoke($sweepEditForm, $null)
+    $updatePairLiveDisplay.Invoke(
+        $sweepEditForm,
+        [object[]]@($pairLiveProgress))
+    Assert-True (
+        $sweepHexBox.ByteProvider.ReadByte(0) -eq 0x33 -and
+        $sweepHexBox.ByteProvider.ReadByte(1) -eq 0x44
+    ) "Pair live preview must display both current byte values."
+    $sweepHexBox.ByteProvider.WriteByte(0, 0x01)
+    $firstLiveActive.SetValue($sweepEditForm, $false)
+    $restoreDisplayedValue.Invoke($sweepEditForm, $null)
+    Assert-True (
+        $sweepHexBox.ByteProvider.ReadByte(1) -eq 0x02
+    ) "Pair live preview cleanup must restore byte B even if byte A is already inactive."
+    $endLiveDisplay.Invoke($sweepEditForm, $null)
+    Assert-True (
+        -not $sweepHexBox.ByteProvider.HasChanges()
+    ) "Pair live preview cleanup must preserve a clean packet provider."
+
     $setSweepRunningState = $sweepEditForm.GetType().GetMethod(
         "SetSendRunningState",
         [System.Reflection.BindingFlags]::Instance -bor
@@ -639,13 +964,32 @@ try {
         "byteSweepWasRunning",
         [System.Reflection.BindingFlags]::Instance -bor
         [System.Reflection.BindingFlags]::NonPublic)
+    $sweepStartedFromEditor = $sweepEditForm.GetType().GetField(
+        "byteSweepStartedFromEditorPanel",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
     $beginHighlightForError = $sweepEditForm.GetType().GetMethod(
         "BeginByteSweepHighlight",
         [System.Reflection.BindingFlags]::Instance -bor
         [System.Reflection.BindingFlags]::NonPublic)
     $sweepProgressLabel = Get-PrivateField $sweepEditForm "tlByteSweepProgress"
+    $sweepLeftStopButton = Get-PrivateField $sweepEditForm "bSendStop"
     $originalSweepReadOnly = $sweepHexBox.ReadOnly
     $sweepWasRunningForError.SetValue($sweepEditForm, $true)
+    $sweepStartedFromEditor.SetValue($sweepEditForm, $false)
+    $setSweepRunningState.Invoke($sweepEditForm, [object[]]@($true))
+    Assert-True (-not $sweepLeftStopButton.Enabled) "A lower sweep must not enable the normal-send Stop action."
+    Assert-True $sweepStopButton.Enabled "A lower sweep must enable only its own Stop action."
+    Assert-True (-not $sweepEditorStop.Enabled) "A lower sweep must not enable the right-editor Stop action."
+    $setSweepRunningState.Invoke($sweepEditForm, [object[]]@($false))
+    $sweepStartedFromEditor.SetValue($sweepEditForm, $true)
+    $setSweepRunningState.Invoke($sweepEditForm, [object[]]@($true))
+    Assert-True (-not $sweepLeftStopButton.Enabled) "A right-editor sweep must not enable the normal-send Stop action."
+    Assert-True (-not $sweepStopButton.Enabled) "A right-editor sweep must not enable the lower Stop action."
+    Assert-True $sweepEditorStop.Enabled "A right-editor sweep must enable its own Stop action."
+    $setSweepRunningState.Invoke($sweepEditForm, [object[]]@($false))
+    $sweepWasRunningForError.SetValue($sweepEditForm, $true)
+    $sweepStartedFromEditor.SetValue($sweepEditForm, $true)
     $setSweepRunningState.Invoke($sweepEditForm, [object[]]@($true))
     $beginLiveDisplay.Invoke($sweepEditForm, $null)
     $beginHighlightForError.Invoke($sweepEditForm, $null)
@@ -694,7 +1038,9 @@ try {
         "CreateSendWorkItem",
         [System.Reflection.BindingFlags]::Instance -bor
         [System.Reflection.BindingFlags]::NonPublic)
-    $singleByteWorkItem = $createWorkItemMethod.Invoke($sweepEditForm, $null)
+    $singleByteWorkItem = $createWorkItemMethod.Invoke(
+        $sweepEditForm,
+        [object[]]@($true))
     Assert-True (
         $singleByteWorkItem.SweepStart -eq 1 -and $singleByteWorkItem.SweepLength -eq 1
     ) "A caret-only byte sweep must create a one-byte send work item."
@@ -1107,7 +1453,7 @@ finally {
 }
 
 $annotationPanel = Read-Source "WPELibrary\Socket_ByteAnnotationPanel.cs"
-Assert-True ($annotationPanel.Contains("MinimumSize = value ? Size.Empty : new Size(180, 0);")) "Collapsed annotations must not retain the expanded minimum width."
+Assert-True ($annotationPanel.Contains("MinimumSize = value ? Size.Empty : new Size(130, 0);")) "Collapsed annotations must not retain the expanded minimum width."
 Assert-True ($annotationPanel.Contains("ByteAnnotation_CollapseButton")) "Annotation collapse control needs an accessible label."
 
 $mainForm = Read-Source "WPELibrary\Socket_Form.cs"

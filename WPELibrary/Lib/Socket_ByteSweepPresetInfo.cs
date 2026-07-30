@@ -2,6 +2,12 @@ using System;
 
 namespace WPELibrary.Lib
 {
+    public enum Socket_ByteSweepMode
+    {
+        Sequential = 0,
+        PairCombination = 1
+    }
+
     public class Socket_ByteSweepPresetInfo
     {
         public System.Collections.Generic.List<Socket_ByteAnnotationInfo> ByteAnnotations { get; set; } =
@@ -15,6 +21,13 @@ namespace WPELibrary.Lib
         public int BLoopCount { get; set; } = 1;
         public int BInterval { get; set; }
         public int BNextInterval { get; set; }
+        public Socket_ByteSweepMode BMode { get; set; }
+        public int BCombinationFirstPosition { get; set; }
+        public int BCombinationFirstInterval { get; set; }
+        public int BCombinationFirstLength { get; set; } = 255;
+        public int BCombinationSecondPosition { get; set; }
+        public int BCombinationSecondInterval { get; set; }
+        public int BCombinationSecondLength { get; set; } = 255;
         public int BStart { get; set; }
         public int BLength { get; set; }
         public Socket_Cache.SocketPacket.PacketType PacketType { get; set; }
@@ -39,7 +52,13 @@ namespace WPELibrary.Lib
 
         public long TotalSend
         {
-            get { return Math.Max(0, BLength) * 255L * Math.Max(1, BLoopCount); }
+            get
+            {
+                return BMode == Socket_ByteSweepMode.PairCombination
+                    ? (long)Math.Max(0, BCombinationFirstLength) *
+                        Math.Max(0, BCombinationSecondLength) * Math.Max(1, BLoopCount)
+                    : Math.Max(0, BLength) * 255L * Math.Max(1, BLoopCount);
+            }
         }
 
         public bool IsValid
@@ -57,7 +76,21 @@ namespace WPELibrary.Lib
                     BLength <= Buffer.Length - BStart &&
                     BLoopCount > 0 &&
                     BInterval >= 0 &&
-                    BNextInterval >= 0;
+                    BNextInterval >= 0 &&
+                    (BMode == Socket_ByteSweepMode.Sequential ||
+                     BMode == Socket_ByteSweepMode.PairCombination) &&
+                    (BMode != Socket_ByteSweepMode.PairCombination ||
+                        (BCombinationFirstPosition >= 0 &&
+                         BCombinationFirstPosition < Buffer.Length &&
+                         BCombinationSecondPosition >= 0 &&
+                         BCombinationSecondPosition < Buffer.Length &&
+                         BCombinationFirstPosition != BCombinationSecondPosition &&
+                         BCombinationFirstInterval >= 0 &&
+                         BCombinationSecondInterval >= 0 &&
+                         BCombinationFirstLength > 0 &&
+                         BCombinationFirstLength <= 255 &&
+                         BCombinationSecondLength > 0 &&
+                         BCombinationSecondLength <= 255));
             }
         }
 
@@ -73,6 +106,13 @@ namespace WPELibrary.Lib
                 BLoopCount = BLoopCount,
                 BInterval = BInterval,
                 BNextInterval = BNextInterval,
+                BMode = BMode,
+                BCombinationFirstPosition = BCombinationFirstPosition,
+                BCombinationFirstInterval = BCombinationFirstInterval,
+                BCombinationFirstLength = BCombinationFirstLength,
+                BCombinationSecondPosition = BCombinationSecondPosition,
+                BCombinationSecondInterval = BCombinationSecondInterval,
+                BCombinationSecondLength = BCombinationSecondLength,
                 BStart = BStart,
                 BLength = BLength,
                 PacketType = PacketType,

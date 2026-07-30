@@ -22,10 +22,17 @@ namespace WPELibrary
         private Label lByteSweepHint;
         private ToolStripStatusLabel tlByteSweepProgress;
         private Button bSaveByteSweepPreset;
+        private Button bStartByteSweep;
+        private Button bStopByteSweep;
         private long byteSweepOriginalSelectionStart;
         private long byteSweepOriginalSelectionLength;
         private long byteSweepProcessedLength;
         private bool byteSweepWasRunning;
+        private bool byteSweepPairWasRunning;
+        private bool byteSweepStartedFromEditorPanel;
+        private int byteSweepPairFirstLength;
+        private int byteSweepPairSecondLength;
+        private int byteSweepRunLoopCount;
         private System.Drawing.Color byteSweepOriginalSelectionBackColor;
         private System.Drawing.Color byteSweepOriginalSelectionForeColor;
         private bool byteSweepHighlightActive;
@@ -33,6 +40,9 @@ namespace WPELibrary
         private bool byteSweepLiveValueActive;
         private long byteSweepLivePosition = -1;
         private byte byteSweepLiveOriginalValue;
+        private long byteSweepLiveSecondPosition = -1;
+        private byte byteSweepLiveSecondOriginalValue;
+        private bool byteSweepLiveSecondValueActive;
         private int byteSweepLiveDisplayGeneration;
         private bool byteSweepProviderHadChanges;
         private bool packetEditorLockActive;
@@ -46,10 +56,22 @@ namespace WPELibrary
         private ToolStripStatusLabel tlCurrentPacketIdentity;
         private TableLayoutPanel tlpSendActions;
         private TableLayoutPanel tlpByteSweepSettings;
+        private Panel pnlByteSweepActions;
+        private TableLayoutPanel pnlByteSweepSide;
+        private Socket_ByteSweepEditorPanel byteSweepEditorPanel;
+        private bool byteSweepEditorSyncing;
         private NumericUpDown nudByteSweepLoopCount;
         private NumericUpDown nudByteSweepInterval;
         private NumericUpDown nudByteSweepNextInterval;
+        private ComboBox cbbByteSweepMode;
+        private NumericUpDown nudByteSweepFirstPosition;
+        private NumericUpDown nudByteSweepFirstInterval;
+        private NumericUpDown nudByteSweepFirstLength;
+        private NumericUpDown nudByteSweepSecondPosition;
+        private NumericUpDown nudByteSweepSecondInterval;
+        private NumericUpDown nudByteSweepSecondLength;
         private bool updatingSendMode;
+        private int byteSweepPositionPickTarget;
 
         private sealed class SendWorkItem
         {
@@ -68,6 +90,13 @@ namespace WPELibrary
             public int ProgressionCarryCount;
             public int SweepStart;
             public int SweepLength;
+            public bool PairCombination;
+            public int PairFirstPosition;
+            public int PairFirstLength;
+            public int PairFirstInterval;
+            public int PairSecondPosition;
+            public int PairSecondLength;
+            public int PairSecondInterval;
         }
 
         #region//窗体加载
@@ -85,14 +114,16 @@ namespace WPELibrary
             {
                 MultiLanguage.SetDefaultLanguage(MultiLanguage.DefaultLanguage);                
                 InitializeComponent();
-                this.MinimumSize = new System.Drawing.Size(950, 520);
+                this.MinimumSize = new System.Drawing.Size(1200, 620);
                 this.InitializeHexSelectionAppearance();
                 this.InitializeSendPanelLayout();
+                this.InitializeByteSweepSidePanel();
                 this.hbPacketData.AccessibleName = UiText("Main_PacketData");
                 this.byteAnnotationController = new Socket_ByteAnnotationController(
-                    this.hbPacketData, this.tlpPacketData, 2, 0, 2,
+                    this.hbPacketData, this.pnlByteSweepSide, 0, 0, 1,
                     delegate { return !this.bgwSendPacket.IsBusy; });
                 this.InitializeByteSweepControls();
+                this.InitializeByteSweepEditorPanel();
                 this.baseWindowTitle = this.Text;
                 this.tlCurrentPacketIdentity = new ToolStripStatusLabel
                 {
@@ -257,6 +288,34 @@ namespace WPELibrary
             this.tlpSendForm.ResumeLayout(true);
         }
 
+        private void InitializeByteSweepSidePanel()
+        {
+            this.tlpPacketData.ColumnCount = 3;
+            this.tlpPacketData.ColumnStyles.Clear();
+            this.tlpPacketData.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            this.tlpPacketData.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210F));
+            this.tlpPacketData.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300F));
+            this.tlpPacketData.RowCount = 2;
+            this.tlpPacketData.RowStyles.Clear();
+            this.tlpPacketData.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+            this.tlpPacketData.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
+            this.pnlByteSweepSide = new TableLayoutPanel
+            {
+                ColumnCount = 1,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(3, 0, 0, 0),
+                Name = "pnlByteSweepSide",
+                RowCount = 2,
+                Padding = new Padding(0)
+            };
+            this.pnlByteSweepSide.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            this.pnlByteSweepSide.RowStyles.Add(new RowStyle(SizeType.Percent, 32F));
+            this.pnlByteSweepSide.RowStyles.Add(new RowStyle(SizeType.Percent, 68F));
+            this.tlpPacketData.Controls.Add(this.pnlByteSweepSide, 2, 0);
+            this.tlpPacketData.SetRowSpan(this.pnlByteSweepSide, 2);
+        }
+
         private void ConfigureSendActionColumns(bool showSaveButton)
         {
             if (this.tlpSendActions == null)
@@ -274,12 +333,13 @@ namespace WPELibrary
             this.rbSendType_ByteSweep = new RadioButton
             {
                 AutoSize = true,
+                AutoCheck = false,
+                Checked = true,
                 Dock = DockStyle.Fill,
                 Name = "rbSendType_ByteSweep",
-                Text = MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_232),
+                Text = UiText("ByteSweep_SequentialHeader"),
                 UseVisualStyleBackColor = true
             };
-            this.rbSendType_ByteSweep.CheckedChanged += this.rbSendType_ByteSweep_CheckedChanged;
 
             this.lByteSweepHint = new Label
             {
@@ -303,6 +363,20 @@ namespace WPELibrary
             byteSweepMode.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             byteSweepMode.Controls.Add(this.rbSendType_ByteSweep, 0, 0);
             byteSweepMode.Controls.Add(this.lByteSweepHint, 1, 0);
+            this.cbbByteSweepMode = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Name = "cbbByteSweepMode",
+                TabStop = false,
+                Visible = false
+            };
+            this.cbbByteSweepMode.Items.AddRange(new object[]
+            {
+                UiText("ByteSweep_SequentialMode"),
+                UiText("ByteSweep_PairMode")
+            });
+            this.cbbByteSweepMode.SelectedIndex = 0;
+            this.cbbByteSweepMode.SelectedIndexChanged += this.cbbByteSweepMode_SelectedIndexChanged;
 
             TableLayoutPanel progressionRoot = new TableLayoutPanel
             {
@@ -310,12 +384,15 @@ namespace WPELibrary
                 Dock = DockStyle.Fill,
                 Name = "tlpProgressionRoot",
                 Padding = new Padding(6, 3, 6, 3),
-                RowCount = 2
+                RowCount = 3
             };
             progressionRoot.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             progressionRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
             progressionRoot.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            progressionRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
             progressionRoot.Controls.Add(byteSweepMode, 0, 0);
+            progressionRoot.Controls.Add(this.cbbByteSweepMode, 0, 0);
+            byteSweepMode.BringToFront();
 
             this.gbSendStep.Controls.Remove(this.tlpSendStepSet);
             this.tlpSendStepSet.Dock = DockStyle.Fill;
@@ -336,28 +413,81 @@ namespace WPELibrary
             {
                 Dock = DockStyle.Fill,
                 Name = "bSaveByteSweepPreset",
-                Text = UiText("UI_SaveSweepPreset"),
+                Text = UiText("ByteSweep_SaveSequentialPreset"),
                 UseVisualStyleBackColor = true,
-                Visible = false
+                Visible = true
             };
-            this.bSaveByteSweepPreset.Click += this.bSaveByteSweepPreset_Click;
+            this.bSaveByteSweepPreset.Click += this.bSaveSequentialByteSweepPreset_Click;
+
+            this.bStartByteSweep = new Button
+            {
+                Dock = DockStyle.Fill,
+                Name = "bStartByteSweep",
+                Text = UiText("ByteSweep_StartAction"),
+                AccessibleName = UiText("ByteSweep_StartAction"),
+                UseVisualStyleBackColor = true
+            };
+            this.bStartByteSweep.Click += this.bStartByteSweep_Click;
+
+            this.bStopByteSweep = new Button
+            {
+                Dock = DockStyle.Fill,
+                Enabled = false,
+                Name = "bStopByteSweep",
+                Text = UiText("ByteSweep_StopAction"),
+                AccessibleName = UiText("ByteSweep_StopAction"),
+                UseVisualStyleBackColor = true
+            };
+            this.bStopByteSweep.Click += this.bStopByteSweep_Click;
+
+            this.pnlByteSweepActions = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Name = "pnlByteSweepActions",
+                Padding = new Padding(0, 3, 0, 0),
+                Visible = true
+            };
+            TableLayoutPanel byteSweepActions = new TableLayoutPanel
+            {
+                ColumnCount = 3,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0),
+                Name = "tlpByteSweepActions",
+                RowCount = 1
+            };
+            byteSweepActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30F));
+            byteSweepActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30F));
+            byteSweepActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40F));
+            byteSweepActions.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            this.bStartByteSweep.Margin = new Padding(0, 0, 3, 0);
+            this.bStopByteSweep.Margin = new Padding(3, 0, 3, 0);
+            this.bSaveByteSweepPreset.Margin = new Padding(3, 0, 0, 0);
+            byteSweepActions.Controls.Add(this.bStartByteSweep, 0, 0);
+            byteSweepActions.Controls.Add(this.bStopByteSweep, 1, 0);
+            byteSweepActions.Controls.Add(this.bSaveByteSweepPreset, 2, 0);
+            this.pnlByteSweepActions.Controls.Add(byteSweepActions);
 
             this.tlpByteSweepSettings = new TableLayoutPanel
             {
-                ColumnCount = 4,
-                Dock = DockStyle.Fill,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 6,
+                Dock = DockStyle.Top,
                 Margin = new Padding(0),
                 Name = "tlpByteSweepSettings",
                 Padding = new Padding(0, 3, 0, 0),
-                RowCount = 2,
-                Visible = false
+                RowCount = 3,
+                Visible = true
             };
-            this.tlpByteSweepSettings.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            this.tlpByteSweepSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            this.tlpByteSweepSettings.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            this.tlpByteSweepSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            this.tlpByteSweepSettings.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-            this.tlpByteSweepSettings.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            for (int column = 0; column < 6; column++)
+            {
+                this.tlpByteSweepSettings.ColumnStyles.Add(new ColumnStyle(
+                    column % 2 == 0 ? SizeType.AutoSize : SizeType.Percent,
+                    column % 2 == 0 ? 0F : 33.333F));
+            }
+            this.tlpByteSweepSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
+            this.tlpByteSweepSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 0F));
+            this.tlpByteSweepSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 0F));
             Label loopCountLabel = new Label
             {
                 AutoSize = true,
@@ -375,6 +505,7 @@ namespace WPELibrary
                 Value = 1
             };
             this.nudByteSweepLoopCount.AccessibleName = UiText("ByteSweep_LoopCount");
+            ConfigureByteSweepInput(this.nudByteSweepLoopCount);
             Label intervalLabel = new Label
             {
                 AutoSize = true,
@@ -392,6 +523,7 @@ namespace WPELibrary
                 Value = this.nudSendType_Interval.Value
             };
             this.nudByteSweepInterval.AccessibleName = UiText("ByteSweep_Interval");
+            ConfigureByteSweepInput(this.nudByteSweepInterval);
             Label nextIntervalLabel = new Label
             {
                 AutoSize = true,
@@ -407,20 +539,360 @@ namespace WPELibrary
                 Name = "nudByteSweepNextInterval"
             };
             this.nudByteSweepNextInterval.AccessibleName = UiText("ByteSweep_NextInterval");
-            this.tlpByteSweepSettings.Controls.Add(loopCountLabel, 0, 0);
-            this.tlpByteSweepSettings.Controls.Add(this.nudByteSweepLoopCount, 1, 0);
-            this.tlpByteSweepSettings.Controls.Add(intervalLabel, 2, 0);
-            this.tlpByteSweepSettings.Controls.Add(this.nudByteSweepInterval, 3, 0);
-            this.tlpByteSweepSettings.Controls.Add(nextIntervalLabel, 0, 1);
-            this.tlpByteSweepSettings.Controls.Add(this.nudByteSweepNextInterval, 1, 1);
-            this.tlpByteSweepSettings.Controls.Add(this.bSaveByteSweepPreset, 2, 1);
-            this.tlpByteSweepSettings.SetColumnSpan(this.bSaveByteSweepPreset, 2);
+            ConfigureByteSweepInput(this.nudByteSweepNextInterval);
+            HideByteSweepSpinButtons(this.nudByteSweepLoopCount);
+            HideByteSweepSpinButtons(this.nudByteSweepInterval);
+            HideByteSweepSpinButtons(this.nudByteSweepNextInterval);
+            AddByteSweepTripleRow(0,
+                UiText("ByteSweep_LoopCount"), this.nudByteSweepLoopCount,
+                UiText("ByteSweep_NormalInterval"), this.nudByteSweepInterval,
+                UiText("ByteSweep_NextInterval"), this.nudByteSweepNextInterval);
+
+            this.nudByteSweepFirstPosition = CreateByteSweepNumber("nudByteSweepFirstPosition", 0, 65535, 0);
+            this.nudByteSweepFirstInterval = CreateByteSweepNumber("nudByteSweepFirstInterval", 0, 999999999, 1000);
+            this.nudByteSweepFirstLength = CreateByteSweepNumber("nudByteSweepFirstLength", 1, 255, 255);
+            this.nudByteSweepSecondPosition = CreateByteSweepNumber("nudByteSweepSecondPosition", 0, 65535, 1);
+            this.nudByteSweepSecondInterval = CreateByteSweepNumber("nudByteSweepSecondInterval", 0, 999999999, 10);
+            this.nudByteSweepSecondLength = CreateByteSweepNumber("nudByteSweepSecondLength", 1, 255, 255);
+            HideByteSweepSpinButtons(this.nudByteSweepFirstPosition);
+            HideByteSweepSpinButtons(this.nudByteSweepFirstInterval);
+            HideByteSweepSpinButtons(this.nudByteSweepFirstLength);
+            HideByteSweepSpinButtons(this.nudByteSweepSecondPosition);
+            HideByteSweepSpinButtons(this.nudByteSweepSecondInterval);
+            HideByteSweepSpinButtons(this.nudByteSweepSecondLength);
+            AddByteSweepTripleRow(1,
+                UiText("ByteSweep_FirstPosition"), this.nudByteSweepFirstPosition,
+                UiText("ByteSweep_FirstLength"), this.nudByteSweepFirstLength,
+                UiText("ByteSweep_FirstInterval"), this.nudByteSweepFirstInterval);
+            AddByteSweepTripleRow(2,
+                UiText("ByteSweep_SecondPosition"), this.nudByteSweepSecondPosition,
+                UiText("ByteSweep_SecondLength"), this.nudByteSweepSecondLength,
+                UiText("ByteSweep_SecondInterval"), this.nudByteSweepSecondInterval);
             progressionRoot.Controls.Add(this.tlpByteSweepSettings, 0, 1);
+            progressionRoot.Controls.Add(this.pnlByteSweepActions, 0, 2);
+            this.cbbByteSweepMode.SelectedIndexChanged += this.LegacyByteSweepControlChanged;
+            this.nudByteSweepLoopCount.ValueChanged += this.LegacyByteSweepControlChanged;
+            this.nudByteSweepInterval.ValueChanged += this.LegacyByteSweepControlChanged;
+            this.nudByteSweepNextInterval.ValueChanged += this.LegacyByteSweepControlChanged;
+            this.nudByteSweepFirstPosition.ValueChanged += this.LegacyByteSweepControlChanged;
+            this.nudByteSweepFirstLength.ValueChanged += this.LegacyByteSweepControlChanged;
+            this.nudByteSweepFirstInterval.ValueChanged += this.LegacyByteSweepControlChanged;
+            this.nudByteSweepSecondPosition.ValueChanged += this.LegacyByteSweepControlChanged;
+            this.nudByteSweepSecondLength.ValueChanged += this.LegacyByteSweepControlChanged;
+            this.nudByteSweepSecondInterval.ValueChanged += this.LegacyByteSweepControlChanged;
+        }
+
+        private NumericUpDown CreateByteSweepNumber(string name, decimal minimum, decimal maximum, decimal value)
+        {
+            NumericUpDown control = new NumericUpDown
+            {
+                Dock = DockStyle.Fill,
+                Maximum = maximum,
+                Minimum = minimum,
+                Name = name,
+                Value = value
+            };
+            control.Increment = maximum > 255 ? 10 : 1;
+            ConfigureByteSweepInput(control);
+            return control;
+        }
+
+        private static void ConfigureByteSweepInput(Control control)
+        {
+            control.Dock = DockStyle.Fill;
+            control.Margin = new Padding(0, 1, 3, 1);
+            control.MinimumSize = new System.Drawing.Size(0, 20);
+            control.Height = 20;
+        }
+
+        private static void HideByteSweepSpinButtons(NumericUpDown control)
+        {
+            if (control == null || control.Controls.Count == 0)
+            {
+                return;
+            }
+
+            control.Controls[0].Visible = false;
+        }
+
+        private void AddByteSweepTripleRow(
+            int row,
+            string firstLabel, Control firstControl,
+            string secondLabel, Control secondControl,
+            string thirdLabel, Control thirdControl)
+        {
+            AddByteSweepField(row, 0, firstLabel, firstControl);
+            AddByteSweepField(row, 2, secondLabel, secondControl);
+            AddByteSweepField(row, 4, thirdLabel, thirdControl);
+        }
+
+        private void AddByteSweepField(int row, int column, string labelText, Control control)
+        {
+            bool visible = row == 0;
+            Label label = new Label
+            {
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                Text = labelText,
+                TextAlign = System.Drawing.ContentAlignment.MiddleLeft,
+                Visible = visible
+            };
+            control.Visible = visible;
+            this.tlpByteSweepSettings.Controls.Add(label, column, row);
+            this.tlpByteSweepSettings.Controls.Add(control, column + 1, row);
+        }
+
+        private void InitializeByteSweepEditorPanel()
+        {
+            this.byteSweepEditorPanel = new Socket_ByteSweepEditorPanel();
+            this.byteSweepEditorPanel.SendRequested += this.byteSweepEditorPanel_SendRequested;
+            this.byteSweepEditorPanel.StopRequested += this.byteSweepEditorPanel_StopRequested;
+            this.byteSweepEditorPanel.SaveRequested += this.byteSweepEditorPanel_SaveRequested;
+            this.byteSweepEditorPanel.Changed += this.byteSweepEditorPanel_Changed;
+            this.byteSweepEditorPanel.PickFirstRequested +=
+                this.byteSweepEditorPanel_PickFirstRequested;
+            this.byteSweepEditorPanel.PickSecondRequested +=
+                this.byteSweepEditorPanel_PickSecondRequested;
+            this.hbPacketData.MouseUp += this.hbPacketData_ByteSweepPickMouseUp;
+            this.pnlByteSweepSide.Controls.Add(this.byteSweepEditorPanel, 0, 1);
+        }
+
+        private void SyncByteSweepEditorFromLegacy()
+        {
+            if (this.byteSweepEditorPanel == null || this.byteSweepEditorSyncing)
+            {
+                return;
+            }
+
+            int bufferLength = this.hbPacketData.ByteProvider == null
+                ? 0
+                : (int)this.hbPacketData.ByteProvider.Length;
+            int start = (int)this.hbPacketData.SelectionStart;
+            int length = (int)this.hbPacketData.SelectionLength;
+            Socket_ByteSweepPresetInfo value = this.savedByteSweepPreset == null
+                ? new Socket_ByteSweepPresetInfo()
+                : this.savedByteSweepPreset.Clone();
+            value.BMode = this.IsPairCombinationMode()
+                ? Socket_ByteSweepMode.PairCombination
+                : Socket_ByteSweepMode.Sequential;
+            value.BLoopCount = (int)this.nudByteSweepLoopCount.Value;
+            value.BInterval = (int)this.nudByteSweepInterval.Value;
+            value.BNextInterval = (int)this.nudByteSweepNextInterval.Value;
+            value.BCombinationFirstPosition = (int)this.nudByteSweepFirstPosition.Value;
+            value.BCombinationFirstLength = (int)this.nudByteSweepFirstLength.Value;
+            value.BCombinationFirstInterval = (int)this.nudByteSweepFirstInterval.Value;
+            value.BCombinationSecondPosition = (int)this.nudByteSweepSecondPosition.Value;
+            value.BCombinationSecondLength = (int)this.nudByteSweepSecondLength.Value;
+            value.BCombinationSecondInterval = (int)this.nudByteSweepSecondInterval.Value;
+            value.BStart = start;
+            value.BLength = length <= 0 ? 1 : length;
+            this.byteSweepEditorSyncing = true;
+            try
+            {
+                this.byteSweepEditorPanel.LoadSettings(
+                    value,
+                    bufferLength,
+                    start,
+                    length <= 0 ? 1 : length);
+                this.byteSweepEditorPanel.SetPresetState(this.savedByteSweepPreset != null);
+            }
+            finally
+            {
+                this.byteSweepEditorSyncing = false;
+            }
+        }
+
+        private void ApplyByteSweepEditorToLegacy()
+        {
+            if (this.byteSweepEditorPanel == null || this.byteSweepEditorSyncing)
+            {
+                return;
+            }
+
+            this.byteSweepEditorSyncing = true;
+            try
+            {
+                Socket_ByteSweepPresetInfo value = this.byteSweepEditorPanel.ReadSettings(
+                    (int)this.hbPacketData.SelectionStart,
+                    Math.Max(1, (int)this.hbPacketData.SelectionLength));
+                SetByteSweepNumber(this.nudByteSweepLoopCount, value.BLoopCount);
+                SetByteSweepNumber(this.nudByteSweepInterval, value.BInterval);
+                SetByteSweepNumber(this.nudByteSweepNextInterval, value.BNextInterval);
+                this.cbbByteSweepMode.SelectedIndex = value.BMode == Socket_ByteSweepMode.PairCombination ? 1 : 0;
+                SetByteSweepNumber(this.nudByteSweepFirstPosition, value.BCombinationFirstPosition);
+                SetByteSweepNumber(this.nudByteSweepFirstLength, value.BCombinationFirstLength);
+                SetByteSweepNumber(this.nudByteSweepFirstInterval, value.BCombinationFirstInterval);
+                SetByteSweepNumber(this.nudByteSweepSecondPosition, value.BCombinationSecondPosition);
+                SetByteSweepNumber(this.nudByteSweepSecondLength, value.BCombinationSecondLength);
+                SetByteSweepNumber(this.nudByteSweepSecondInterval, value.BCombinationSecondInterval);
+            }
+            finally
+            {
+                this.byteSweepEditorSyncing = false;
+            }
+            this.SendTypeChanged();
+        }
+
+        private void byteSweepEditorPanel_Changed(object sender, EventArgs e)
+        {
+            this.ApplyByteSweepEditorToLegacy();
+            if (!this.IsPairCombinationMode())
+            {
+                this.CancelByteSweepPositionPick();
+            }
+        }
+
+        private void byteSweepEditorPanel_PickFirstRequested(
+            object sender,
+            EventArgs e)
+        {
+            this.BeginByteSweepPositionPick(1);
+        }
+
+        private void byteSweepEditorPanel_PickSecondRequested(
+            object sender,
+            EventArgs e)
+        {
+            this.BeginByteSweepPositionPick(2);
+        }
+
+        private void BeginByteSweepPositionPick(int target)
+        {
+            if (this.bgwSendPacket.IsBusy || !this.IsPairCombinationMode())
+            {
+                return;
+            }
+
+            this.byteSweepPositionPickTarget = target;
+            this.hbPacketData.Focus();
+        }
+
+        private void hbPacketData_ByteSweepPickMouseUp(
+            object sender,
+            MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left ||
+                this.byteSweepPositionPickTarget == 0 ||
+                this.bgwSendPacket.IsBusy ||
+                this.byteSweepEditorPanel == null)
+            {
+                return;
+            }
+
+            IByteProvider provider = this.hbPacketData.ByteProvider;
+            long position = this.hbPacketData.SelectionStart;
+            if (provider == null ||
+                position < 0 ||
+                position >= provider.Length ||
+                position > 65535)
+            {
+                return;
+            }
+
+            this.hbPacketData.SelectionStart = position;
+            this.hbPacketData.SelectionLength = 1;
+            bool applied = this.byteSweepEditorPanel.ApplyPickedPosition(
+                this.byteSweepPositionPickTarget == 1,
+                (int)position);
+            if (applied)
+            {
+                this.byteSweepPositionPickTarget = 0;
+            }
+        }
+
+        private void CancelByteSweepPositionPick()
+        {
+            this.byteSweepPositionPickTarget = 0;
+            if (this.byteSweepEditorPanel != null)
+            {
+                this.byteSweepEditorPanel.CancelPositionPick();
+            }
+        }
+
+        private void byteSweepEditorPanel_SendRequested(object sender, EventArgs e)
+        {
+            this.CancelByteSweepPositionPick();
+            this.ApplyByteSweepEditorToLegacy();
+            this.StartSend(true, true);
+        }
+
+        private void byteSweepEditorPanel_StopRequested(object sender, EventArgs e)
+        {
+            if (this.byteSweepWasRunning && this.byteSweepStartedFromEditorPanel)
+            {
+                this.StopSend();
+            }
+        }
+
+        private void byteSweepEditorPanel_SaveRequested(object sender, EventArgs e)
+        {
+            this.ApplyByteSweepEditorToLegacy();
+            this.bSaveByteSweepPreset_Click(this.bSaveByteSweepPreset, EventArgs.Empty);
+        }
+
+        private void LegacyByteSweepControlChanged(object sender, EventArgs e)
+        {
+            this.SyncByteSweepEditorFromLegacy();
         }
 
         private void rbSendType_ByteSweep_CheckedChanged(object sender, EventArgs e)
         {
-            this.UpdateSendModeSelection(this.rbSendType_ByteSweep);
+            this.SendTypeChanged();
+        }
+
+        private void bStartByteSweep_Click(object sender, EventArgs e)
+        {
+            this.CancelByteSweepPositionPick();
+            this.cbbByteSweepMode.SelectedIndex = 0;
+            this.StartSend(true, false);
+        }
+
+        private void bSaveSequentialByteSweepPreset_Click(object sender, EventArgs e)
+        {
+            this.cbbByteSweepMode.SelectedIndex = 0;
+            this.bSaveByteSweepPreset_Click(sender, e);
+        }
+
+        private void bStopByteSweep_Click(object sender, EventArgs e)
+        {
+            if (this.byteSweepWasRunning && !this.byteSweepStartedFromEditorPanel)
+            {
+                this.StopSend();
+            }
+        }
+
+        private void cbbByteSweepMode_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            this.UpdateByteSweepModeControls();
+            this.SendTypeChanged();
+        }
+
+        private bool IsPairCombinationMode()
+        {
+            return this.cbbByteSweepMode != null && this.cbbByteSweepMode.SelectedIndex == 1;
+        }
+
+        private void UpdateByteSweepModeControls()
+        {
+            bool pair = this.IsPairCombinationMode();
+            Control[] controls =
+            {
+                this.nudByteSweepFirstPosition,
+                this.nudByteSweepFirstInterval,
+                this.nudByteSweepFirstLength,
+                this.nudByteSweepSecondPosition,
+                this.nudByteSweepSecondInterval,
+                this.nudByteSweepSecondLength
+            };
+            foreach (Control control in controls)
+            {
+                if (control != null)
+                {
+                    control.Enabled = pair && !this.bgwSendPacket.IsBusy;
+                    control.Visible = false;
+                }
+            }
+            this.nudByteSweepInterval.Enabled = !this.bgwSendPacket.IsBusy;
         }
 
         #endregion
@@ -435,12 +907,14 @@ namespace WPELibrary
                 this.InitHexBox();
                 this.InitSendInfo();
                 this.InitSendParameters();
+                this.SyncByteSweepEditorFromLegacy();
                 this.SendTypeChanged();
                 this.ProgressionPositionChange();
         }
 
         private void Socket_SendForm_FormClosing(object sender, FormClosingEventArgs e)
         {
+            this.CancelByteSweepPositionPick();
             this.RestoreByteSweepVisualState();
             this.StopSend();
         }
@@ -478,8 +952,9 @@ namespace WPELibrary
             if (this.savedByteSweepPreset != null)
             {
                 this.rbSendType_ByteSweep.Checked = true;
-                this.rbSendType_Times.Enabled = false;
-                this.rbSendType_Continuously.Enabled = false;
+                this.rbSendType_Times.Checked = true;
+                this.rbSendType_Times.Enabled = true;
+                this.rbSendType_Continuously.Enabled = true;
                 this.nudByteSweepLoopCount.Value = Math.Min(
                     this.nudByteSweepLoopCount.Maximum,
                     Math.Max(this.nudByteSweepLoopCount.Minimum, this.savedByteSweepPreset.BLoopCount));
@@ -489,6 +964,14 @@ namespace WPELibrary
                 this.nudByteSweepNextInterval.Value = Math.Min(
                     this.nudByteSweepNextInterval.Maximum,
                     Math.Max(this.nudByteSweepNextInterval.Minimum, this.savedByteSweepPreset.BNextInterval));
+                this.cbbByteSweepMode.SelectedIndex =
+                    this.savedByteSweepPreset.BMode == Socket_ByteSweepMode.PairCombination ? 1 : 0;
+                SetByteSweepNumber(this.nudByteSweepFirstPosition, this.savedByteSweepPreset.BCombinationFirstPosition);
+                SetByteSweepNumber(this.nudByteSweepFirstInterval, this.savedByteSweepPreset.BCombinationFirstInterval);
+                SetByteSweepNumber(this.nudByteSweepFirstLength, this.savedByteSweepPreset.BCombinationFirstLength);
+                SetByteSweepNumber(this.nudByteSweepSecondPosition, this.savedByteSweepPreset.BCombinationSecondPosition);
+                SetByteSweepNumber(this.nudByteSweepSecondInterval, this.savedByteSweepPreset.BCombinationSecondInterval);
+                SetByteSweepNumber(this.nudByteSweepSecondLength, this.savedByteSweepPreset.BCombinationSecondLength);
 
                 int bufferLength = this.hbPacketData.ByteProvider == null
                     ? 0
@@ -507,7 +990,7 @@ namespace WPELibrary
 
                 this.bSave.Visible = false;
                 this.ConfigureSendActionColumns(false);
-                this.bSaveByteSweepPreset.Text = UiText("UI_UpdateSweepPreset");
+                this.bSaveByteSweepPreset.Text = UiText("ByteSweep_UpdateSequentialPreset");
                 return;
             }
 
@@ -622,14 +1105,13 @@ namespace WPELibrary
             }
 
             this.updatingSendMode = true;
-            if (ReferenceEquals(selectedMode, this.rbSendType_ByteSweep))
+            if (ReferenceEquals(selectedMode, this.rbSendType_Times))
             {
-                this.rbSendType_Times.Checked = false;
                 this.rbSendType_Continuously.Checked = false;
             }
-            else if (this.rbSendType_ByteSweep != null)
+            else if (ReferenceEquals(selectedMode, this.rbSendType_Continuously))
             {
-                this.rbSendType_ByteSweep.Checked = false;
+                this.rbSendType_Times.Checked = false;
             }
             this.updatingSendMode = false;
             this.SendTypeChanged();
@@ -637,26 +1119,28 @@ namespace WPELibrary
 
         private void SendTypeChanged()
         {
-            bool byteSweep = this.rbSendType_ByteSweep != null && this.rbSendType_ByteSweep.Checked;
-            this.nudSendType_Times.Enabled = !byteSweep && this.rbSendType_Times.Checked;
-            this.nudSendType_Interval.Enabled = !byteSweep;
-            this.lSendType_Times.Enabled = !byteSweep;
-            this.lSendType_Int.Enabled = !byteSweep;
+            bool busy = this.bgwSendPacket.IsBusy;
+            this.nudSendType_Times.Enabled = !busy && this.rbSendType_Times.Checked;
+            this.nudSendType_Interval.Enabled = !busy;
+            this.lSendType_Times.Enabled = !busy;
+            this.lSendType_Int.Enabled = !busy;
             this.gbSendStep.Enabled = true;
-            this.tlpSendStepSet.Visible = !byteSweep;
+            this.tlpSendStepSet.Visible = false;
             if (this.tlpByteSweepSettings != null)
             {
-                this.tlpByteSweepSettings.Visible = byteSweep;
-                if (byteSweep)
-                {
-                    this.tlpByteSweepSettings.BringToFront();
-                }
+                this.tlpByteSweepSettings.Visible = true;
+                this.tlpByteSweepSettings.BringToFront();
             }
+            if (this.pnlByteSweepActions != null)
+            {
+                this.pnlByteSweepActions.Visible = true;
+            }
+            this.UpdateByteSweepModeControls();
             if (this.lByteSweepHint != null)
             {
                 long selectionStart;
                 long selectionLength;
-                this.lByteSweepHint.Text = byteSweep &&
+                this.lByteSweepHint.Text =
                     this.TryGetByteSweepSelection(out selectionStart, out selectionLength)
                     ? string.Format(
                         System.Globalization.CultureInfo.CurrentCulture,
@@ -668,17 +1152,18 @@ namespace WPELibrary
 
             if (this.tlByteSweepProgress != null)
             {
-                this.tlByteSweepProgress.Visible = byteSweep && this.byteSweepWasRunning;
+                this.tlByteSweepProgress.Visible = this.byteSweepWasRunning;
             }
 
             if (this.bSaveByteSweepPreset != null)
             {
                 long selectionStart;
                 long selectionLength;
-                this.bSaveByteSweepPreset.Visible = byteSweep;
-                this.bSaveByteSweepPreset.Enabled = byteSweep &&
-                    !this.bgwSendPacket.IsBusy &&
+                bool validSelection =
                     this.TryGetByteSweepSelection(out selectionStart, out selectionLength);
+                this.bSaveByteSweepPreset.Visible = true;
+                this.bSaveByteSweepPreset.Enabled = !busy && validSelection;
+                this.bStartByteSweep.Enabled = !busy && validSelection;
             }
         }
 
@@ -686,7 +1171,7 @@ namespace WPELibrary
 
         #region//检查发送数据
 
-        private bool CheckSendPacket()
+        private bool CheckSendPacket(bool byteSweep)
         {
             try
             {
@@ -707,17 +1192,24 @@ namespace WPELibrary
                     return false;
                 }
 
-                bool byteSweep = this.rbSendType_ByteSweep != null && this.rbSendType_ByteSweep.Checked;
-
                 if (byteSweep)
                 {
-                    long selectionStart;
-                    long selectionLength;
-
-                    if (!this.TryGetByteSweepSelection(out selectionStart, out selectionLength))
+                    if (this.IsPairCombinationMode())
                     {
-                        Socket_Operation.ShowMessageBox(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_234));
-                        return false;
+                        if (!this.TryGetByteSweepPairConfiguration(true))
+                        {
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        long selectionStart;
+                        long selectionLength;
+                        if (!this.TryGetByteSweepSelection(out selectionStart, out selectionLength))
+                        {
+                            Socket_Operation.ShowMessageBox(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_234));
+                            return false;
+                        }
                     }
                 }
 
@@ -747,20 +1239,42 @@ namespace WPELibrary
 
         private void SetSendRunningState(bool isRunning)
         {
+            bool sweepRunning = isRunning && this.byteSweepWasRunning;
+            bool normalSendRunning = isRunning && !this.byteSweepWasRunning;
+            if (this.byteSweepEditorPanel != null)
+            {
+                this.byteSweepEditorPanel.SetOperationState(
+                    isRunning,
+                    sweepRunning && this.byteSweepStartedFromEditorPanel,
+                    sweepRunning && this.byteSweepStartedFromEditorPanel
+                        ? UiText("ByteSweep_Running")
+                        : string.Empty);
+            }
             this.bSend.Enabled = !isRunning;
-            this.bSendStop.Enabled = isRunning;
+            this.bSendStop.Enabled = normalSendRunning;
+            if (this.bStartByteSweep != null)
+            {
+                this.bStartByteSweep.Enabled = !isRunning;
+            }
+            if (this.bStopByteSweep != null)
+            {
+                this.bStopByteSweep.Enabled =
+                    sweepRunning && !this.byteSweepStartedFromEditorPanel;
+            }
             this.bSave.Enabled = !isRunning && this.hbPacketData.ByteProvider != null;
             this.SetPacketEditorRunningState(isRunning);
 
             this.gbSendSocket.Enabled = !isRunning;
-            this.gbSendStep.Enabled = !isRunning;
+            this.gbSendStep.Enabled = true;
+            this.nudByteSweepLoopCount.Enabled = !isRunning;
+            this.nudByteSweepInterval.Enabled = !isRunning;
+            this.nudByteSweepNextInterval.Enabled = !isRunning;
 
             // 发送按钮已经位于 gbSendType 内，运行时不能再禁用整个分组，
             // 否则同组的停止按钮也会被级联禁用。
             this.gbSendType.Enabled = true;
-            bool normalModeAvailable = !isRunning && this.savedByteSweepPreset == null;
-            this.rbSendType_Times.Enabled = normalModeAvailable;
-            this.rbSendType_Continuously.Enabled = normalModeAvailable;
+            this.rbSendType_Times.Enabled = !isRunning;
+            this.rbSendType_Continuously.Enabled = !isRunning;
 
             if (isRunning)
             {
@@ -806,15 +1320,18 @@ namespace WPELibrary
 
         private void bSend_Click(object sender, EventArgs e)
         {
+            this.StartSend(false, false);
+        }
+
+        private void StartSend(bool byteSweep, bool startedFromEditorPanel)
+        {
             try
             {
-                if (this.CheckSendPacket())
+                if (this.CheckSendPacket(byteSweep))
                 {
                     if (!bgwSendPacket.IsBusy)
                     {
-                        SendWorkItem workItem = this.CreateSendWorkItem();
-
-                        this.SetSendRunningState(true);
+                        SendWorkItem workItem = this.CreateSendWorkItem(byteSweep);
 
                         Interlocked.Exchange(ref this.Send_CNT, 0);
                         Interlocked.Exchange(ref this.Send_Success, 0);
@@ -822,6 +1339,14 @@ namespace WPELibrary
                         this.UpdateSendCounterLabels();
 
                         this.byteSweepWasRunning = workItem.ByteSweep;
+                        this.byteSweepPairWasRunning =
+                            workItem.ByteSweep && workItem.PairCombination;
+                        this.byteSweepPairFirstLength = workItem.PairFirstLength;
+                        this.byteSweepPairSecondLength = workItem.PairSecondLength;
+                        this.byteSweepRunLoopCount = Math.Max(1, workItem.Times);
+                        this.byteSweepStartedFromEditorPanel =
+                            workItem.ByteSweep && startedFromEditorPanel;
+                        this.SetSendRunningState(true);
                         if (workItem.ByteSweep)
                         {
                             this.tlByteSweepProgress.Visible = true;
@@ -851,10 +1376,9 @@ namespace WPELibrary
             }
         }
 
-        private SendWorkItem CreateSendWorkItem()
+        private SendWorkItem CreateSendWorkItem(bool byteSweep)
         {
             IByteProvider dbp = this.hbPacketData.ByteProvider;
-            bool byteSweep = this.rbSendType_ByteSweep != null && this.rbSendType_ByteSweep.Checked;
             long sweepStart = 0;
             long sweepLength = 0;
             if (byteSweep)
@@ -882,7 +1406,14 @@ namespace WPELibrary
                 ProgressionCarryEnabled = this.cbProgressionCarry.Checked,
                 ProgressionCarryCount = (int)this.nudProgressionCarry.Value,
                 SweepStart = byteSweep ? (int)sweepStart : 0,
-                SweepLength = byteSweep ? (int)sweepLength : 0
+                SweepLength = byteSweep ? (int)sweepLength : 0,
+                PairCombination = byteSweep && this.IsPairCombinationMode(),
+                PairFirstPosition = (int)this.nudByteSweepFirstPosition.Value,
+                PairFirstLength = (int)this.nudByteSweepFirstLength.Value,
+                PairFirstInterval = (int)this.nudByteSweepFirstInterval.Value,
+                PairSecondPosition = (int)this.nudByteSweepSecondPosition.Value,
+                PairSecondLength = (int)this.nudByteSweepSecondLength.Value,
+                PairSecondInterval = (int)this.nudByteSweepSecondInterval.Value
             };
         }
 
@@ -906,6 +1437,33 @@ namespace WPELibrary
 
             return selectionLength > 0 &&
                 selectionLength <= provider.Length - selectionStart;
+        }
+
+        private bool TryGetByteSweepPairConfiguration(bool showMessage)
+        {
+            IByteProvider provider = this.hbPacketData.ByteProvider;
+            bool valid = provider != null && provider.Length > 0 &&
+                this.nudByteSweepFirstPosition.Value < provider.Length &&
+                this.nudByteSweepSecondPosition.Value < provider.Length &&
+                this.nudByteSweepFirstPosition.Value != this.nudByteSweepSecondPosition.Value &&
+                this.nudByteSweepFirstLength.Value >= 1 &&
+                this.nudByteSweepSecondLength.Value >= 1;
+            if (!valid && showMessage)
+            {
+                MessageBox.Show(
+                    this,
+                    UiText("ByteSweep_PairInvalid"),
+                    UiText("ByteSweep_PairTitle"),
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            return valid;
+        }
+
+        private static void SetByteSweepNumber(NumericUpDown control, int value)
+        {
+            if (control == null) return;
+            control.Value = Math.Min(control.Maximum, Math.Max(control.Minimum, value));
         }
 
         private int GetEffectiveSendSocket()
@@ -987,27 +1545,51 @@ namespace WPELibrary
                 if (this.byteSweepWasRunning)
                 {
                     this.RestoreByteSweepVisualState();
+                    string completionText;
 
                     if (e.Error != null)
                     {
                         Socket_Operation.DoLog(
                             MethodBase.GetCurrentMethod().Name,
                             e.Error.Message);
-                        this.tlByteSweepProgress.Text = string.Format(
-                            MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_238),
-                            e.Error.Message);
+                        completionText = this.byteSweepPairWasRunning
+                            ? string.Format(
+                                UiText("ByteSweep_PairError"),
+                                e.Error.Message)
+                            : string.Format(
+                                MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_238),
+                                e.Error.Message);
                     }
                     else if (e.Cancelled)
                     {
-                        this.tlByteSweepProgress.Text = MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_237);
+                        completionText = this.byteSweepPairWasRunning
+                            ? UiText("ByteSweep_PairStopped")
+                            : MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_237);
+                    }
+                    else if (this.byteSweepPairWasRunning)
+                    {
+                        completionText = string.Format(
+                            UiText("ByteSweep_PairCompleted"),
+                            this.byteSweepPairFirstLength,
+                            this.byteSweepPairSecondLength,
+                            this.byteSweepRunLoopCount,
+                            Interlocked.Read(ref this.Send_CNT));
                     }
                     else
                     {
                         long byteCount = this.byteSweepProcessedLength;
-                        this.tlByteSweepProgress.Text = string.Format(
+                        completionText = string.Format(
                             MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_236),
                             byteCount,
                             Interlocked.Read(ref this.Send_CNT));
+                    }
+                    this.tlByteSweepProgress.Text = completionText;
+                    if (this.byteSweepEditorPanel != null)
+                    {
+                        this.byteSweepEditorPanel.SetOperationState(
+                            false,
+                            false,
+                            completionText);
                     }
                 }
             }
@@ -1018,7 +1600,12 @@ namespace WPELibrary
             finally
             {
                 this.byteSweepWasRunning = false;
+                this.byteSweepPairWasRunning = false;
                 this.byteSweepProcessedLength = 0;
+                this.byteSweepPairFirstLength = 0;
+                this.byteSweepPairSecondLength = 0;
+                this.byteSweepRunLoopCount = 0;
+                this.byteSweepStartedFromEditorPanel = false;
                 if (this.cts != null)
                 {
                     this.cts.Dispose();
@@ -1143,6 +1730,37 @@ namespace WPELibrary
         private bool ExecuteByteSweep(SendWorkItem workItem)
         {
             CancellationToken token = this.cts == null ? CancellationToken.None : this.cts.Token;
+            if (workItem.PairCombination)
+            {
+                Socket_ByteSweepResult pairResult = ExecuteByteSweepPairLoops(
+                    workItem.Buffer,
+                    workItem.PairFirstPosition,
+                    workItem.PairFirstLength,
+                    workItem.PairFirstInterval,
+                    workItem.PairSecondPosition,
+                    workItem.PairSecondLength,
+                    workItem.PairSecondInterval,
+                    Math.Max(1, workItem.Times),
+                    buffer => Socket_Operation.SendPacket(
+                        workItem.Socket,
+                        this.SPI.PacketType,
+                        workItem.IPFrom,
+                        workItem.IPTo,
+                        buffer),
+                    token,
+                    progress =>
+                    {
+                        Interlocked.Exchange(ref this.Send_CNT, progress.TotalSend);
+                        Interlocked.Exchange(ref this.Send_Success, progress.Success);
+                        Interlocked.Exchange(ref this.Send_Fail, progress.Failure);
+                        this.PostByteSweepPairProgress(progress);
+                    });
+                Interlocked.Exchange(ref this.Send_CNT, pairResult.TotalSend);
+                Interlocked.Exchange(ref this.Send_Success, pairResult.Success);
+                Interlocked.Exchange(ref this.Send_Fail, pairResult.Failure);
+                return !pairResult.Cancelled;
+            }
+
             Socket_ByteSweepResult result = ExecuteByteSweepLoops(
                 workItem.Buffer,
                 workItem.SweepStart,
@@ -1174,6 +1792,60 @@ namespace WPELibrary
             Interlocked.Exchange(ref this.Send_Success, result.Success);
             Interlocked.Exchange(ref this.Send_Fail, result.Failure);
             return !result.Cancelled;
+        }
+
+        private static Socket_ByteSweepResult ExecuteByteSweepPairLoops(
+            byte[] buffer,
+            int firstPosition,
+            int firstLength,
+            int firstInterval,
+            int secondPosition,
+            int secondLength,
+            int secondInterval,
+            int loopCount,
+            Func<byte[], bool> send,
+            CancellationToken token,
+            Action<Socket_ByteSweepProgress> reportProgress)
+        {
+            Socket_ByteSweepResult combined = new Socket_ByteSweepResult();
+            for (int loop = 0; loop < loopCount; loop++)
+            {
+                if (token.IsCancellationRequested)
+                {
+                    combined.Cancelled = true;
+                    break;
+                }
+
+                long completedSend = combined.TotalSend;
+                long completedSuccess = combined.Success;
+                long completedFailure = combined.Failure;
+                Socket_ByteSweepResult current = Socket_ByteSweepEngine.ExecutePairCombination(
+                    buffer,
+                    firstPosition,
+                    firstLength,
+                    firstInterval,
+                    secondPosition,
+                    secondLength,
+                    secondInterval,
+                    send,
+                    token,
+                    progress =>
+                    {
+                        progress.TotalSend += completedSend;
+                        progress.Success += completedSuccess;
+                        progress.Failure += completedFailure;
+                        reportProgress?.Invoke(progress);
+                    });
+                combined.TotalSend += current.TotalSend;
+                combined.Success += current.Success;
+                combined.Failure += current.Failure;
+                if (current.Cancelled)
+                {
+                    combined.Cancelled = true;
+                    break;
+                }
+            }
+            return combined;
         }
 
         private static Socket_ByteSweepResult ExecuteByteSweepLoops(
@@ -1285,7 +1957,7 @@ namespace WPELibrary
                         this.hbPacketData.ScrollByteIntoView(position);
                     }
 
-                    this.tlByteSweepProgress.Text = string.Format(
+                    string text = string.Format(
                         MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_235),
                         position,
                         originalValue,
@@ -1293,13 +1965,80 @@ namespace WPELibrary
                         byteNumber,
                         byteCount,
                         valueNumber);
+                    this.tlByteSweepProgress.Text = text;
                     this.tlByteSweepProgress.Visible = true;
+                    if (this.byteSweepEditorPanel != null)
+                    {
+                        this.byteSweepEditorPanel.SetOperationState(
+                            true,
+                            this.byteSweepStartedFromEditorPanel,
+                            text);
+                    }
                     this.UpdateSendCounterLabels();
                 }));
             }
             catch (InvalidOperationException)
             {
                 // 窗口关闭过程中句柄可能已销毁，无需再更新界面。
+            }
+        }
+
+        private void PostByteSweepPairProgress(Socket_ByteSweepProgress progress)
+        {
+            if (this.IsDisposed || !this.IsHandleCreated)
+            {
+                return;
+            }
+
+            try
+            {
+                int displayGeneration = Volatile.Read(ref this.byteSweepLiveDisplayGeneration);
+                this.BeginInvoke((Action)(() =>
+                {
+                    if (this.IsDisposed ||
+                        !this.byteSweepLiveDisplayEnabled ||
+                        displayGeneration != this.byteSweepLiveDisplayGeneration)
+                    {
+                        return;
+                    }
+
+                    long perLoopTotal = Math.Max(
+                        1L,
+                        (long)this.byteSweepPairFirstLength *
+                        this.byteSweepPairSecondLength);
+                    long plannedTotal = perLoopTotal *
+                        Math.Max(1, this.byteSweepRunLoopCount);
+                    int currentLoop = Math.Min(
+                        Math.Max(1, this.byteSweepRunLoopCount),
+                        (int)(((Math.Max(1L, progress.TotalSend) - 1L) /
+                            perLoopTotal) + 1L));
+                    string text = string.Format(
+                        UiText("ByteSweep_PairProgress"),
+                        currentLoop,
+                        Math.Max(1, this.byteSweepRunLoopCount),
+                        progress.PairFirstValue,
+                        progress.PairFirstValueNumber,
+                        progress.PairFirstValueCount,
+                        progress.PairSecondValue,
+                        progress.PairSecondValueNumber,
+                        progress.PairSecondValueCount,
+                        progress.TotalSend,
+                        plannedTotal);
+                    this.UpdateByteSweepLivePairDisplay(progress);
+                    this.tlByteSweepProgress.Visible = true;
+                    this.tlByteSweepProgress.Text = text;
+                    if (this.byteSweepEditorPanel != null)
+                    {
+                        this.byteSweepEditorPanel.SetOperationState(
+                            true,
+                            this.byteSweepStartedFromEditorPanel,
+                            text);
+                    }
+                    this.UpdateSendCounterLabels();
+                }));
+            }
+            catch (InvalidOperationException)
+            {
             }
         }
 
@@ -1344,11 +2083,48 @@ namespace WPELibrary
             this.HexBox_LinePositionChanged();
         }
 
+        private void UpdateByteSweepLivePairDisplay(Socket_ByteSweepProgress progress)
+        {
+            IByteProvider provider = this.hbPacketData.ByteProvider;
+            if (!this.byteSweepLiveDisplayEnabled ||
+                provider == null ||
+                !provider.SupportsWriteByte())
+            {
+                return;
+            }
+
+            if (!this.byteSweepLiveValueActive || this.byteSweepLivePosition != progress.PairFirstPosition)
+            {
+                this.RestoreByteSweepDisplayedValue();
+                this.byteSweepLivePosition = progress.PairFirstPosition;
+                this.byteSweepLiveOriginalValue = provider.ReadByte(progress.PairFirstPosition);
+                this.byteSweepLiveValueActive = true;
+            }
+
+            if (!this.byteSweepLiveSecondValueActive || this.byteSweepLiveSecondPosition != progress.PairSecondPosition)
+            {
+                if (this.byteSweepLiveSecondValueActive &&
+                    this.byteSweepLiveSecondPosition >= 0 &&
+                    this.byteSweepLiveSecondPosition < provider.Length)
+                {
+                    provider.WriteByte(this.byteSweepLiveSecondPosition, this.byteSweepLiveSecondOriginalValue);
+                }
+                this.byteSweepLiveSecondPosition = progress.PairSecondPosition;
+                this.byteSweepLiveSecondOriginalValue = provider.ReadByte(progress.PairSecondPosition);
+                this.byteSweepLiveSecondValueActive = true;
+            }
+
+            provider.WriteByte(progress.PairFirstPosition, progress.PairFirstValue);
+            provider.WriteByte(progress.PairSecondPosition, progress.PairSecondValue);
+            this.HexBox_LinePositionChanged();
+        }
+
         private void EndByteSweepLiveDisplay()
         {
             bool liveDisplayWasActive =
                 this.byteSweepLiveDisplayEnabled ||
-                this.byteSweepLiveValueActive;
+                this.byteSweepLiveValueActive ||
+                this.byteSweepLiveSecondValueActive;
             this.byteSweepLiveDisplayEnabled = false;
             Interlocked.Increment(ref this.byteSweepLiveDisplayGeneration);
             this.RestoreByteSweepDisplayedValue();
@@ -1364,13 +2140,9 @@ namespace WPELibrary
 
         private void RestoreByteSweepDisplayedValue()
         {
-            if (!this.byteSweepLiveValueActive)
-            {
-                return;
-            }
-
             IByteProvider provider = this.hbPacketData.ByteProvider;
-            if (provider != null &&
+            if (this.byteSweepLiveValueActive &&
+                provider != null &&
                 provider.SupportsWriteByte() &&
                 this.byteSweepLivePosition >= 0 &&
                 this.byteSweepLivePosition < provider.Length)
@@ -1383,6 +2155,19 @@ namespace WPELibrary
 
             this.byteSweepLiveValueActive = false;
             this.byteSweepLivePosition = -1;
+            IByteProvider secondProvider = this.hbPacketData.ByteProvider;
+            if (this.byteSweepLiveSecondValueActive &&
+                secondProvider != null &&
+                secondProvider.SupportsWriteByte() &&
+                this.byteSweepLiveSecondPosition >= 0 &&
+                this.byteSweepLiveSecondPosition < secondProvider.Length)
+            {
+                secondProvider.WriteByte(
+                    this.byteSweepLiveSecondPosition,
+                    this.byteSweepLiveSecondOriginalValue);
+            }
+            this.byteSweepLiveSecondValueActive = false;
+            this.byteSweepLiveSecondPosition = -1;
         }
 
         private void RestoreByteSweepVisualState()
@@ -1451,7 +2236,10 @@ namespace WPELibrary
 
         private void bSendStop_Click(object sender, EventArgs e)
         {
-            this.StopSend();
+            if (!this.byteSweepWasRunning)
+            {
+                this.StopSend();
+            }
         }
 
         private void StopSend()
@@ -1499,11 +2287,16 @@ namespace WPELibrary
 
         private void UpdateCurrentByteSweepPreset()
         {
-            long selectionStart;
-            long selectionLength;
-            if (!this.TryGetByteSweepSelection(out selectionStart, out selectionLength))
+            long selectionStart = 0;
+            long selectionLength = 1;
+            bool pairMode = this.IsPairCombinationMode();
+            if (!pairMode && !this.TryGetByteSweepSelection(out selectionStart, out selectionLength))
             {
                 Socket_Operation.ShowMessageBox(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_234));
+                return;
+            }
+            if (pairMode && !this.TryGetByteSweepPairConfiguration(true))
+            {
                 return;
             }
 
@@ -1518,6 +2311,13 @@ namespace WPELibrary
             value.BLoopCount = (int)this.nudByteSweepLoopCount.Value;
             value.BInterval = (int)this.nudByteSweepInterval.Value;
             value.BNextInterval = (int)this.nudByteSweepNextInterval.Value;
+            value.BMode = pairMode ? Socket_ByteSweepMode.PairCombination : Socket_ByteSweepMode.Sequential;
+            value.BCombinationFirstPosition = (int)this.nudByteSweepFirstPosition.Value;
+            value.BCombinationFirstInterval = (int)this.nudByteSweepFirstInterval.Value;
+            value.BCombinationFirstLength = (int)this.nudByteSweepFirstLength.Value;
+            value.BCombinationSecondPosition = (int)this.nudByteSweepSecondPosition.Value;
+            value.BCombinationSecondInterval = (int)this.nudByteSweepSecondInterval.Value;
+            value.BCombinationSecondLength = (int)this.nudByteSweepSecondLength.Value;
             value.PacketType = this.SPI.PacketType;
             value.PacketFrom = this.SPI.PacketFrom;
             value.PacketTo = this.SPI.PacketTo;
@@ -1545,11 +2345,16 @@ namespace WPELibrary
                 return;
             }
 
-            long selectionStart;
-            long selectionLength;
-            if (!this.TryGetByteSweepSelection(out selectionStart, out selectionLength))
+            long selectionStart = 0;
+            long selectionLength = 1;
+            bool pairMode = this.IsPairCombinationMode();
+            if (!pairMode && !this.TryGetByteSweepSelection(out selectionStart, out selectionLength))
             {
                 Socket_Operation.ShowMessageBox(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_234));
+                return;
+            }
+            if (pairMode && !this.TryGetByteSweepPairConfiguration(true))
+            {
                 return;
             }
 
@@ -1568,6 +2373,13 @@ namespace WPELibrary
                 BLoopCount = (int)this.nudByteSweepLoopCount.Value,
                 BInterval = (int)this.nudByteSweepInterval.Value,
                 BNextInterval = (int)this.nudByteSweepNextInterval.Value,
+                BMode = pairMode ? Socket_ByteSweepMode.PairCombination : Socket_ByteSweepMode.Sequential,
+                BCombinationFirstPosition = (int)this.nudByteSweepFirstPosition.Value,
+                BCombinationFirstInterval = (int)this.nudByteSweepFirstInterval.Value,
+                BCombinationFirstLength = (int)this.nudByteSweepFirstLength.Value,
+                BCombinationSecondPosition = (int)this.nudByteSweepSecondPosition.Value,
+                BCombinationSecondInterval = (int)this.nudByteSweepSecondInterval.Value,
+                BCombinationSecondLength = (int)this.nudByteSweepSecondLength.Value,
                 PacketType = this.SPI.PacketType,
                 PacketFrom = this.txtIPFrom.Text.Trim(),
                 PacketTo = this.txtIPTo.Text.Trim(),
@@ -1925,12 +2737,14 @@ namespace WPELibrary
         private void hbPacketData_SelectionLengthChanged(object sender, EventArgs e)
         {
             this.HexBox_ManageAbilityForCopyAndPaste();
+            this.SyncByteSweepEditorFromLegacy();
             this.SendTypeChanged();
         }
 
         private void hbPacketData_SelectionStartChanged(object sender, EventArgs e)
         {
             this.HexBox_ManageAbilityForCopyAndPaste();
+            this.SyncByteSweepEditorFromLegacy();
             this.SendTypeChanged();
         }
 

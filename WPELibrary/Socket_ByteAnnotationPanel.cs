@@ -28,11 +28,11 @@ namespace WPELibrary
         public Socket_ByteAnnotationPanel()
         {
             Dock = DockStyle.Fill;
-            Padding = new Padding(6);
-            MinimumSize = new Size(180, 0);
+            Padding = new Padding(4);
+            MinimumSize = new Size(130, 0);
 
             titleFont = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold);
-            Panel header = new Panel { Dock = DockStyle.Top, Height = 26 };
+            Panel header = new Panel { Dock = DockStyle.Top, Height = 23 };
             title = new Label
             {
                 Text = ResourceText("ByteAnnotation_Title"),
@@ -44,7 +44,7 @@ namespace WPELibrary
             {
                 Text = ResourceText("ByteAnnotation_Collapse"),
                 Dock = DockStyle.Right,
-                Width = 26,
+                Width = 22,
                 FlatStyle = FlatStyle.System,
                 AccessibleName = ResourceText("ByteAnnotation_CollapseButton")
             };
@@ -54,10 +54,10 @@ namespace WPELibrary
             TableLayoutPanel buttons = new TableLayoutPanel
             {
                 Dock = DockStyle.Bottom,
-                Height = 34,
+                Height = 30,
                 ColumnCount = 3,
                 RowCount = 1,
-                Padding = new Padding(0, 3, 0, 0)
+                Padding = new Padding(0, 2, 0, 0)
             };
             buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
             buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
@@ -76,8 +76,8 @@ namespace WPELibrary
                 View = View.Details,
                 AccessibleName = ResourceText("ByteAnnotation_List")
             };
-            list.Columns.Add(ResourceText("ByteAnnotation_Range"), 72);
-            list.Columns.Add(ResourceText("ByteAnnotation_Note"), 118);
+            list.Columns.Add(ResourceText("ByteAnnotation_Range"), 48);
+            list.Columns.Add(ResourceText("ByteAnnotation_Note"), 82);
             list.DoubleClick += delegate { Raise(EditRequested); };
             list.SelectedIndexChanged += delegate { Raise(SelectionRequested); };
             Controls.Add(list);
@@ -120,8 +120,8 @@ namespace WPELibrary
             collapse.Text = ResourceText(value ? "ByteAnnotation_Expand" : "ByteAnnotation_Collapse");
             collapse.AccessibleName = ResourceText(
                 value ? "ByteAnnotation_ExpandButton" : "ByteAnnotation_CollapseButton");
-            Padding = value ? Padding.Empty : new Padding(6);
-            MinimumSize = value ? Size.Empty : new Size(180, 0);
+            Padding = value ? Padding.Empty : new Padding(4);
+            MinimumSize = value ? Size.Empty : new Size(130, 0);
         }
 
         [SuppressMessage("Microsoft.Reliability", "CA2000:Dispose objects before losing scope",
