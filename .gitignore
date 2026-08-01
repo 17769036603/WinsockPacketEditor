@@ -362,3 +362,7 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /WinsockPacketEditor/Resources/Thumbs.db
+
+# Local isolated preview and UI-audit artifacts
+/work/
+/ui-audit/

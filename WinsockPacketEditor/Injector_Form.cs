@@ -23,16 +23,40 @@ namespace WinsockPacketEditor
             InitializeComponent();            
 
             this.rtbLog.Clear();
+            this.ConfigureAccessibleLayout();
             this.InitToolTip();
-            this.InitLastInjection();            
+            this.InitLastInjection();
+            this.UpdateSelectedProcessState();
+        }
+
+        private void ConfigureAccessibleLayout()
+        {
+            this.ClientSize = new System.Drawing.Size(580, 220);
+            this.MinimumSize = new System.Drawing.Size(596, 259);
+            this.tlpProcessInject.ColumnStyles[2].Width = 140F;
+            this.tlpProcessInject.ColumnStyles[3].Width = 150F;
+
+            this.tbProcessID.TabStop = false;
+            this.tbProcessID.AccessibleName = this.bSelectProcess.Text;
+
+            this.bSelectProcess.TextImageRelation = TextImageRelation.ImageBeforeText;
+            this.bSelectProcess.ImageAlign = System.Drawing.ContentAlignment.MiddleLeft;
+            this.bSelectProcess.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+            this.bSelectProcess.TabIndex = 0;
+            this.bSelectProcess.AccessibleName = this.bSelectProcess.Text;
+
+            this.bInject.TabIndex = 1;
+            this.bInject.AccessibleName = this.bInject.Text;
+            this.rtbLog.TabIndex = 2;
+            this.AcceptButton = this.bInject;
         }
 
         private void InitToolTip()
         {
             try
             {
-                tt.SetToolTip(bSelectProcess, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_1));
-                tt.SetToolTip(bInject, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_2));
+                tt.SetToolTip(bSelectProcess, this.bSelectProcess.Text);
+                tt.SetToolTip(bInject, this.bInject.Text);
                                 
                 ShowLog(string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_5), Socket_Operation.AssemblyVersion));
             }
@@ -106,11 +130,29 @@ namespace WinsockPacketEditor
                     tbProcessID.Text = Program.PNAME;
                 }
 
-                this.bInject.Focus();
+                this.UpdateSelectedProcessState();
             }
             catch (Exception ex)
             {
                 ShowLog(ex.Message);
+            }
+        }
+
+        private void UpdateSelectedProcessState()
+        {
+            bool hasSelection =
+                (Program.PID != -1 && !string.IsNullOrEmpty(Program.PNAME)) ||
+                (!string.IsNullOrEmpty(Program.PNAME) && !string.IsNullOrEmpty(Program.PATH));
+            this.bInject.Enabled = hasSelection;
+
+            if (hasSelection)
+            {
+                this.bInject.Focus();
+            }
+            else
+            {
+                this.tbProcessID.Clear();
+                this.bSelectProcess.Focus();
             }
         }
 
@@ -153,7 +195,8 @@ namespace WinsockPacketEditor
 
                     ShowLog(string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_8), targetPlat));                    
                     ShowLog(string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_9), ProcessName, ProcessID));
-                    ShowLog(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_10));                    
+                    ShowLog(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_10));
+                    this.BeginInvoke(new Action(this.Close));
                 }
             }
             catch (Exception ex)

@@ -27,7 +27,19 @@ namespace WPELibrary.Lib
             set { sid = value; }
         }
 
-        #endregion        
+        #endregion
+
+        #region//发送顺序
+
+        protected int ssortorder;
+
+        public int SSortOrder
+        {
+            get { return ssortorder; }
+            set { ssortorder = value; }
+        }
+
+        #endregion
 
         #region//名称
 
@@ -37,6 +49,18 @@ namespace WPELibrary.Lib
         {
             get { return sname; }
             set { sname = value; }
+        }
+
+        #endregion
+
+        #region//文件夹
+
+        protected string sfolder;
+
+        public string SFolder
+        {
+            get { return sfolder; }
+            set { sfolder = value ?? string.Empty; }
         }
 
         #endregion
@@ -111,11 +135,15 @@ namespace WPELibrary.Lib
             int SLoopCNT, 
             int SLoopINT,
             BindingList<Socket_PacketInfo> SCollection, 
-            string SNotes)
+            string SNotes,
+            string SFolder = "",
+            int SSortOrder = 0)
         {
             this.isenable = IsEnable;
             this.sid = SID;
+            this.ssortorder = SSortOrder;
             this.sname = SName;
+            this.sfolder = SFolder ?? string.Empty;
             this.ssystemsocket = SSystemSocket;         
             this.sloopcnt = SLoopCNT;
             this.sloopint = SLoopINT;

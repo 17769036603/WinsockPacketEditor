@@ -193,9 +193,6 @@
   <data name="tscbPerLine.Items" xml:space="preserve">
     <value>Adaptive</value>
   </data>
-  <data name="tscbPerLine.Items1" xml:space="preserve">
-    <value>Fixed Length</value>
-  </data>
   <data name="hbPacketData.BuiltInContextMenu.CopyMenuItemText" xml:space="preserve">
     <value>Copy</value>
   </data>
@@ -287,7 +284,7 @@
     <value>190, 21</value>
   </data>
   <data name="gbSendType.Text" xml:space="preserve">
-    <value>[ Send ]</value>
+    <value>Send</value>
   </data>
   <data name="tlpSendType.Location" type="System.Drawing.Point, System.Drawing">
     <value>3, 17</value>
@@ -338,7 +335,7 @@
     <value>185, 21</value>
   </data>
   <data name="gbSendStep.Text" xml:space="preserve">
-    <value>[ Progression ]</value>
+    <value>Progression</value>
   </data>
   <data name="tlpSendStepSet.Location" type="System.Drawing.Point, System.Drawing">
     <value>3, 17</value>
@@ -407,7 +404,7 @@
     <value>138, 21</value>
   </data>
   <data name="bSave.Text" xml:space="preserve">
-    <value>Save (&amp;S)</value>
+    <value>Save preset (&amp;S)</value>
   </data>
   <data name="bClose.Text" xml:space="preserve">
     <value>Close (&amp;C)</value>
@@ -416,7 +413,7 @@
     <value>Stop (&amp;T)</value>
   </data>
   <data name="bSend.Text" xml:space="preserve">
-    <value>Send (&amp;F)</value>
+    <value>Start (&amp;F)</value>
   </data>
   <data name="$this.Font" type="System.Drawing.Font, System.Drawing">
     <value>Microsoft Sans Serif, 9pt</value>

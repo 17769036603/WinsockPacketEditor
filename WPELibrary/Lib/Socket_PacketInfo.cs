@@ -4,6 +4,9 @@ namespace WPELibrary.Lib
 {
     public class Socket_PacketInfo
     {
+        public System.Collections.Generic.List<Socket_ByteAnnotationInfo> ByteAnnotations { get; set; } =
+            new System.Collections.Generic.List<Socket_ByteAnnotationInfo>();
+
         #region//时间戳
 
         protected DateTime packettime;

@@ -588,9 +588,6 @@
   <data name="tscbPerLine.Items" xml:space="preserve">
     <value>自适应排列</value>
   </data>
-  <data name="tscbPerLine.Items1" xml:space="preserve">
-    <value>固定排列</value>
-  </data>
   <data name="tscbPerLine.Size" type="System.Drawing.Size, System.Drawing">
     <value>150, 25</value>
   </data>
@@ -2224,7 +2221,7 @@
     <value>3</value>
   </data>
   <data name="gbSendType.Text" xml:space="preserve">
-    <value>[ 发送 ]</value>
+    <value>发送</value>
   </data>
   <data name="&gt;&gt;gbSendType.Name" xml:space="preserve">
     <value>gbSendType</value>
@@ -2563,7 +2560,7 @@
     <value>2</value>
   </data>
   <data name="gbSendStep.Text" xml:space="preserve">
-    <value>[ 递进 ]</value>
+    <value>递进</value>
   </data>
   <data name="&gt;&gt;gbSendStep.Name" xml:space="preserve">
     <value>gbSendStep</value>
@@ -2632,7 +2629,7 @@
     <value>54</value>
   </data>
   <data name="bSave.Text" xml:space="preserve">
-    <value>保 存 (&amp;S)</value>
+    <value>保存预设 (&amp;S)</value>
   </data>
   <data name="&gt;&gt;bSave.Name" xml:space="preserve">
     <value>bSave</value>
@@ -2698,7 +2695,7 @@
     <value>52</value>
   </data>
   <data name="bSendStop.Text" xml:space="preserve">
-    <value>停 止 (&amp;T)</value>
+    <value>停止 (&amp;T)</value>
   </data>
   <data name="&gt;&gt;bSendStop.Name" xml:space="preserve">
     <value>bSendStop</value>
@@ -2731,7 +2728,7 @@
     <value>51</value>
   </data>
   <data name="bSend.Text" xml:space="preserve">
-    <value>发 送 (&amp;F)</value>
+    <value>开始 (&amp;F)</value>
   </data>
   <data name="&gt;&gt;bSend.Name" xml:space="preserve">
     <value>bSend</value>

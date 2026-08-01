@@ -14,6 +14,10 @@ namespace WinsockPacketEditor
         /// <param name="disposing">如果应释放托管资源，为 true；否则为 false。</param>
         protected override void Dispose(bool disposing)
         {
+            if (disposing)
+            {
+                this.tt.Dispose();
+            }
             if (disposing && (components != null))
             {
                 components.Dispose();
@@ -121,4 +125,3 @@ namespace WinsockPacketEditor
         private System.Windows.Forms.Button bInject;
     }
 }
-

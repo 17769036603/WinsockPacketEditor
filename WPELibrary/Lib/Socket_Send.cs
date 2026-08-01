@@ -18,6 +18,7 @@ namespace WPELibrary.Lib
         public string SendName = string.Empty;
 
         private CancellationTokenSource cts;
+        private int resolvedSystemSocket;
         private BindingList<Socket_PacketInfo> SendCollection;
         public BackgroundWorker Worker = new BackgroundWorker();
 
@@ -44,6 +45,37 @@ namespace WPELibrary.Lib
 
         public void StartSend(string SendName, bool SystemSocket, int LoopCNT, int LoopINT, BindingList<Socket_PacketInfo> SendCollection)
         {
+            int socketSnapshot = SystemSocket
+                ? Socket_Cache.System.SystemSocket
+                : 0;
+            this.StartSend(
+                SendName,
+                SystemSocket,
+                socketSnapshot,
+                LoopCNT,
+                LoopINT,
+                SendCollection);
+        }
+
+        public void StartSend(string SendName, int ResolvedSystemSocket, int LoopCNT, int LoopINT, BindingList<Socket_PacketInfo> SendCollection)
+        {
+            this.StartSend(
+                SendName,
+                true,
+                ResolvedSystemSocket,
+                LoopCNT,
+                LoopINT,
+                SendCollection);
+        }
+
+        private void StartSend(
+            string SendName,
+            bool SystemSocket,
+            int ResolvedSystemSocket,
+            int LoopCNT,
+            int LoopINT,
+            BindingList<Socket_PacketInfo> SendCollection)
+        {
             try
             {
                 if (SendCollection.Count > 0)
@@ -56,6 +88,7 @@ namespace WPELibrary.Lib
 
                         this.SendName = SendName;
                         this.SystemSocket = SystemSocket;
+                        this.resolvedSystemSocket = Math.Max(0, ResolvedSystemSocket);
                         this.LoopCNT = LoopCNT;
                         this.LoopINT = LoopINT;
                         this.SendCollection = SendCollection;
@@ -108,14 +141,15 @@ namespace WPELibrary.Lib
             {
                 if (this.SystemSocket)
                 {
-                    if (Socket_Cache.System.SystemSocket <= 0)
+                    if (this.resolvedSystemSocket <= 0)
                     {
                         Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_49));
                         return;
                     }
                 }
 
-                for (int i = 0; i < this.LoopCNT; i++)
+                int loopIndex = 0;
+                while (this.LoopCNT == 0 || loopIndex < this.LoopCNT)
                 {
                     foreach (Socket_PacketInfo spi in this.SendCollection)
                     {
@@ -129,7 +163,7 @@ namespace WPELibrary.Lib
                             int Socket = spi.PacketSocket;
                             if (this.SystemSocket)
                             {
-                                Socket = Socket_Cache.System.SystemSocket;
+                                Socket = this.resolvedSystemSocket;
                             }
 
                             if (Socket > 0)
@@ -149,17 +183,29 @@ namespace WPELibrary.Lib
 
                                 if (this.LoopINT > 0)
                                 {
-                                    Worker.ReportProgress(i);
-                                    Socket_Operation.DoSleepAsync(this.LoopINT, this.cts.Token).Wait();
+                                    Worker.ReportProgress(loopIndex);
+                                    Socket_Operation.DoSleepAsync(this.LoopINT, this.cts.Token)
+                                        .GetAwaiter()
+                                        .GetResult();
                                 }
                             }
                         }
                     }
+
+                    if (loopIndex < int.MaxValue)
+                    {
+                        loopIndex++;
+                    }
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                e.Cancel = true;
             }
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                throw;
             }
         }
 

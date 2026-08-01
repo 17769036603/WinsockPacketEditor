@@ -1758,7 +1758,12 @@ namespace WPELibrary.Lib
 
                 foreach (Socket_SendInfo ssi in Socket_Cache.SendList.lstSend)
                 {
-                    cbb.Items.Add(new Socket_Cache.SendList.SendListItem { SName = ssi.SName, SID = ssi.SID });
+                    cbb.Items.Add(new Socket_Cache.SendList.SendListItem
+                    {
+                        SName = ssi.SName,
+                        SID = ssi.SID,
+                        SFolder = ssi.SFolder
+                    });
                 }
             }
             catch (Exception ex)
@@ -1775,8 +1780,16 @@ namespace WPELibrary.Lib
 
                 foreach (Socket_SendInfo ssi in Socket_Cache.SendList.lstSend)
                 {
-                    tscb.Items.Add(new Socket_Cache.SendList.SendListItem { SName = ssi.SName, SID = ssi.SID });
+                    tscb.Items.Add(new Socket_Cache.SendList.SendListItem
+                    {
+                        SName = ssi.SName,
+                        SID = ssi.SID,
+                        SFolder = ssi.SFolder
+                    });
                 }
+
+                tscb.Enabled = tscb.Items.Count > 0;
+                tscb.Text = tscb.Enabled ? string.Empty : "请先新建发送列表";
             }
             catch (Exception ex)
             {
@@ -3011,11 +3024,12 @@ namespace WPELibrary.Lib
 
             try
             {
-                for (int i = 0; i < dgvSendList.Rows.Count; i++)
+                foreach (DataGridViewRow row in dgvSendList.SelectedRows)
                 {
-                    if (dgvSendList.Rows[i].Selected)
+                    Socket_SendInfo sendInfo = row.DataBoundItem as Socket_SendInfo;
+                    if (sendInfo != null)
                     {
-                        ssiList.Add(Socket_Cache.SendList.lstSend[i]);
+                        ssiList.Add(sendInfo);
                     }
                 }
             }
