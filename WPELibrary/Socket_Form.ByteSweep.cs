@@ -36,6 +36,8 @@ namespace WPELibrary
         private long byteSweepTotalSend;
         private long byteSweepSuccess;
         private long byteSweepFailure;
+        private Guid byteSweepJobId = Guid.Empty;
+        private long byteSweepPlannedTotal;
 
         private void InitByteSweepPresetUI()
         {
@@ -942,12 +944,41 @@ namespace WPELibrary
                 return;
             }
 
+            long plannedTotal = presets.Sum(item =>
+                Math.Max(1, (long)item.BLoopCount) *
+                (item.BMode == Socket_ByteSweepMode.PairCombination
+                    ? Math.Max(1L, (long)item.BCombinationFirstLength * item.BCombinationSecondLength)
+                    : Math.Max(1L, (long)item.BLength * 255L)));
+            Guid jobId;
+            CancellationTokenSource sharedCancellation;
+            Socket_ByteSweepPresetInfo firstPreset = presets[0];
+            if (!Socket_ByteSweepRuntime.Current.TryStart(
+                firstPreset.BID,
+                firstPreset.BName,
+                firstPreset.BMode == Socket_ByteSweepMode.PairCombination
+                    ? UiText("ByteSweep_PairMode")
+                    : UiText("ByteSweep_SequentialMode"),
+                firstPreset.BLoopCount,
+                plannedTotal,
+                out jobId,
+                out sharedCancellation))
+            {
+                MessageBox.Show(this, UiText("ByteSweep_RuntimeBusy"), UiText("ByteSweep_BatchTitle"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             this.byteSweepRunning = true;
+            this.byteSweepJobId = jobId;
+            this.byteSweepPlannedTotal = plannedTotal;
             this.byteSweepTotalSend = 0;
             this.byteSweepSuccess = 0;
             this.byteSweepFailure = 0;
-            this.byteSweepCts = new CancellationTokenSource();
+            this.byteSweepCts = sharedCancellation;
             this.RefreshByteSweepView();
+            Socket_ByteSweepRuntime.Current.MarkRunning(jobId);
+
+            Exception runtimeError = null;
 
             try
             {
@@ -1031,6 +1062,7 @@ namespace WPELibrary
             }
             catch (Exception ex)
             {
+                runtimeError = ex;
                 Socket_Operation.DoLog(nameof(StartByteSweepPresets), ex.Message);
                 MessageBox.Show(
                     this,
@@ -1040,6 +1072,14 @@ namespace WPELibrary
             }
             finally
             {
+                bool cancelled = this.byteSweepCts != null && this.byteSweepCts.IsCancellationRequested;
+                Socket_ByteSweepRuntime.Current.Finish(
+                    jobId,
+                    cancelled,
+                    runtimeError,
+                    runtimeError == null
+                        ? (cancelled ? UiText("ByteSweep_LogCancelled") : UiText("ByteSweep_LogCompleted"))
+                        : runtimeError.Message);
                 Socket_ByteSweepPresetInfo activePreset = presets.FirstOrDefault(
                     item => item.BID == this.activeByteSweepPresetId);
                 this.RestoreByteSweepLivePreview(activePreset);
@@ -1050,6 +1090,8 @@ namespace WPELibrary
                     this.byteSweepCts.Dispose();
                     this.byteSweepCts = null;
                 }
+                this.byteSweepJobId = Guid.Empty;
+                this.byteSweepPlannedTotal = 0;
                 this.RefreshByteSweepView();
             }
         }
@@ -1067,6 +1109,17 @@ namespace WPELibrary
 
             try
             {
+                Socket_ByteSweepRuntime.Current.PublishProgress(
+                    this.byteSweepJobId,
+                    preset.BID,
+                    preset.BName,
+                    preset.BMode == Socket_ByteSweepMode.PairCombination
+                        ? UiText("ByteSweep_PairMode")
+                        : UiText("ByteSweep_SequentialMode"),
+                    progress,
+                    currentLoop,
+                    loopCount,
+                    this.byteSweepPlannedTotal);
                 this.BeginInvoke((Action)(() =>
                 {
                     if (this.IsDisposed)
@@ -1124,7 +1177,15 @@ namespace WPELibrary
 
         private void StopByteSweep()
         {
-            if (this.byteSweepCts != null)
+            if (this.byteSweepJobId != Guid.Empty)
+            {
+                Socket_ByteSweepRuntime.Current.RequestStop(this.byteSweepJobId);
+            }
+            else if (Socket_ByteSweepRuntime.Current.IsBusy)
+            {
+                Socket_ByteSweepRuntime.Current.RequestStop();
+            }
+            else if (this.byteSweepCts != null)
             {
                 this.byteSweepCts.Cancel();
             }

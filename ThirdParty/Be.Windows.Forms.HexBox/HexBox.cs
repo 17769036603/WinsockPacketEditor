@@ -1953,6 +1953,26 @@ namespace Be.Windows.Forms
 
 		#region PreProcessMessage methods
 		/// <summary>
+		/// Handles Backspace as a command key as well as a WM_KEYDOWN message.
+		/// Some Windows 11 keyboard/focus paths route Backspace through
+		/// ProcessCmdKey and bypass the custom WM_KEYDOWN preprocessing above.
+		/// Reuse the active interpreter so deletion keeps the existing cursor,
+		/// selection and byte-provider behavior.
+		/// </summary>
+		protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+		{
+			if ((keyData & Keys.KeyCode) == Keys.Back &&
+				(keyData & Keys.Modifiers) == Keys.None &&
+				_byteProvider != null &&
+				_keyInterpreter != null)
+			{
+				return _keyInterpreter.PreProcessWmKeyDown(ref msg);
+			}
+
+			return base.ProcessCmdKey(ref msg, keyData);
+		}
+
+		/// <summary>
 		/// Preprocesses windows messages.
 		/// </summary>
 		/// <param name="m">the message to process.</param>

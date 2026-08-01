@@ -25,6 +25,7 @@ namespace WPELibrary
         private long lastTipIndex = -1;
         private readonly Func<bool> canEdit;
         private bool collapsed;
+        private bool uiVisible = true;
         private bool disposed;
 
         public event EventHandler Changed;
@@ -77,6 +78,31 @@ namespace WPELibrary
         {
             panel.RefreshItems();
             hexBox.Invalidate();
+        }
+
+        public void SetUiVisible(bool visible)
+        {
+            this.uiVisible = visible;
+            this.panel.Visible = visible;
+            if (this.menuSeparator != null) this.menuSeparator.Visible = visible;
+            if (this.addMenuItem != null) this.addMenuItem.Visible = visible;
+            if (this.editMenuItem != null) this.editMenuItem.Visible = visible;
+            if (this.deleteMenuItem != null) this.deleteMenuItem.Visible = visible;
+
+            if (!visible)
+            {
+                this.layout.RowStyles[this.row].SizeType = SizeType.Absolute;
+                this.layout.RowStyles[this.row].Height = 0F;
+            }
+            else
+            {
+                this.layout.RowStyles[this.row].SizeType = this.collapsed
+                    ? SizeType.Absolute
+                    : this.expandedRowSizeType;
+                this.layout.RowStyles[this.row].Height = this.collapsed
+                    ? 28F
+                    : this.expandedRowHeight;
+            }
         }
 
         private void Add()
@@ -193,6 +219,10 @@ namespace WPELibrary
         private void Panel_SelectionRequested(object sender, EventArgs e) { SelectCurrent(); }
         private void Panel_CollapseRequested(object sender, EventArgs e)
         {
+            if (!this.uiVisible)
+            {
+                return;
+            }
             collapsed = !collapsed;
             layout.RowStyles[row].SizeType =
                 collapsed ? SizeType.Absolute : expandedRowSizeType;

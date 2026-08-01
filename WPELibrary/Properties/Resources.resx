@@ -332,7 +332,18 @@
   <data name="UI_ClearCaptureTitle" xml:space="preserve"><value>清空当前捕获</value></data>
   <data name="UI_ClearCaptureConfirm" xml:space="preserve"><value>确定清空当前捕获列表和统计数据吗？此操作无法撤销。</value></data>
   <data name="Main_Filter" xml:space="preserve"><value>滤镜</value></data>
+  <data name="Filter_Load" xml:space="preserve"><value>导入滤镜</value></data>
+  <data name="Filter_Save" xml:space="preserve"><value>导出滤镜</value></data>
+  <data name="Filter_Add" xml:space="preserve"><value>新增滤镜</value></data>
+  <data name="Filter_Clear" xml:space="preserve"><value>清空滤镜</value></data>
   <data name="Main_Robot" xml:space="preserve"><value>机器人</value></data>
+  <data name="UI_Assistant" xml:space="preserve"><value>助手</value></data>
+  <data name="UI_AssistantGroups" xml:space="preserve"><value>助手分组</value></data>
+  <data name="UI_GroupName" xml:space="preserve"><value>分组名称</value></data>
+  <data name="UI_Edit" xml:space="preserve"><value>编辑</value></data>
+  <data name="UI_AssistantEmpty" xml:space="preserve"><value>当前分组暂无助手，请点击“新增机器人”</value></data>
+  <data name="UI_MoveToGroup" xml:space="preserve"><value>移动到分组</value></data>
+  <data name="UI_GroupMustBeEmpty" xml:space="preserve"><value>只能删除空分组，请先移动其中的助手</value></data>
   <data name="Main_GeneralSettings" xml:space="preserve"><value>常规设置</value></data>
   <data name="Main_AdvancedTools" xml:space="preserve"><value>高级工具</value></data>
   <data name="Main_PacketList" xml:space="preserve"><value>封包列表</value></data>
@@ -467,6 +478,7 @@
   <data name="ByteSweep_SequentialMode" xml:space="preserve"><value>普通递进</value></data>
   <data name="ByteSweep_PairMode" xml:space="preserve"><value>双字节组合</value></data>
   <data name="ByteSweep_RangeEstimate" xml:space="preserve"><value>范围 / 预计</value></data>
+  <data name="ByteSweep_CombinationEstimate" xml:space="preserve"><value>组合 / 预计</value></data>
   <data name="ByteSweep_NoSelection" xml:space="preserve"><value>未选择范围</value></data>
   <data name="ByteSweep_NormalInterval" xml:space="preserve"><value>普通间隔(ms)</value></data>
   <data name="ByteSweep_FirstPosition" xml:space="preserve"><value>字节A位置</value></data>
@@ -486,6 +498,9 @@
   <data name="ByteSweep_PairEstimateFormat" xml:space="preserve"><value>A{0} × B{1} × {2}轮；预计 {3}</value></data>
   <data name="ByteSweep_SequentialEstimateFormat" xml:space="preserve"><value>位置 {0}，{1} 字节；预计 {2}</value></data>
   <data name="ByteSweep_PairInvalid" xml:space="preserve"><value>组合递进需要选择两个不同且位于封包范围内的字节位置。</value></data>
+  <data name="ByteSweep_ParameterInvalid" xml:space="preserve"><value>递进参数无效：请检查循环次数、字节位置、递进长度和间隔。</value></data>
+  <data name="ByteSweep_UnsavedTitle" xml:space="preserve"><value>未保存的递进修改</value></data>
+  <data name="ByteSweep_UnsavedChanges" xml:space="preserve"><value>当前递进参数或封包内容已修改但尚未保存。选择“是”保存，“否”放弃修改，“取消”返回继续编辑。</value></data>
   <data name="ByteSweep_PairTitle" xml:space="preserve"><value>双字节组合递进</value></data>
   <data name="ByteSweep_PairError" xml:space="preserve"><value>双字节组合递进发生错误：{0}</value></data>
   <data name="ByteSweep_PairStopped" xml:space="preserve"><value>双字节组合递进已停止</value></data>
@@ -500,4 +515,38 @@
   <data name="ByteSweep_PickInstruction" xml:space="preserve"><value>请点击左侧封包选择字节 {0}</value></data>
   <data name="ByteSweep_PickDuplicate" xml:space="preserve"><value>字节 A 和字节 B 不能是同一个位置，请重新选择。</value></data>
   <data name="ByteSweep_PickComplete" xml:space="preserve"><value>已选择字节 {0}：位置 {1}</value></data>
+  <data name="ByteSweep_LogTitle" xml:space="preserve"><value>递进日志</value></data>
+  <data name="ByteSweep_LogClear" xml:space="preserve"><value>清空日志</value></data>
+  <data name="ByteSweep_LogExport" xml:space="preserve"><value>导出 CSV</value></data>
+  <data name="ByteSweep_LogTime" xml:space="preserve"><value>时间</value></data>
+  <data name="ByteSweep_LogState" xml:space="preserve"><value>状态</value></data>
+  <data name="ByteSweep_LogPreset" xml:space="preserve"><value>预设</value></data>
+  <data name="ByteSweep_LogMode" xml:space="preserve"><value>模式</value></data>
+  <data name="ByteSweep_LogProgress" xml:space="preserve"><value>当前进度</value></data>
+  <data name="ByteSweep_LogTotal" xml:space="preserve"><value>总发送</value></data>
+  <data name="ByteSweep_LogSuccess" xml:space="preserve"><value>成功</value></data>
+  <data name="ByteSweep_LogFailure" xml:space="preserve"><value>失败</value></data>
+  <data name="ByteSweep_LogDetail" xml:space="preserve"><value>详情</value></data>
+  <data name="ByteSweep_LogLive" xml:space="preserve"><value>实时状态</value></data>
+  <data name="ByteSweep_LogStarting" xml:space="preserve"><value>启动中</value></data>
+  <data name="ByteSweep_LogRunning" xml:space="preserve"><value>运行中</value></data>
+  <data name="ByteSweep_LogStopping" xml:space="preserve"><value>停止中</value></data>
+  <data name="ByteSweep_LogCompleted" xml:space="preserve"><value>已完成</value></data>
+  <data name="ByteSweep_LogCancelled" xml:space="preserve"><value>已停止</value></data>
+  <data name="ByteSweep_LogFaulted" xml:space="preserve"><value>异常</value></data>
+  <data name="ByteSweep_LogIdle" xml:space="preserve"><value>空闲</value></data>
+  <data name="ByteSweep_RuntimeBusy" xml:space="preserve"><value>已有递进任务正在运行，请先停止当前任务。</value></data>
+  <data name="ByteSweep_LogPresetChanged" xml:space="preserve"><value>切换到当前预设</value></data>
+  <data name="Robot_Load" xml:space="preserve"><value>加载机器人列表</value></data>
+  <data name="Robot_Save" xml:space="preserve"><value>保存机器人列表</value></data>
+  <data name="Robot_Start" xml:space="preserve"><value>开始执行</value></data>
+  <data name="Robot_Stop" xml:space="preserve"><value>停止</value></data>
+  <data name="Robot_Add" xml:space="preserve"><value>新增机器人</value></data>
+  <data name="Robot_Clear" xml:space="preserve"><value>清空机器人列表</value></data>
+  <data name="UI_More" xml:space="preserve"><value>更多</value></data>
+  <data name="Robot_Copy" xml:space="preserve"><value>复制机器人</value></data>
+  <data name="Send_Load" xml:space="preserve"><value>加载发送预设</value></data>
+  <data name="Send_Save" xml:space="preserve"><value>保存发送预设</value></data>
+  <data name="Send_Copy" xml:space="preserve"><value>复制发送预设</value></data>
+  <data name="Send_Clear" xml:space="preserve"><value>清空发送预设</value></data>
 </root>

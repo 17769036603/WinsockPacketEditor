@@ -10,6 +10,7 @@ namespace WPELibrary
         private readonly ComboBox mode;
         private readonly Label selection;
         private readonly TableLayoutPanel layout;
+        private readonly Panel scrollHost;
         private readonly NumericUpDown loopCount;
         private readonly NumericUpDown interval;
         private readonly NumericUpDown nextInterval;
@@ -25,12 +26,16 @@ namespace WPELibrary
         private readonly Button send;
         private readonly Button stop;
         private readonly Label status;
+        private readonly Label title;
+        private readonly Label selectionCaption;
+        private readonly TableLayoutPanel footer;
         private readonly Font titleFont;
         private readonly ToolTip toolTip;
         private int selectionStart;
         private int selectionLength;
         private bool loading;
         private bool busy;
+        private bool pairOnlyMode;
         private int positionPickTarget;
 
         public event EventHandler SendRequested;
@@ -48,30 +53,36 @@ namespace WPELibrary
 
             this.titleFont = new Font(this.Font, FontStyle.Bold);
             this.toolTip = new ToolTip();
-            Label title = new Label
+            this.title = new Label
             {
-                Dock = DockStyle.Top,
-                Height = 24,
-                Padding = new Padding(6, 3, 0, 0),
+                Dock = DockStyle.Fill,
+                Height = 28,
+                Padding = new Padding(8, 5, 0, 0),
                 Text = ResourceText("ByteSweep_ControlTitle"),
                 Font = this.titleFont
             };
-            this.Controls.Add(title);
 
-            Panel scrollHost = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(4, 2, 4, 4) };
+            this.scrollHost = new Panel
+            {
+                Dock = DockStyle.Fill,
+                AutoScroll = true,
+                Padding = new Padding(6, 4, 6, 4)
+            };
             this.layout = new TableLayoutPanel
             {
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                BackColor = SystemColors.Window,
                 ColumnCount = 2,
+                CellBorderStyle = TableLayoutPanelCellBorderStyle.Single,
                 Dock = DockStyle.Top,
                 Padding = new Padding(0),
-                RowCount = 13
+                RowCount = 11
             };
             this.layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
             this.layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 156));
-            scrollHost.Controls.Add(this.layout);
-            this.Controls.Add(scrollHost);
+            this.scrollHost.Controls.Add(this.layout);
+            this.Controls.Add(this.scrollHost);
 
             this.mode = new ComboBox
             {
@@ -106,7 +117,13 @@ namespace WPELibrary
                 Text = ResourceText("ByteSweep_NoSelection"),
                 AccessibleName = ResourceText("ByteSweep_RangeEstimate")
             };
-            AddRow(this.layout, 1, ResourceText("ByteSweep_RangeEstimate"), this.selection);
+            this.selectionCaption = AddRow(
+                this.layout,
+                1,
+                ResourceText("ByteSweep_RangeEstimate"),
+                this.selection);
+            this.selection.BackColor = Color.FromArgb(235, 243, 252);
+            this.selection.Padding = new Padding(3, 0, 2, 0);
 
             this.loopCount = CreateNumber("nudSweepEditorLoopCount", ResourceText("ByteSweep_LoopCount"), 1, 99999, 1, 10);
             this.interval = CreateNumber("nudSweepEditorInterval", ResourceText("ByteSweep_NormalInterval"), 0, 999999999, 0, 10);
@@ -161,11 +178,13 @@ namespace WPELibrary
             {
                 Dock = DockStyle.Fill,
                 AutoEllipsis = true,
+                BackColor = Color.FromArgb(248, 248, 248),
+                Padding = new Padding(4, 2, 4, 2),
                 Text = ResourceText("ByteSweep_Idle"),
                 ForeColor = Color.RoyalBlue,
-                AccessibleName = ResourceText("ByteSweep_Status")
+                AccessibleName = ResourceText("ByteSweep_Status"),
+                TextAlign = ContentAlignment.MiddleLeft
             };
-            AddRow(this.layout, 11, ResourceText("ByteSweep_Status"), this.status);
 
             FlowLayoutPanel actions = new FlowLayoutPanel
             {
@@ -186,9 +205,37 @@ namespace WPELibrary
             actions.Controls.Add(this.send);
             actions.Controls.Add(this.stop);
             actions.Controls.Add(this.save);
-            this.layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 29));
-            this.layout.Controls.Add(actions, 0, 12);
-            this.layout.SetColumnSpan(actions, 2);
+
+            this.footer = new TableLayoutPanel
+            {
+                ColumnCount = 1,
+                Dock = DockStyle.Fill,
+                Height = 61,
+                Padding = new Padding(6, 0, 6, 5),
+                RowCount = 2
+            };
+            this.footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            this.footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
+            this.footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+            this.footer.Controls.Add(this.status, 0, 0);
+            this.footer.Controls.Add(actions, 0, 1);
+
+            TableLayoutPanel root = new TableLayoutPanel
+            {
+                ColumnCount = 1,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                RowCount = 3
+            };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 61F));
+            root.Controls.Add(this.title, 0, 0);
+            root.Controls.Add(this.scrollHost, 0, 1);
+            root.Controls.Add(this.footer, 0, 2);
+            this.Controls.Add(root);
 
             foreach (NumericUpDown number in new[]
             {
@@ -277,29 +324,62 @@ namespace WPELibrary
             return control;
         }
 
-        private static void AddRow(TableLayoutPanel layout, int row, string labelText, Control control)
+        private static Label AddRow(TableLayoutPanel layout, int row, string labelText, Control control)
         {
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
-            layout.Controls.Add(new Label
+            Label label = new Label
             {
-                AutoSize = true,
+                AutoSize = false,
                 Dock = DockStyle.Fill,
                 Text = labelText,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Margin = new Padding(0, 1, 3, 1)
-            }, 0, row);
+            };
+            layout.Controls.Add(label, 0, row);
             layout.Controls.Add(control, 1, row);
+            return label;
         }
 
         private bool IsPairMode
         {
-            get { return this.mode.SelectedIndex == 1; }
+            get { return this.pairOnlyMode || this.mode.SelectedIndex == 1; }
+        }
+
+        public bool IsPairCombinationSelected
+        {
+            get { return this.IsPairMode; }
+        }
+
+        internal void SetPairOnlyMode(bool value)
+        {
+            this.pairOnlyMode = value;
+            this.loading = true;
+            try
+            {
+                if (value)
+                {
+                    this.mode.SelectedIndex = 1;
+                }
+            }
+            finally
+            {
+                this.loading = false;
+            }
+
+            this.title.Text = value
+                ? ResourceText("ByteSweep_PairTitle")
+                : ResourceText("ByteSweep_ControlTitle");
+            this.selectionCaption.Text = value
+                ? ResourceText("ByteSweep_CombinationEstimate")
+                : ResourceText("ByteSweep_RangeEstimate");
+            UpdatePairEnabled();
+            UpdateSummary();
         }
 
         private void UpdatePairEnabled()
         {
             bool enabled = this.IsPairMode && !this.busy;
-            this.mode.Enabled = !this.busy;
+            this.mode.Enabled = !this.pairOnlyMode && !this.busy;
             this.loopCount.Enabled = !this.busy;
             this.nextInterval.Enabled = !this.busy;
             this.firstPosition.Enabled = enabled;
@@ -311,11 +391,22 @@ namespace WPELibrary
             this.pickFirst.Enabled = enabled;
             this.pickSecond.Enabled = enabled;
             this.interval.Enabled = !this.IsPairMode && !this.busy;
+            SetRowVisible(0, !this.pairOnlyMode);
             SetRowVisible(3, !this.IsPairMode);
             for (int row = 5; row <= 10; row++)
             {
                 SetRowVisible(row, this.IsPairMode);
             }
+            UpdateScrollHost();
+        }
+
+        private void UpdateScrollHost()
+        {
+            int minimumHeight = this.IsPairMode ? 300 : 210;
+            this.layout.MinimumSize = Size.Empty;
+            this.scrollHost.AutoScrollMinSize = new Size(
+                0,
+                Math.Max(minimumHeight, this.layout.PreferredSize.Height));
         }
 
         private void SetRowVisible(int row, bool visible)
@@ -380,7 +471,9 @@ namespace WPELibrary
             this.loading = true;
             try
             {
-                this.mode.SelectedIndex = value != null && value.BMode == Socket_ByteSweepMode.PairCombination ? 1 : 0;
+                this.mode.SelectedIndex = this.pairOnlyMode
+                    ? 1
+                    : (value != null && value.BMode == Socket_ByteSweepMode.PairCombination ? 1 : 0);
                 this.loopCount.Value = Clamp(this.loopCount, value == null ? 1 : value.BLoopCount);
                 this.interval.Value = Clamp(this.interval, value == null ? 0 : value.BInterval);
                 this.nextInterval.Value = Clamp(this.nextInterval, value == null ? 0 : value.BNextInterval);

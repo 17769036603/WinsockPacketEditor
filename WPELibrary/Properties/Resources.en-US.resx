@@ -41,7 +41,18 @@
   <data name="UI_ClearCaptureTitle" xml:space="preserve"><value>Clear current capture</value></data>
   <data name="UI_ClearCaptureConfirm" xml:space="preserve"><value>Clear the current capture list and statistics? This action cannot be undone.</value></data>
   <data name="Main_Filter" xml:space="preserve"><value>Filters</value></data>
+  <data name="Filter_Load" xml:space="preserve"><value>Import filters</value></data>
+  <data name="Filter_Save" xml:space="preserve"><value>Export filters</value></data>
+  <data name="Filter_Add" xml:space="preserve"><value>Add filter</value></data>
+  <data name="Filter_Clear" xml:space="preserve"><value>Clear filters</value></data>
   <data name="Main_Robot" xml:space="preserve"><value>Robot</value></data>
+  <data name="UI_Assistant" xml:space="preserve"><value>Assistant</value></data>
+  <data name="UI_AssistantGroups" xml:space="preserve"><value>Assistant groups</value></data>
+  <data name="UI_GroupName" xml:space="preserve"><value>Group name</value></data>
+  <data name="UI_Edit" xml:space="preserve"><value>Edit</value></data>
+  <data name="UI_AssistantEmpty" xml:space="preserve"><value>No assistant in this group. Click “Add robot”.</value></data>
+  <data name="UI_MoveToGroup" xml:space="preserve"><value>Move to group</value></data>
+  <data name="UI_GroupMustBeEmpty" xml:space="preserve"><value>Only empty groups can be deleted. Move assistants first.</value></data>
   <data name="Main_GeneralSettings" xml:space="preserve"><value>General</value></data>
   <data name="Main_AdvancedTools" xml:space="preserve"><value>Advanced tools</value></data>
   <data name="Main_PacketList" xml:space="preserve"><value>Packet list</value></data>
@@ -176,6 +187,7 @@
   <data name="ByteSweep_SequentialMode" xml:space="preserve"><value>Sequential sweep</value></data>
   <data name="ByteSweep_PairMode" xml:space="preserve"><value>Two-byte combination</value></data>
   <data name="ByteSweep_RangeEstimate" xml:space="preserve"><value>Range / planned</value></data>
+  <data name="ByteSweep_CombinationEstimate" xml:space="preserve"><value>Combination / planned</value></data>
   <data name="ByteSweep_NoSelection" xml:space="preserve"><value>No range selected</value></data>
   <data name="ByteSweep_NormalInterval" xml:space="preserve"><value>Normal interval (ms)</value></data>
   <data name="ByteSweep_FirstPosition" xml:space="preserve"><value>Byte A position</value></data>
@@ -195,6 +207,9 @@
   <data name="ByteSweep_PairEstimateFormat" xml:space="preserve"><value>A{0} × B{1} × {2} loop(s); planned {3}</value></data>
   <data name="ByteSweep_SequentialEstimateFormat" xml:space="preserve"><value>Position {0}, {1} byte(s); planned {2}</value></data>
   <data name="ByteSweep_PairInvalid" xml:space="preserve"><value>Combination sweep requires two different byte positions inside the packet.</value></data>
+  <data name="ByteSweep_ParameterInvalid" xml:space="preserve"><value>Invalid sweep parameters. Check loop count, byte positions, lengths, and intervals.</value></data>
+  <data name="ByteSweep_UnsavedTitle" xml:space="preserve"><value>Unsaved sweep changes</value></data>
+  <data name="ByteSweep_UnsavedChanges" xml:space="preserve"><value>The sweep parameters or packet data have unsaved changes. Choose Yes to save, No to discard, or Cancel to keep editing.</value></data>
   <data name="ByteSweep_PairTitle" xml:space="preserve"><value>Two-byte combination sweep</value></data>
   <data name="ByteSweep_PairError" xml:space="preserve"><value>Two-byte combination sweep failed: {0}</value></data>
   <data name="ByteSweep_PairStopped" xml:space="preserve"><value>Two-byte combination sweep stopped</value></data>
@@ -209,4 +224,38 @@
   <data name="ByteSweep_PickInstruction" xml:space="preserve"><value>Click a byte in the packet to select byte {0}</value></data>
   <data name="ByteSweep_PickDuplicate" xml:space="preserve"><value>Byte A and byte B must use different positions. Pick another byte.</value></data>
   <data name="ByteSweep_PickComplete" xml:space="preserve"><value>Byte {0} selected at position {1}</value></data>
+  <data name="ByteSweep_LogTitle" xml:space="preserve"><value>Byte-sweep log</value></data>
+  <data name="ByteSweep_LogClear" xml:space="preserve"><value>Clear log</value></data>
+  <data name="ByteSweep_LogExport" xml:space="preserve"><value>Export CSV</value></data>
+  <data name="ByteSweep_LogTime" xml:space="preserve"><value>Time</value></data>
+  <data name="ByteSweep_LogState" xml:space="preserve"><value>State</value></data>
+  <data name="ByteSweep_LogPreset" xml:space="preserve"><value>Preset</value></data>
+  <data name="ByteSweep_LogMode" xml:space="preserve"><value>Mode</value></data>
+  <data name="ByteSweep_LogProgress" xml:space="preserve"><value>Progress</value></data>
+  <data name="ByteSweep_LogTotal" xml:space="preserve"><value>Total</value></data>
+  <data name="ByteSweep_LogSuccess" xml:space="preserve"><value>Success</value></data>
+  <data name="ByteSweep_LogFailure" xml:space="preserve"><value>Failure</value></data>
+  <data name="ByteSweep_LogDetail" xml:space="preserve"><value>Detail</value></data>
+  <data name="ByteSweep_LogLive" xml:space="preserve"><value>Live status</value></data>
+  <data name="ByteSweep_LogStarting" xml:space="preserve"><value>Starting</value></data>
+  <data name="ByteSweep_LogRunning" xml:space="preserve"><value>Running</value></data>
+  <data name="ByteSweep_LogStopping" xml:space="preserve"><value>Stopping</value></data>
+  <data name="ByteSweep_LogCompleted" xml:space="preserve"><value>Completed</value></data>
+  <data name="ByteSweep_LogCancelled" xml:space="preserve"><value>Stopped</value></data>
+  <data name="ByteSweep_LogFaulted" xml:space="preserve"><value>Faulted</value></data>
+  <data name="ByteSweep_LogIdle" xml:space="preserve"><value>Idle</value></data>
+  <data name="ByteSweep_RuntimeBusy" xml:space="preserve"><value>Another byte-sweep task is already running. Stop it first.</value></data>
+  <data name="ByteSweep_LogPresetChanged" xml:space="preserve"><value>Switched to current preset</value></data>
+  <data name="Robot_Load" xml:space="preserve"><value>Load robots</value></data>
+  <data name="Robot_Save" xml:space="preserve"><value>Save robots</value></data>
+  <data name="Robot_Start" xml:space="preserve"><value>Start</value></data>
+  <data name="Robot_Stop" xml:space="preserve"><value>Stop</value></data>
+  <data name="Robot_Add" xml:space="preserve"><value>Add robot</value></data>
+  <data name="Robot_Clear" xml:space="preserve"><value>Clear robots</value></data>
+  <data name="UI_More" xml:space="preserve"><value>More</value></data>
+  <data name="Robot_Copy" xml:space="preserve"><value>Copy robot</value></data>
+  <data name="Send_Load" xml:space="preserve"><value>Load send presets</value></data>
+  <data name="Send_Save" xml:space="preserve"><value>Save send presets</value></data>
+  <data name="Send_Copy" xml:space="preserve"><value>Copy send preset</value></data>
+  <data name="Send_Clear" xml:space="preserve"><value>Clear send presets</value></data>
 </root>

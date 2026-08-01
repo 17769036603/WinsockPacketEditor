@@ -8946,11 +8946,17 @@ namespace WPELibrary.Lib
 
             public static void AddRobot(bool IsEnable, Guid RID, string RName, DataTable RInstructions)
             {
+                AddRobot(IsEnable, RID, RName, RInstructions, "常用");
+            }
+
+            public static void AddRobot(bool IsEnable, Guid RID, string RName, DataTable RInstructions, string RFolder)
+            {
                 try
                 {
                     if (RID != Guid.Empty && !string.IsNullOrEmpty(RName))
                     {
                         Socket_RobotInfo sri = new Socket_RobotInfo(IsEnable, RID, RName, RInstructions);
+                        sri.RFolder = RFolder;
                         Socket_Cache.RobotList.RobotToList(sri);
                     }
                 }
@@ -8993,7 +8999,7 @@ namespace WPELibrary.Lib
                     string RName_Copy = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_62), sri.RName);
                     DataTable RInstruction_Copy = sri.RInstruction.Copy();
 
-                    Socket_Cache.Robot.AddRobot(IsEnable, RID_New, RName_Copy, RInstruction_Copy);
+                    Socket_Cache.Robot.AddRobot(IsEnable, RID_New, RName_Copy, RInstruction_Copy, sri.RFolder);
                 }
                 catch (Exception ex)
                 {
@@ -9602,6 +9608,7 @@ namespace WPELibrary.Lib
             public static string AESKey = string.Empty;
             public static List<Socket_Robot> lstExecute = new List<Socket_Robot>();
             public static BindingList<Socket_RobotInfo> lstRobot = new BindingList<Socket_RobotInfo>();
+            public static BindingList<string> lstFolders = new BindingList<string>();
 
             #region//机器人入列表
 
@@ -9653,6 +9660,8 @@ namespace WPELibrary.Lib
                 try
                 {
                     lstRobot.Clear();
+                    lstFolders.Clear();
+                    lstFolders.Add("常用");
                 }
                 catch (Exception ex)
                 {
@@ -9762,10 +9771,15 @@ namespace WPELibrary.Lib
                 try
                 {
                     Socket_Cache.DataBase.DeleteTable_Robot();
+                    Socket_Cache.DataBase.DeleteTable_RobotFolder();
 
                     foreach (Socket_RobotInfo sri in Socket_Cache.RobotList.lstRobot)
                     {
                         Socket_Cache.DataBase.InsertTable_Robot(sri);
+                    }
+                    for (int i = 0; i < Socket_Cache.RobotList.lstFolders.Count; i++)
+                    {
+                        Socket_Cache.DataBase.InsertTable_RobotFolder(Socket_Cache.RobotList.lstFolders[i], i);
                     }
                 }
                 catch (Exception ex)
@@ -9783,12 +9797,29 @@ namespace WPELibrary.Lib
                 try
                 {
                     DataTable dtRobot = Socket_Cache.DataBase.SelectTable_Robot();
+                    Socket_Cache.RobotList.lstFolders.Clear();
+                    DataTable dtFolders = Socket_Cache.DataBase.SelectTable_RobotFolder();
+                    foreach (DataRow folderRow in dtFolders.Rows)
+                    {
+                        string folder = folderRow["Name"].ToString();
+                        if (!string.IsNullOrWhiteSpace(folder) && !Socket_Cache.RobotList.lstFolders.Contains(folder))
+                        {
+                            Socket_Cache.RobotList.lstFolders.Add(folder);
+                        }
+                    }
+                    if (!Socket_Cache.RobotList.lstFolders.Contains("常用"))
+                    {
+                        Socket_Cache.RobotList.lstFolders.Insert(0, "常用");
+                    }
 
                     foreach (DataRow dataRow in dtRobot.Rows)
                     {
                         Guid RID = Guid.Parse(dataRow["GUID"].ToString());
                         bool IsEnable = Convert.ToBoolean(dataRow["IsEnable"]);
                         string RName = dataRow["Name"].ToString();
+                        string RFolder = dataRow.Table.Columns.Contains("Folder")
+                            ? dataRow["Folder"].ToString()
+                            : "常用";
 
 
                         DataTable RInstruction = Socket_Cache.Robot.InitInstructions();
@@ -9802,7 +9833,14 @@ namespace WPELibrary.Lib
                             RInstruction.Rows.Add(dr);
                         }
 
-                        Socket_Cache.Robot.AddRobot(IsEnable, RID, RName, RInstruction);
+                        Socket_Cache.Robot.AddRobot(IsEnable, RID, RName, RInstruction, RFolder);
+                    }
+                    foreach (Socket_RobotInfo robot in Socket_Cache.RobotList.lstRobot)
+                    {
+                        if (!Socket_Cache.RobotList.lstFolders.Contains(robot.RFolder))
+                        {
+                            Socket_Cache.RobotList.lstFolders.Add(robot.RFolder);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -9893,7 +9931,13 @@ namespace WPELibrary.Lib
             {
                 try
                 {
-                    XElement xeRoot = new XElement("RobotList");                    
+                    XElement xeRoot = new XElement("RobotList");
+                    XElement xeFolders = new XElement("Folders");
+                    foreach (string folder in Socket_Cache.RobotList.lstFolders.Distinct())
+                    {
+                        xeFolders.Add(new XElement("Folder", folder));
+                    }
+                    xeRoot.Add(xeFolders);
 
                     foreach (Socket_RobotInfo sri in sriList)
                     {
@@ -9906,7 +9950,8 @@ namespace WPELibrary.Lib
                             new XElement("Robot",
                             new XElement("IsEnable", IsEnable),
                             new XElement("ID", sRID),
-                            new XElement("Name", sRName)
+                            new XElement("Name", sRName),
+                            new XElement("Folder", sri.RFolder)
                             );
 
                         if (dtRInstruction.Rows.Count > 0)
@@ -10027,7 +10072,24 @@ namespace WPELibrary.Lib
             {
                 try
                 {
-                    foreach (XElement xeRobot in xdoc.Root.Elements())
+                    Socket_Cache.RobotList.lstFolders.Clear();
+                    XElement xeFolders = xdoc.Root.Element("Folders");
+                    if (xeFolders != null)
+                    {
+                        foreach (XElement xeFolder in xeFolders.Elements("Folder"))
+                        {
+                            if (!string.IsNullOrWhiteSpace(xeFolder.Value) &&
+                                !Socket_Cache.RobotList.lstFolders.Contains(xeFolder.Value))
+                            {
+                                Socket_Cache.RobotList.lstFolders.Add(xeFolder.Value);
+                            }
+                        }
+                    }
+                    if (!Socket_Cache.RobotList.lstFolders.Contains("常用"))
+                    {
+                        Socket_Cache.RobotList.lstFolders.Insert(0, "常用");
+                    }
+                    foreach (XElement xeRobot in xdoc.Root.Elements("Robot"))
                     {
                         bool IsEnable = false;
                         if (xeRobot.Element("IsEnable") != null)
@@ -10041,6 +10103,13 @@ namespace WPELibrary.Lib
                         if (xeRobot.Element("Name") != null)
                         {
                             RName = xeRobot.Element("Name").Value;
+                        }
+
+                        string RFolder = "常用";
+                        if (xeRobot.Element("Folder") != null &&
+                            !string.IsNullOrWhiteSpace(xeRobot.Element("Folder").Value))
+                        {
+                            RFolder = xeRobot.Element("Folder").Value;
                         }
 
                         DataTable RInstruction = Socket_Cache.Robot.InitInstructions();
@@ -10059,7 +10128,7 @@ namespace WPELibrary.Lib
                             }
                         }
 
-                        Socket_Cache.Robot.AddRobot(IsEnable, RID, RName, RInstruction);
+                        Socket_Cache.Robot.AddRobot(IsEnable, RID, RName, RInstruction, RFolder);
                     }
                 }
                 catch (Exception ex)
@@ -13348,7 +13417,8 @@ namespace WPELibrary.Lib
                         string sql = "CREATE TABLE IF NOT EXISTS Robot (";
                         sql += "GUID TEXT NOT NULL PRIMARY KEY,";
                         sql += "IsEnable BOOLEAN DEFAULT 0,";
-                        sql += "Name TEXT NOT NULL";
+                        sql += "Name TEXT NOT NULL,";
+                        sql += "Folder TEXT NOT NULL DEFAULT '常用'";
                         sql += ");";
 
                         sql += "CREATE TABLE IF NOT EXISTS RobotInstruction (";
@@ -13358,10 +13428,29 @@ namespace WPELibrary.Lib
                         sql += "FOREIGN KEY (GUID) REFERENCES Robot(GUID)";
                         sql += ");";
 
+                        sql += "CREATE TABLE IF NOT EXISTS RobotFolder (";
+                        sql += "Name TEXT NOT NULL PRIMARY KEY,";
+                        sql += "SortOrder INTEGER NOT NULL";
+                        sql += ");";
+
                         using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
                         {
                             conn.Open();
                             cmd.ExecuteNonQuery();
+
+                            // 兼容旧版数据库：旧 Robot 表没有 Folder 列时补齐。
+                            try
+                            {
+                                using (SQLiteCommand alter = new SQLiteCommand(
+                                    "ALTER TABLE Robot ADD COLUMN Folder TEXT NOT NULL DEFAULT '常用';", conn))
+                                {
+                                    alter.ExecuteNonQuery();
+                                }
+                            }
+                            catch (SQLiteException)
+                            {
+                                // 已存在时无需处理。
+                            }
                         }
                     }
 
@@ -13396,6 +13485,25 @@ namespace WPELibrary.Lib
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
                 }
 
+                return dtReturn;
+            }
+
+            public static DataTable SelectTable_RobotFolder()
+            {
+                DataTable dtReturn = new DataTable();
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteDataAdapter adapter = new SQLiteDataAdapter(
+                        "SELECT Name, SortOrder FROM RobotFolder ORDER BY SortOrder ASC;", conn))
+                    {
+                        adapter.Fill(dtReturn);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
                 return dtReturn;
             }
 
@@ -13448,6 +13556,47 @@ namespace WPELibrary.Lib
                 }
             }
 
+            public static void DeleteTable_RobotFolder()
+            {
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand("DELETE FROM RobotFolder;", conn))
+                    {
+                        conn.Open();
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+            }
+
+            public static void InsertTable_RobotFolder(string name, int sortOrder)
+            {
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    return;
+                }
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand(
+                        "INSERT INTO RobotFolder (Name, SortOrder) VALUES (@Name, @SortOrder);", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@Name", name);
+                        cmd.Parameters.AddWithValue("@SortOrder", sortOrder);
+                        conn.Open();
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+            }
+
             public static void InsertTable_Robot(Socket_RobotInfo sri)
             {
                 try
@@ -13459,18 +13608,19 @@ namespace WPELibrary.Lib
                         string sql = "INSERT INTO Robot (";
                         sql += "GUID,";
                         sql += "IsEnable,";
-                        sql += "Name";
+                        sql += "Name, Folder";
                         sql += ") VALUES (";
                         sql += "@GUID,";
                         sql += "@IsEnable,";
-                        sql += "@Name";
+                        sql += "@Name, @Folder";
                         sql += ");";
 
                         using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
                         {
                             cmd.Parameters.AddWithValue("@GUID", sri.RID.ToString().ToUpper());
                             cmd.Parameters.AddWithValue("@IsEnable", sri.IsEnable);
-                            cmd.Parameters.AddWithValue("@Name", sri.RName);                            
+                            cmd.Parameters.AddWithValue("@Name", sri.RName);
+                            cmd.Parameters.AddWithValue("@Folder", sri.RFolder);
                             cmd.ExecuteNonQuery();
                         }
 

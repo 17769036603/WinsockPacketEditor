@@ -53,6 +53,18 @@ namespace WPELibrary.Lib
 
         #endregion
 
+        #region//分组
+
+        protected string rfolder = "常用";
+
+        public string RFolder
+        {
+            get { return string.IsNullOrEmpty(rfolder) ? "常用" : rfolder; }
+            set { rfolder = string.IsNullOrEmpty(value) ? "常用" : value; }
+        }
+
+        #endregion
+
         #region//Socket_RobotInfo
 
         public Socket_RobotInfo(bool IsEnable, Guid RID, string RName, DataTable RInstructions)
@@ -61,6 +73,7 @@ namespace WPELibrary.Lib
             this.rid = RID;
             this.rname = RName;
             this.rinstruction = RInstructions;
+            this.rfolder = "常用";
         }
 
         #endregion

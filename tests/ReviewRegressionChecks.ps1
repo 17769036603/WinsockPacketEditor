@@ -58,6 +58,18 @@ Assert-Contains $sendForm "progress.TotalSend += completedSend;" `
     "Multi-loop sweep progress must keep cumulative send totals."
 Assert-Contains $sendForm "this.hbPacketData.ReadOnly = true;" `
     "Packet bytes must be locked against editing while a send is running."
+Assert-Contains $sendForm "SizeType.Absolute, 205F" `
+    "The annotation area must use a stable height so the right sweep editor is not compressed by percentage layout."
+Assert-Contains $sendForm "this.tableLayoutPanel1.Visible = false;" `
+    "The byte type detail panel must be hidden from the send page."
+Assert-Contains $sendForm "private bool byteSweepEditorDirty;" `
+    "Sweep editor changes must have an explicit dirty state."
+Assert-Contains $sendForm "ConfirmByteSweepUnsavedChanges()" `
+    "Closing the sweep editor must check for unsaved changes."
+Assert-Contains $sendForm "MessageBoxButtons.YesNoCancel" `
+    "Unsaved sweep changes must offer save, discard, and cancel choices."
+Assert-Contains $sendForm "ByteAnnotationController_Changed" `
+    "Byte annotation edits must participate in unsaved-change tracking."
 Assert-Contains $sendForm "if (e.Error != null)" `
     "Unexpected send-worker errors must have a distinct completion state."
 Assert-Contains $sendForm "throw;" `
@@ -111,10 +123,63 @@ Assert-Contains $byteSweepMainForm "RestoreByteSweepLivePreview(preset);" `
     "Batch sweep completion must restore the preset baseline after live preview."
 Assert-Contains $byteSweepMainForm "if (this.byteSweepRunning)" `
     "Batch sweep selection changes must not commit temporary live-preview bytes."
+$runtime = Read-SourceFile "WPELibrary\Lib\Socket_ByteSweepRuntime.cs"
+$byteSweepLog = Read-SourceFile "WPELibrary\Socket_Form.ByteSweepLog.cs"
+Assert-Contains $runtime "Socket_ByteSweepRuntimeState.Stopping" `
+    "The shared byte-sweep runtime must expose an explicit stopping state."
+Assert-Contains $runtime "RequestStop(Guid jobId)" `
+    "The shared byte-sweep runtime must cancel the active job by identifier."
+Assert-Contains $runtime "ProgressChanged" `
+    "The shared byte-sweep runtime must publish progress snapshots to both UI surfaces."
+Assert-Contains $byteSweepForm "Socket_ByteSweepRuntime.Current.TryStart(" `
+    "Batch byte sweeps must acquire the shared runtime before starting."
+Assert-Contains $sendForm "Socket_ByteSweepRuntime.Current.TryStart(" `
+    "Single-packet byte sweeps must acquire the shared runtime before starting."
+Assert-Contains $sendForm "Socket_ByteSweepRuntime.Current.RequestStop(this.byteSweepJobId);" `
+    "The send form stop action must cancel the shared runtime job."
+Assert-Contains $byteSweepLog "dgvByteSweepLog" `
+    "The main window must provide a dedicated byte-sweep log grid."
+Assert-Contains $byteSweepLog "ExportByteSweepLog_Click" `
+    "The dedicated byte-sweep log must support CSV export."
+$mainRobotUi = $socketForm
+Assert-Contains $mainRobotUi "ConfigureRobotToolbarTextButtons" `
+    "Robot toolbar actions must use the shared text-button configuration."
+Assert-Contains $mainRobotUi 'UiText("Robot_Load")' `
+    "Robot load action must have a visible text label."
+Assert-Contains $mainRobotUi "tsRobotListMore" `
+    "Robot secondary actions must be grouped under a More menu."
+Assert-Contains $mainRobotUi 'UiText("UI_Assistant")' `
+    "The home automation navigation must expose the Assistant label."
+Assert-Contains $mainRobotUi "InitAssistantButtonUI" `
+    "The assistant page must use the grouped button layout."
+Assert-Contains $mainRobotUi "AssistantButton_Click" `
+    "Assistant buttons must run one assistant at a time."
+Assert-Contains $mainRobotUi "this.tsRobotList_Start.Visible = false;" `
+    "Assistant batch start must not be exposed in the assistant page."
+Assert-Contains $mainRobotUi "this.tsRobotList_Stop.Visible = false;" `
+    "Assistant batch stop must not be exposed in the assistant page."
+Assert-Contains $mainRobotUi "ConfigureFilterToolbarTextButtons" `
+    "Filter toolbar actions must use the shared text-button configuration."
+Assert-Contains $mainRobotUi 'UiText("Filter_Add")' `
+    "Filter add action must have a visible localized text label."
+Assert-Contains $mainRobotUi "tsFilterListMore" `
+    "Filter secondary actions must be grouped under a More menu."
+Assert-Contains $mainRobotUi "this.tsFilterList_CleanUp.Visible = false;" `
+    "Filter cleanup must remain available from the More menu instead of the main toolbar."
+Assert-Contains $mainRobotUi "tsSendListMore" `
+    "Send preset secondary actions must be grouped under a More menu."
 
 $resources = Read-SourceFile "WPELibrary\Properties\Resources.resx"
 $englishResources = Read-SourceFile "WPELibrary\Properties\Resources.en-US.resx"
 $sweepEditor = Read-SourceFile "WPELibrary\Socket_ByteSweepEditorPanel.cs"
+Assert-Contains $sweepEditor "AutoScrollMinSize" `
+    "The right sweep editor must reserve a scrollable content area when the window is compact."
+Assert-Contains $sweepEditor "SetPairOnlyMode" `
+    "The right sweep editor must expose a dedicated pair-combination surface."
+Assert-Contains $sendForm "this.byteSweepEditorPanel.SetPairOnlyMode(true);" `
+    "The send page must configure the right sweep editor as pair-only."
+Assert-Contains $sendForm "SetUiVisible(false)" `
+    "The send page must hide the annotation UI without removing its compatibility controller."
 Assert-Contains $socketForm 'UiText("UI_ClearCaptureConfirm")' `
     "Clearing the current capture must require an explicit confirmation."
 Assert-Contains $socketForm "MessageBoxButtons.YesNo" `
@@ -128,18 +193,30 @@ foreach ($resourceKey in @(
     "ByteSweep_StopAction",
     "ByteSweep_SequentialHeader",
     "ByteSweep_PairMode",
+    "ByteSweep_CombinationEstimate",
     "ByteSweep_PairProgress",
     "ByteSweep_PickFirst",
     "ByteSweep_PickSecond",
-    "ByteSweep_PickDuplicate"
+    "ByteSweep_PickDuplicate",
+    "ByteSweep_LogTitle",
+    "ByteSweep_LogLive",
+    "ByteSweep_RuntimeBusy",
+    "ByteSweep_ParameterInvalid",
+    "ByteSweep_UnsavedTitle",
+    "ByteSweep_UnsavedChanges",
+    "Robot_Load",
+    "Robot_Start",
+    "Robot_Clear",
+    "UI_More",
+    "Send_Copy"
 )) {
     Assert-Contains $resources ('name="' + $resourceKey + '"') `
         "Chinese byte-sweep resources must include $resourceKey."
     Assert-Contains $englishResources ('name="' + $resourceKey + '"') `
         "English byte-sweep resources must include $resourceKey."
 }
-Assert-Contains $sweepEditor "this.mode.Enabled = !this.busy;" `
-    "Concurrent sends must lock the right sweep mode selector."
+Assert-Contains $sweepEditor "this.mode.Enabled = !this.pairOnlyMode && !this.busy;" `
+    "Concurrent sends and pair-only mode must lock the right sweep mode selector."
 Assert-Contains $sweepEditor "this.loopCount.Enabled = !this.busy;" `
     "Concurrent sends must lock right sweep loop settings."
 Assert-Contains $sweepEditor "position == (int)other.Value" `

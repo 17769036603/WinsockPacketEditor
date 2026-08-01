@@ -3,6 +3,7 @@ using EasyHook;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -29,6 +30,7 @@ namespace WPELibrary
         private Label lSendFoldersTitle;
         private Button bSendFolderAdd;
         private ToolStripButton tsSendListSelectAll;
+        private ToolStripDropDownButton tsSendListMore;
         private ToolStripLabel tsSendListContext;
         private ToolStripMenuItem cmsSendListMoveToFolder;
         private ToolStripMenuItem cmsSendListEdit;
@@ -45,6 +47,25 @@ namespace WPELibrary
         private Socket_Send activeBatchSendOperation;
         private Socket_PacketInfo packetDataEditingPacket;
         private bool robotSettingsPageActive;
+        private ToolStripDropDownButton tsRobotListMore;
+        private ToolStripDropDownButton tsFilterListMore;
+        private TableLayoutPanel tlpAutomationHome;
+        private TableLayoutPanel tlpAutomationNavigation;
+        private Button bAutomationSend;
+        private Button bAutomationSweep;
+        private Button bAutomationAssistant;
+        private Button bAutomationFilter;
+        private TreeView tvRobotFolders;
+        private Label lRobotFoldersTitle;
+        private Button bRobotFolderAdd;
+        private TableLayoutPanel tlpAssistantButtons;
+        private Label lAssistantEmptyState;
+        private ContextMenuStrip cmsAssistantButton;
+        private ContextMenuStrip cmsRobotFolder;
+        private string selectedRobotFolder = "常用";
+        private Socket_Robot activeAssistantRobot;
+        private Guid activeAssistantRobotId = Guid.Empty;
+        private readonly Dictionary<Guid, Button> assistantButtons = new Dictionary<Guid, Button>();
 
         #region//加载窗体
 
@@ -154,10 +175,8 @@ namespace WPELibrary
             this.tcAdvancedTools.Controls.Add(this.tpExtraction);
             this.tcAdvancedTools.Controls.Add(this.tpSystemLog);
             this.tcPacketInfo.Controls.Remove(this.tpPacketStatistics);
-            this.tcAutomation.Controls.Remove(this.tpFilterList);
-            this.tcAutomation.Controls.Remove(this.tpRobotList);
             this.tpFilterList.Text = UiText("Main_Filter");
-            this.tpRobotList.Text = UiText("Main_Robot");
+            this.tpRobotList.Text = UiText("UI_Assistant");
 
             this.tlpParameter.Controls.Remove(this.tcSocketInfo);
             this.tlpParameter.Controls.Remove(this.gbHookButton_Search);
@@ -189,6 +208,688 @@ namespace WPELibrary
             this.hbPacketData.ReadOnly = false;
             this.InitSendFolderUI();
             this.InitByteSweepPresetUI();
+            this.InitByteSweepLogUI();
+            this.InitAssistantButtonUI();
+            this.InitAutomationHomeUI();
+            this.ConfigureRobotToolbarTextButtons();
+            this.ConfigureFilterToolbarTextButtons();
+        }
+
+        private void ConfigureFilterToolbarTextButtons()
+        {
+            this.ConfigureSendToolbarTextButton(this.tsFilterList_Load, UiText("Filter_Load"));
+            this.ConfigureSendToolbarTextButton(this.tsFilterList_Save, UiText("Filter_Save"));
+            this.ConfigureSendToolbarTextButton(this.tsFilterList_SelectAll, UiText("UI_SelectAll"));
+            this.ConfigureSendToolbarTextButton(this.tsFilterList_SelectNo, UiText("UI_ClearSelection"));
+            this.ConfigureSendToolbarTextButton(this.tsFilterList_Add, UiText("Filter_Add"));
+            this.ConfigureSendToolbarTextButton(this.tsFilterList_CleanUp, UiText("Filter_Clear"));
+            this.tsFilterList_SelectAll.ToolTipText = UiText("UI_SelectAllTip");
+            this.tsFilterList_SelectNo.ToolTipText = UiText("UI_ClearSelectionTip");
+            this.tsFilterList_Add.ToolTipText = UiText("Filter_Add");
+
+            this.tsFilterList_Load.Visible = false;
+            this.tsFilterList_Save.Visible = false;
+            this.tsFilterList_CleanUp.Visible = false;
+            this.toolStripSeparator1.Visible = false;
+            this.toolStripSeparator2.Visible = false;
+
+            this.tsFilterListMore = new ToolStripDropDownButton
+            {
+                Name = "tsFilterListMore",
+                Text = UiText("UI_More"),
+                DisplayStyle = ToolStripItemDisplayStyle.Text,
+                AutoSize = true,
+                Overflow = ToolStripItemOverflow.Never,
+                Margin = new Padding(3)
+            };
+            this.tsFilterListMore.DropDownItems.Add(CreateSendMoreItem(
+                "FilterMoreLoad", UiText("Filter_Load"), this.tsFilterList_Load_Click));
+            this.tsFilterListMore.DropDownItems.Add(CreateSendMoreItem(
+                "FilterMoreSave", UiText("Filter_Save"), this.tsFilterList_Save_Click));
+            this.tsFilterListMore.DropDownItems.Add(new ToolStripSeparator());
+            this.tsFilterListMore.DropDownItems.Add(CreateSendMoreItem(
+                "FilterMoreClear", UiText("Filter_Clear"), this.tsFilterList_CleanUp_Click));
+
+            this.tsFilterList.Items.Remove(this.tsFilterList_Load);
+            this.tsFilterList.Items.Remove(this.tsFilterList_Save);
+            this.tsFilterList.Items.Remove(this.toolStripSeparator1);
+            this.tsFilterList.Items.Remove(this.toolStripSeparator2);
+            this.tsFilterList.Items.Remove(this.tsFilterList_SelectAll);
+            this.tsFilterList.Items.Remove(this.tsFilterList_SelectNo);
+            this.tsFilterList.Items.Remove(this.tsFilterList_Add);
+            this.tsFilterList.Items.Remove(this.tsFilterList_CleanUp);
+            this.tsFilterList.Items.AddRange(new ToolStripItem[]
+            {
+                this.tsFilterList_Add,
+                this.tsFilterList_SelectAll,
+                this.tsFilterList_SelectNo,
+                this.tsFilterListMore
+            });
+        }
+
+        private void ConfigureRobotToolbarTextButtons()
+        {
+            this.ConfigureSendToolbarTextButton(this.tsRobotList_Load, UiText("Robot_Load"));
+            this.ConfigureSendToolbarTextButton(this.tsRobotList_Save, UiText("Robot_Save"));
+            this.ConfigureSendToolbarTextButton(this.tsRobotList_Add, UiText("Robot_Add"));
+            this.ConfigureSendToolbarTextButton(this.tsRobotList_CleanUp, UiText("Robot_Clear"));
+            this.tsRobotList_Start.ForeColor = System.Drawing.Color.ForestGreen;
+            this.tsRobotList_Stop.ForeColor = System.Drawing.Color.Firebrick;
+            this.tsRobotList_Start.Visible = false;
+            this.tsRobotList_Stop.Visible = false;
+            this.tsRobotList_Load.Visible = false;
+            this.tsRobotList_Save.Visible = false;
+            this.tsRobotList_CleanUp.Visible = false;
+            this.toolStripSeparator4.Visible = false;
+            this.toolStripSeparator12.Visible = false;
+
+            this.tsRobotListMore = new ToolStripDropDownButton
+            {
+                Name = "tsRobotListMore",
+                Text = UiText("UI_More"),
+                DisplayStyle = ToolStripItemDisplayStyle.Text,
+                AutoSize = true,
+                Overflow = ToolStripItemOverflow.Never,
+                Margin = new Padding(3)
+            };
+            this.tsRobotListMore.DropDownItems.Add(CreateRobotMoreItem(
+                "RobotMoreLoad", UiText("Robot_Load"), this.tsRobotList_Load_Click));
+            this.tsRobotListMore.DropDownItems.Add(CreateRobotMoreItem(
+                "RobotMoreSave", UiText("Robot_Save"), this.tsRobotList_Save_Click));
+            this.tsRobotListMore.DropDownItems.Add(CreateRobotMoreItem(
+                "RobotMoreCopy", UiText("Robot_Copy"), this.tsRobotList_Copy_Click));
+            this.tsRobotListMore.DropDownItems.Add(new ToolStripSeparator());
+            this.tsRobotListMore.DropDownItems.Add(CreateRobotMoreItem(
+                "RobotMoreClear", UiText("Robot_Clear"), this.tsRobotList_CleanUp_Click));
+            this.tsRobotList.Items.Remove(this.tsRobotList_Load);
+            this.tsRobotList.Items.Remove(this.tsRobotList_Save);
+            this.tsRobotList.Items.Remove(this.toolStripSeparator4);
+            this.tsRobotList.Items.Remove(this.tsRobotList_Start);
+            this.tsRobotList.Items.Remove(this.tsRobotList_Stop);
+            this.tsRobotList.Items.Remove(this.toolStripSeparator12);
+            this.tsRobotList.Items.Remove(this.tsRobotList_Add);
+            this.tsRobotList.Items.Remove(this.tsRobotList_CleanUp);
+            this.tsRobotList.Items.AddRange(new ToolStripItem[]
+            {
+                this.tsRobotList_Add,
+                this.tsRobotListMore
+            });
+            this.UpdateRobotToolbarState();
+        }
+
+        private void InitAutomationHomeUI()
+        {
+            if (this.tlpAutomationHome != null)
+            {
+                return;
+            }
+
+            this.tlpAutomationNavigation = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 2,
+                Padding = new Padding(4),
+                Margin = Padding.Empty
+            };
+            this.tlpAutomationNavigation.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            this.tlpAutomationNavigation.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            this.tlpAutomationNavigation.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+            this.tlpAutomationNavigation.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+
+            this.bAutomationSend = CreateAutomationNavigationButton(UiText("UI_Send"), this.tpSendList);
+            this.bAutomationSweep = CreateAutomationNavigationButton(UiText("UI_ByteSweep"), this.tpByteSweepList);
+            this.bAutomationAssistant = CreateAutomationNavigationButton(UiText("UI_Assistant"), this.tpRobotList);
+            this.bAutomationFilter = CreateAutomationNavigationButton(UiText("Main_Filter"), this.tpFilterList);
+            this.tlpAutomationNavigation.Controls.Add(this.bAutomationSend, 0, 0);
+            this.tlpAutomationNavigation.Controls.Add(this.bAutomationSweep, 1, 0);
+            this.tlpAutomationNavigation.Controls.Add(this.bAutomationAssistant, 0, 1);
+            this.tlpAutomationNavigation.Controls.Add(this.bAutomationFilter, 1, 1);
+
+            this.tlpAutomationHome = new TableLayoutPanel
+            {
+                Name = "tlpAutomationHome",
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 2,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
+            };
+            this.tlpAutomationHome.RowStyles.Add(new RowStyle(SizeType.Absolute, 112F));
+            this.tlpAutomationHome.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            this.tlpAutomationHome.Controls.Add(this.tlpAutomationNavigation, 0, 0);
+            this.tlpAutomationHome.Controls.Add(this.tcAutomation, 0, 1);
+
+            this.tcAutomation.Dock = DockStyle.Fill;
+            this.tcAutomation.Appearance = TabAppearance.Buttons;
+            this.tcAutomation.SizeMode = TabSizeMode.Fixed;
+            this.tcAutomation.ItemSize = new Size(0, 1);
+            this.tcAutomation.SelectedIndexChanged += this.tcAutomation_SelectedIndexChanged;
+            this.tlpInformation.Controls.Remove(this.tcAutomation);
+            this.tlpInformation.Controls.Add(this.tlpAutomationHome, 0, 0);
+            this.tlpInformation.SetColumnSpan(this.tlpAutomationHome, 1);
+            this.tcAutomation.SelectedTab = this.tpSendList;
+            this.UpdateAutomationNavigationState();
+        }
+
+        private Button CreateAutomationNavigationButton(string text, TabPage tab)
+        {
+            Button button = new Button
+            {
+                Text = text,
+                Dock = DockStyle.Fill,
+                Height = 44,
+                Margin = new Padding(4),
+                UseVisualStyleBackColor = true,
+                AccessibleName = text,
+                Tag = tab
+            };
+            button.Click += this.automationNavigationButton_Click;
+            return button;
+        }
+
+        private void automationNavigationButton_Click(object sender, EventArgs e)
+        {
+            Button button = sender as Button;
+            TabPage tab = button == null ? null : button.Tag as TabPage;
+            if (tab != null)
+            {
+                this.tcAutomation.SelectedTab = tab;
+            }
+        }
+
+        private void tcAutomation_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            this.UpdateAutomationNavigationState();
+        }
+
+        private void UpdateAutomationNavigationState()
+        {
+            if (this.tcAutomation == null || this.bAutomationSend == null)
+            {
+                return;
+            }
+
+            Button[] buttons =
+            {
+                this.bAutomationSend,
+                this.bAutomationSweep,
+                this.bAutomationAssistant,
+                this.bAutomationFilter
+            };
+            foreach (Button button in buttons)
+            {
+                bool active = ReferenceEquals(button.Tag, this.tcAutomation.SelectedTab);
+                button.BackColor = active ? SystemColors.Highlight : SystemColors.Control;
+                button.ForeColor = active ? SystemColors.HighlightText : SystemColors.ControlText;
+            }
+        }
+
+        private void InitAssistantButtonUI()
+        {
+            this.tvRobotFolders = new TreeView
+            {
+                Dock = DockStyle.Fill,
+                HideSelection = false,
+                FullRowSelect = true,
+                ShowLines = false,
+                ShowPlusMinus = false,
+                BorderStyle = BorderStyle.FixedSingle,
+                Margin = new Padding(0, 0, 4, 0),
+                AccessibleName = UiText("UI_AssistantGroups")
+            };
+            this.tvRobotFolders.AfterSelect += this.tvRobotFolders_AfterSelect;
+            this.tvRobotFolders.NodeMouseClick += delegate(object sender, TreeNodeMouseClickEventArgs e)
+            {
+                if (e.Button == MouseButtons.Right)
+                {
+                    this.tvRobotFolders.SelectedNode = e.Node;
+                }
+            };
+
+            this.cmsRobotFolder = new ContextMenuStrip();
+            this.cmsRobotFolder.Items.Add(UiText("UI_RenameGroup"), null, this.RenameRobotFolder_Click);
+            this.cmsRobotFolder.Items.Add(UiText("UI_MoveGroupUp"), null, this.MoveRobotFolderUp_Click);
+            this.cmsRobotFolder.Items.Add(UiText("UI_MoveGroupDown"), null, this.MoveRobotFolderDown_Click);
+            this.cmsRobotFolder.Items.Add(new ToolStripSeparator());
+            this.cmsRobotFolder.Items.Add(UiText("UI_DeleteGroup"), null, this.DeleteRobotFolder_Click);
+            this.tvRobotFolders.ContextMenuStrip = this.cmsRobotFolder;
+
+            this.bRobotFolderAdd = new Button
+            {
+                Text = UiText("UI_NewGroup"),
+                Dock = DockStyle.Fill,
+                Margin = new Padding(6, 4, 6, 4),
+                UseVisualStyleBackColor = true,
+                AccessibleName = UiText("UI_NewGroup")
+            };
+            this.bRobotFolderAdd.Click += this.AddRobotFolder_Click;
+            this.lRobotFoldersTitle = new Label
+            {
+                Text = UiText("UI_AssistantGroups"),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(8, 0, 0, 0),
+                Margin = Padding.Empty
+            };
+            this.tlpAssistantButtons = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 4,
+                RowCount = 1,
+                AutoScroll = true,
+                Padding = new Padding(4),
+                Margin = Padding.Empty,
+                GrowStyle = TableLayoutPanelGrowStyle.AddRows
+            };
+            for (int i = 0; i < 4; i++)
+            {
+                this.tlpAssistantButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+            }
+            this.lAssistantEmptyState = new Label
+            {
+                Text = UiText("UI_AssistantEmpty"),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                ForeColor = SystemColors.GrayText,
+                Margin = new Padding(4),
+                AccessibleName = UiText("UI_AssistantEmpty")
+            };
+
+            this.tlpRobotList.SuspendLayout();
+            this.tlpRobotList.Controls.Clear();
+            this.tlpRobotList.ColumnStyles.Clear();
+            this.tlpRobotList.RowStyles.Clear();
+            this.tlpRobotList.ColumnCount = 2;
+            this.tlpRobotList.RowCount = 3;
+            this.tlpRobotList.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 122F));
+            this.tlpRobotList.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            this.tlpRobotList.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+            this.tlpRobotList.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            this.tlpRobotList.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
+            this.tlpRobotList.Controls.Add(this.lRobotFoldersTitle, 0, 0);
+            this.tlpRobotList.Controls.Add(this.tsRobotList, 1, 0);
+            this.tlpRobotList.Controls.Add(this.tvRobotFolders, 0, 1);
+            this.tlpRobotList.Controls.Add(this.tlpAssistantButtons, 1, 1);
+            this.tlpRobotList.Controls.Add(this.bRobotFolderAdd, 0, 2);
+            this.tlpRobotList.SetColumnSpan(this.tsRobotList, 1);
+            this.tsRobotList.Dock = DockStyle.Fill;
+            this.dgvRobotList.Visible = false;
+            this.tlpRobotList.ResumeLayout(true);
+
+            this.cmsAssistantButton = new ContextMenuStrip();
+            this.cmsAssistantButton.Items.Add(UiText("UI_Edit"), null, this.EditAssistantButton_Click);
+            ToolStripMenuItem moveAssistant = new ToolStripMenuItem(UiText("UI_MoveToGroup"));
+            this.cmsAssistantButton.Items.Add(moveAssistant);
+            this.cmsAssistantButton.Opening += this.cmsAssistantButton_Opening;
+            this.RefreshAssistantFolders();
+        }
+
+        private void cmsAssistantButton_Opening(object sender, CancelEventArgs e)
+        {
+            if (this.activeAssistantRobot != null)
+            {
+                e.Cancel = true;
+                return;
+            }
+
+            ToolStripMenuItem moveAssistant = this.cmsAssistantButton.Items
+                .OfType<ToolStripMenuItem>()
+                .FirstOrDefault(item => item.Text == UiText("UI_MoveToGroup"));
+            if (moveAssistant == null)
+            {
+                return;
+            }
+            moveAssistant.DropDownItems.Clear();
+            Button source = this.cmsAssistantButton.SourceControl as Button;
+            Socket_RobotInfo robot = source == null ? null : source.Tag as Socket_RobotInfo;
+            foreach (TreeNode node in this.tvRobotFolders.Nodes)
+            {
+                if (robot != null && string.Equals(robot.RFolder, node.Text, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                ToolStripMenuItem item = new ToolStripMenuItem(node.Text) { Tag = node.Text };
+                item.Click += this.MoveAssistantToFolder_Click;
+                moveAssistant.DropDownItems.Add(item);
+            }
+            moveAssistant.Enabled = moveAssistant.DropDownItems.Count > 0;
+        }
+
+        private void MoveAssistantToFolder_Click(object sender, EventArgs e)
+        {
+            ToolStripMenuItem item = sender as ToolStripMenuItem;
+            Button source = this.cmsAssistantButton.SourceControl as Button;
+            Socket_RobotInfo robot = source == null ? null : source.Tag as Socket_RobotInfo;
+            string folder = item == null ? string.Empty : item.Tag as string;
+            if (robot == null || string.IsNullOrWhiteSpace(folder) || this.activeAssistantRobot != null)
+            {
+                return;
+            }
+            robot.RFolder = folder;
+            if (!Socket_Cache.RobotList.lstFolders.Contains(folder))
+            {
+                Socket_Cache.RobotList.lstFolders.Add(folder);
+            }
+            this.SaveRobotFolderData();
+            this.RefreshAssistantFolders();
+        }
+
+        private void RefreshAssistantFolders()
+        {
+            if (this.tvRobotFolders == null)
+            {
+                return;
+            }
+
+            List<string> folders = Socket_Cache.RobotList.lstFolders.Distinct().ToList();
+            if (!folders.Contains("常用"))
+            {
+                folders.Insert(0, "常用");
+            }
+            foreach (Socket_RobotInfo robot in Socket_Cache.RobotList.lstRobot)
+            {
+                string folder = string.IsNullOrWhiteSpace(robot.RFolder) ? "常用" : robot.RFolder;
+                if (!folders.Contains(folder))
+                {
+                    folders.Add(folder);
+                }
+            }
+
+            this.tvRobotFolders.BeginUpdate();
+            this.tvRobotFolders.Nodes.Clear();
+            foreach (string folder in folders)
+            {
+                this.tvRobotFolders.Nodes.Add(new TreeNode(folder) { Name = folder });
+            }
+            this.tvRobotFolders.EndUpdate();
+            TreeNode selected = this.tvRobotFolders.Nodes.Cast<TreeNode>()
+                .FirstOrDefault(node => string.Equals(node.Text, this.selectedRobotFolder, StringComparison.Ordinal));
+            if (selected == null)
+            {
+                selected = this.tvRobotFolders.Nodes[0];
+            }
+            if (selected != null)
+            {
+                this.tvRobotFolders.SelectedNode = selected;
+                this.selectedRobotFolder = selected.Text;
+            }
+            this.RenderAssistantButtons();
+        }
+
+        private void tvRobotFolders_AfterSelect(object sender, TreeViewEventArgs e)
+        {
+            this.selectedRobotFolder = e.Node == null ? "常用" : e.Node.Text;
+            this.RenderAssistantButtons();
+        }
+
+        private void RenderAssistantButtons()
+        {
+            if (this.tlpAssistantButtons == null)
+            {
+                return;
+            }
+
+            this.tlpAssistantButtons.SuspendLayout();
+            this.tlpAssistantButtons.Controls.Clear();
+            this.assistantButtons.Clear();
+            List<Socket_RobotInfo> robots = Socket_Cache.RobotList.lstRobot
+                .Where(robot => string.Equals(robot.RFolder, this.selectedRobotFolder, StringComparison.Ordinal))
+                .ToList();
+            this.tlpAssistantButtons.RowCount = Math.Max(1, (robots.Count + 3) / 4);
+            this.tlpAssistantButtons.RowStyles.Clear();
+            for (int row = 0; row < this.tlpAssistantButtons.RowCount; row++)
+            {
+                this.tlpAssistantButtons.RowStyles.Add(new RowStyle(SizeType.Absolute, 52F));
+            }
+            for (int index = 0; index < robots.Count; index++)
+            {
+                Socket_RobotInfo robot = robots[index];
+                Button button = new Button
+                {
+                    Text = robot.RName,
+                    Dock = DockStyle.Fill,
+                    Height = 44,
+                    Margin = new Padding(4),
+                    UseVisualStyleBackColor = true,
+                    Tag = robot,
+                    ContextMenuStrip = this.cmsAssistantButton,
+                    AccessibleName = robot.RName
+                };
+                button.Click += this.AssistantButton_Click;
+                button.DoubleClick += this.AssistantButton_DoubleClick;
+                this.assistantButtons[robot.RID] = button;
+                this.tlpAssistantButtons.Controls.Add(button, index % 4, index / 4);
+            }
+            if (robots.Count == 0)
+            {
+                this.tlpAssistantButtons.Controls.Add(this.lAssistantEmptyState, 0, 0);
+                this.tlpAssistantButtons.SetColumnSpan(this.lAssistantEmptyState, 4);
+            }
+            this.UpdateAssistantButtonState();
+            this.tlpAssistantButtons.ResumeLayout(true);
+        }
+
+        private void AssistantButton_Click(object sender, EventArgs e)
+        {
+            Button button = sender as Button;
+            Socket_RobotInfo robot = button == null ? null : button.Tag as Socket_RobotInfo;
+            if (robot == null)
+            {
+                return;
+            }
+            if (this.activeAssistantRobot != null)
+            {
+                if (this.activeAssistantRobotId == robot.RID)
+                {
+                    this.activeAssistantRobot.StopRobot();
+                }
+                return;
+            }
+
+            Socket_Robot running = Socket_Cache.Robot.DoRobot(robot.RID, null);
+            if (running == null)
+            {
+                return;
+            }
+            this.activeAssistantRobot = running;
+            this.activeAssistantRobotId = robot.RID;
+            running.Worker.RunWorkerCompleted += this.AssistantRobot_RunWorkerCompleted;
+            this.UpdateAssistantButtonState();
+        }
+
+        private void AssistantButton_DoubleClick(object sender, EventArgs e)
+        {
+            this.EditAssistantButton_Click(sender, EventArgs.Empty);
+        }
+
+        private void EditAssistantButton_Click(object sender, EventArgs e)
+        {
+            ToolStripItem item = sender as ToolStripItem;
+            Button button = item == null ? sender as Button : this.cmsAssistantButton.SourceControl as Button;
+            Socket_RobotInfo robot = button == null ? null : button.Tag as Socket_RobotInfo;
+            if (robot != null && this.activeAssistantRobot == null)
+            {
+                Socket_Operation.ShowRobotForm_Dialog(robot);
+                this.RefreshAssistantFolders();
+            }
+        }
+
+        private void AssistantRobot_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (this.activeAssistantRobot != null && ReferenceEquals(sender, this.activeAssistantRobot.Worker))
+            {
+                this.activeAssistantRobot = null;
+                this.activeAssistantRobotId = Guid.Empty;
+                this.UpdateAssistantButtonState();
+            }
+        }
+
+        private void UpdateAssistantButtonState()
+        {
+            foreach (KeyValuePair<Guid, Button> pair in this.assistantButtons)
+            {
+                bool active = pair.Key == this.activeAssistantRobotId && this.activeAssistantRobot != null;
+                bool enabled = this.activeAssistantRobot == null || active;
+                pair.Value.Enabled = enabled;
+                pair.Value.BackColor = active ? Color.Gold : SystemColors.Control;
+                pair.Value.ForeColor = active ? SystemColors.ControlText : SystemColors.ControlText;
+                pair.Value.Text = active ? UiText("UI_Stop") : (pair.Value.Tag as Socket_RobotInfo).RName;
+            }
+            this.UpdateRobotToolbarState();
+        }
+
+        private void AddRobotFolder_Click(object sender, EventArgs e)
+        {
+            string folder = this.PromptForText(UiText("UI_NewGroup"), UiText("UI_GroupName"), string.Empty);
+            if (string.IsNullOrWhiteSpace(folder) || this.tvRobotFolders.Nodes.Cast<TreeNode>()
+                .Any(node => string.Equals(node.Text, folder.Trim(), StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+            this.tvRobotFolders.Nodes.Add(new TreeNode(folder.Trim()) { Name = folder.Trim() });
+            Socket_Cache.RobotList.lstFolders.Add(folder.Trim());
+            this.tvRobotFolders.SelectedNode = this.tvRobotFolders.Nodes[this.tvRobotFolders.Nodes.Count - 1];
+            this.SaveRobotFolderData();
+        }
+
+        private TreeNode GetSelectedRobotFolderNode()
+        {
+            return this.tvRobotFolders == null ? null : this.tvRobotFolders.SelectedNode;
+        }
+
+        private void RenameRobotFolder_Click(object sender, EventArgs e)
+        {
+            TreeNode node = this.GetSelectedRobotFolderNode();
+            if (node == null)
+            {
+                return;
+            }
+            string folder = this.PromptForText(UiText("UI_RenameGroup"), UiText("UI_GroupName"), node.Text);
+            if (string.IsNullOrWhiteSpace(folder) || string.Equals(folder.Trim(), node.Text, StringComparison.Ordinal))
+            {
+                return;
+            }
+            string oldFolder = node.Text;
+            string newFolder = folder.Trim();
+            if (this.tvRobotFolders.Nodes.Cast<TreeNode>().Any(item =>
+                !ReferenceEquals(item, node) && string.Equals(item.Text, newFolder, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+            foreach (Socket_RobotInfo robot in Socket_Cache.RobotList.lstRobot.Where(item => item.RFolder == oldFolder))
+            {
+                robot.RFolder = newFolder;
+            }
+            int folderIndex = Socket_Cache.RobotList.lstFolders.IndexOf(oldFolder);
+            if (folderIndex >= 0)
+            {
+                Socket_Cache.RobotList.lstFolders[folderIndex] = newFolder;
+            }
+            node.Text = newFolder;
+            node.Name = newFolder;
+            this.selectedRobotFolder = newFolder;
+            this.SaveRobotFolderData();
+            this.RenderAssistantButtons();
+        }
+
+        private void MoveRobotFolderUp_Click(object sender, EventArgs e)
+        {
+            TreeNode node = this.GetSelectedRobotFolderNode();
+            if (node == null || node.Index <= 0)
+            {
+                return;
+            }
+            int index = node.Index;
+            this.tvRobotFolders.Nodes.RemoveAt(index);
+            this.tvRobotFolders.Nodes.Insert(index - 1, node);
+            this.MoveRobotFolderData(index, index - 1);
+            this.tvRobotFolders.SelectedNode = node;
+            this.SaveRobotFolderData();
+        }
+
+        private void MoveRobotFolderDown_Click(object sender, EventArgs e)
+        {
+            TreeNode node = this.GetSelectedRobotFolderNode();
+            if (node == null || node.Index >= this.tvRobotFolders.Nodes.Count - 1)
+            {
+                return;
+            }
+            int index = node.Index;
+            this.tvRobotFolders.Nodes.RemoveAt(index);
+            this.tvRobotFolders.Nodes.Insert(index + 1, node);
+            this.MoveRobotFolderData(index, index + 1);
+            this.tvRobotFolders.SelectedNode = node;
+            this.SaveRobotFolderData();
+        }
+
+        private void DeleteRobotFolder_Click(object sender, EventArgs e)
+        {
+            TreeNode node = this.GetSelectedRobotFolderNode();
+            if (node == null || this.tvRobotFolders.Nodes.Count <= 1)
+            {
+                return;
+            }
+            string targetFolder = node.Text;
+            if (Socket_Cache.RobotList.lstRobot.Any(item => item.RFolder == targetFolder))
+            {
+                Socket_Operation.ShowMessageBox(UiText("UI_GroupMustBeEmpty"));
+                return;
+            }
+            Socket_Cache.RobotList.lstFolders.Remove(targetFolder);
+            this.tvRobotFolders.Nodes.Remove(node);
+            this.selectedRobotFolder = this.tvRobotFolders.Nodes[0].Text;
+            this.SaveRobotFolderData();
+            this.RefreshAssistantFolders();
+        }
+
+        private void SaveRobotFolderData()
+        {
+            Socket_Cache.RobotList.SaveRobotList_ToDB();
+        }
+
+        private void MoveRobotFolderData(int oldIndex, int newIndex)
+        {
+            if (oldIndex < 0 || oldIndex >= Socket_Cache.RobotList.lstFolders.Count ||
+                newIndex < 0 || newIndex >= Socket_Cache.RobotList.lstFolders.Count)
+            {
+                return;
+            }
+            string folder = Socket_Cache.RobotList.lstFolders[oldIndex];
+            Socket_Cache.RobotList.lstFolders.RemoveAt(oldIndex);
+            Socket_Cache.RobotList.lstFolders.Insert(newIndex, folder);
+        }
+
+        private static ToolStripMenuItem CreateRobotMoreItem(
+            string name,
+            string text,
+            EventHandler handler)
+        {
+            ToolStripMenuItem item = new ToolStripMenuItem
+            {
+                Name = name,
+                Text = text
+            };
+            item.Click += handler;
+            return item;
+        }
+
+        private void tsRobotList_Copy_Click(object sender, EventArgs e)
+        {
+            if (this.dgvRobotList.Rows.Count == 0)
+            {
+                return;
+            }
+
+            List<Socket_RobotInfo> selected = Socket_Operation.GetSelectedRobot(this.dgvRobotList);
+            if (selected.Count > 0)
+            {
+                Socket_Cache.RobotList.UpdateRobotList_ByListAction(
+                    Socket_Cache.System.ListAction.Copy,
+                    selected);
+                this.dgvRobotList.ClearSelection();
+                this.dgvRobotList.Refresh();
+            }
         }
 
         private void bSettings_Click(object sender, EventArgs e)
@@ -247,6 +948,14 @@ namespace WPELibrary
                     advancedToolsPage.Controls.Remove(this.tcAdvancedTools);
                     settingsSections.Controls.Remove(this.tpFilterList);
                     settingsSections.Controls.Remove(this.tpRobotList);
+                    if (!this.tcAutomation.Controls.Contains(this.tpFilterList))
+                    {
+                        this.tcAutomation.Controls.Add(this.tpFilterList);
+                    }
+                    if (!this.tcAutomation.Controls.Contains(this.tpRobotList))
+                    {
+                        this.tcAutomation.Controls.Add(this.tpRobotList);
+                    }
                 }
             }
         }
@@ -553,7 +1262,73 @@ namespace WPELibrary
 
             Socket_Cache.SendList.lstFolders.ListChanged += this.SendFolders_ListChanged;
             Socket_Cache.SendList.lstSend.ListChanged += this.SendList_ListChanged;
+            this.ConfigureSendListMoreButton();
             this.RefreshSendFolderTree();
+        }
+
+        private void ConfigureSendListMoreButton()
+        {
+            this.tsSendListMore = new ToolStripDropDownButton
+            {
+                Name = "tsSendListMore",
+                Text = UiText("UI_More"),
+                DisplayStyle = ToolStripItemDisplayStyle.Text,
+                AutoSize = true,
+                Overflow = ToolStripItemOverflow.Never,
+                Margin = new Padding(3)
+            };
+            this.tsSendListMore.DropDownItems.Add(CreateSendMoreItem(
+                "SendMoreLoad", UiText("Send_Load"), this.tsSendList_Load_Click));
+            this.tsSendListMore.DropDownItems.Add(CreateSendMoreItem(
+                "SendMoreSave", UiText("Send_Save"), this.tsSendList_Save_Click));
+            this.tsSendListMore.DropDownItems.Add(CreateSendMoreItem(
+                "SendMoreCopy", UiText("Send_Copy"), this.tsSendList_Copy_Click));
+            this.tsSendListMore.DropDownItems.Add(new ToolStripSeparator());
+            this.tsSendListMore.DropDownItems.Add(CreateSendMoreItem(
+                "SendMoreClear", UiText("Send_Clear"), this.tsSendList_CleanUp_Click));
+
+            int contextIndex = this.tsSendList.Items.IndexOf(this.tsSendListContext);
+            if (contextIndex < 0)
+            {
+                this.tsSendList.Items.Add(this.tsSendListMore);
+            }
+            else
+            {
+                this.tsSendList.Items.Insert(contextIndex, this.tsSendListMore);
+            }
+        }
+
+        private static ToolStripMenuItem CreateSendMoreItem(
+            string name,
+            string text,
+            EventHandler handler)
+        {
+            ToolStripMenuItem item = new ToolStripMenuItem
+            {
+                Name = name,
+                Text = text
+            };
+            item.Click += handler;
+            return item;
+        }
+
+        private void tsSendList_Copy_Click(object sender, EventArgs e)
+        {
+            if (this.dgvSendList.Rows.Count == 0)
+            {
+                return;
+            }
+
+            List<Socket_SendInfo> selected = Socket_Operation.GetSelectedSend(this.dgvSendList);
+            if (selected.Count == 0 || !this.CanModifySendLists(selected, "复制封包"))
+            {
+                return;
+            }
+
+            Socket_Cache.SendList.UpdateSendList_ByListAction(
+                Socket_Cache.System.ListAction.Copy,
+                selected);
+            this.RefreshSendFolderView();
         }
 
         private void ConfigureSendToolbarTextButton(ToolStripButton button, string text)
@@ -625,8 +1400,9 @@ namespace WPELibrary
             }
 
             bool hasSelectedFolder = this.HasSelectedSendFolder();
-            this.tsSendList_Add.Enabled = hasSelectedFolder;
-            this.tsSendListSelectAll.Enabled = hasSelectedFolder && visibleItems.Count > 0;
+            bool batchIsBusy = this.bgwSendList.IsBusy;
+            this.tsSendList_Add.Enabled = hasSelectedFolder && !batchIsBusy;
+            this.tsSendListSelectAll.Enabled = hasSelectedFolder && visibleItems.Count > 0 && !batchIsBusy;
             this.UpdateSendListSelectAllState(visibleItems);
             this.UpdateSendListContext(visibleItems);
             this.UpdateSendExecutionControls(visibleItems);
@@ -682,6 +1458,10 @@ namespace WPELibrary
                 !batchIsBusy &&
                 !hasManualSend;
             this.tsSendList_Stop.Enabled = batchIsBusy;
+            if (this.tsSendListMore != null)
+            {
+                this.tsSendListMore.Enabled = !batchIsBusy;
+            }
         }
 
         private bool HasSelectedSendFolder()
@@ -1152,7 +1932,7 @@ namespace WPELibrary
                 {
                     int HOTKEY_ID = m.WParam.ToInt32();
 
-                    if (this.robotSettingsPageActive)
+                    if (this.robotSettingsPageActive || ReferenceEquals(this.tcAutomation.SelectedTab, this.tpRobotList))
                     {
                         Socket_Cache.Robot.DoRobot_ByHotKey(HOTKEY_ID);
                     }
@@ -1273,6 +2053,7 @@ namespace WPELibrary
                 dgvRobotList.AutoGenerateColumns = false;
                 dgvRobotList.DataSource = Socket_Cache.RobotList.lstRobot;
                 dgvRobotList.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvRobotList, true, null);
+                this.RefreshAssistantFolders();
 
                 dgvLogList.AutoGenerateColumns = false;
                 dgvLogList.DataSource = Socket_Cache.LogList.lstSocketLog;
@@ -4238,11 +5019,10 @@ namespace WPELibrary
             {
                 if (!this.bgwRobotList.IsBusy)
                 {
-                    this.tsRobotList_Start.Enabled = false;
-                    this.tsRobotList_Stop.Enabled = true;
                     Socket_Cache.RobotList.lstExecute.Clear();
 
                     this.bgwRobotList.RunWorkerAsync();
+                    this.UpdateRobotToolbarState();
                 }
             }
         }
@@ -4254,17 +5034,48 @@ namespace WPELibrary
 
         private void tsRobotList_Add_Click(object sender, EventArgs e)
         {
-            Socket_Cache.Robot.AddRobot_New();
+            if (this.bgwRobotList.IsBusy)
+            {
+                return;
+            }
 
+            Socket_Cache.Robot.AddRobot_New();
+            Socket_RobotInfo addedRobot = Socket_Cache.RobotList.lstRobot.LastOrDefault();
+            if (addedRobot != null)
+            {
+                addedRobot.RFolder = this.selectedRobotFolder;
+                if (!Socket_Cache.RobotList.lstFolders.Contains(this.selectedRobotFolder))
+                {
+                    Socket_Cache.RobotList.lstFolders.Add(this.selectedRobotFolder);
+                }
+            }
+            Socket_Cache.RobotList.SaveRobotList_ToDB();
+            this.RefreshAssistantFolders();
             this.dgvRobotList.ClearSelection();
-            this.dgvRobotList.CurrentCell = this.dgvRobotList.Rows[this.dgvRobotList.Rows.Count - 1].Cells[0];
+            if (this.dgvRobotList.Rows.Count > 0)
+            {
+                this.dgvRobotList.CurrentCell = this.dgvRobotList.Rows[this.dgvRobotList.Rows.Count - 1].Cells[0];
+            }
         }
 
         private void tsRobotList_CleanUp_Click(object sender, EventArgs e)
         {
-            if (dgvRobotList.Rows.Count > 0)
+            if (!this.bgwRobotList.IsBusy && dgvRobotList.Rows.Count > 0)
             {
                 Socket_Cache.RobotList.CleanUpRobotList_Dialog();
+                this.RefreshAssistantFolders();
+            }
+        }
+
+        private void UpdateRobotToolbarState()
+        {
+            bool running = this.bgwRobotList.IsBusy;
+            this.tsRobotList_Start.Enabled = !running && this.dgvRobotList.Rows.Count > 0;
+            this.tsRobotList_Stop.Enabled = running;
+            this.tsRobotList_Add.Enabled = !running;
+            if (this.tsRobotListMore != null)
+            {
+                this.tsRobotListMore.Enabled = !running;
             }
         }
 
@@ -4334,8 +5145,7 @@ namespace WPELibrary
         {
             try
             {
-                this.tsRobotList_Start.Enabled = true;
-                this.tsRobotList_Stop.Enabled = false;
+                this.UpdateRobotToolbarState();
             }
             catch (Exception ex)
             {

@@ -161,6 +161,7 @@
     <Compile Include="Lib\Socket_Send.cs" />
     <Compile Include="Lib\Socket_ByteSweepEngine.cs" />
     <Compile Include="Lib\Socket_ByteSweepPresetInfo.cs" />
+    <Compile Include="Lib\Socket_ByteSweepRuntime.cs" />
     <Compile Include="Lib\Socket_ByteAnnotationInfo.cs" />
     <Compile Include="Lib\Socket_ByteAnnotationEngine.cs" />
     <Compile Include="Lib\Socket_SendInfo.cs" />
@@ -269,6 +270,9 @@
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Socket_Form.ByteSweep.cs">
+      <DependentUpon>Socket_Form.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Socket_Form.ByteSweepLog.cs">
       <DependentUpon>Socket_Form.cs</DependentUpon>
     </Compile>
     <Compile Include="Socket_Form.Designer.cs">

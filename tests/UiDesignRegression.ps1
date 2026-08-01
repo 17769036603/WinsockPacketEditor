@@ -1,7 +1,9 @@
 param(
     [string]$Configuration = "Debug",
     [string]$BuildDirectory = "",
-    [string]$AuditScreenshotPath = ""
+    [string]$AuditScreenshotPath = "",
+    [int]$AuditWidth = 1400,
+    [int]$AuditHeight = 950
 )
 
 $ErrorActionPreference = "Stop"
@@ -566,7 +568,7 @@ try {
     $setSendRunningState.Invoke($sendForm, [object[]]@($false))
     Assert-True $startButton.Enabled "Completing or stopping a send must re-enable Start."
     Assert-True (-not $stopButton.Enabled) "Completing or stopping a send must disable Stop again."
-    Assert-True $normalSweepEditorMode.Enabled "Completing or stopping a send must unlock right-editor sweep settings."
+    Assert-True (-not $normalSweepEditorMode.Enabled) "The pair-only right editor must keep its hidden mode selector locked after a send completes."
     Assert-True (
         $sendHexBox.ReadOnly -eq $originalPacketEditorReadOnly
     ) "Completing or stopping a send must restore the packet editor's original read-only state."
@@ -641,14 +643,19 @@ try {
     $legacySecondPosition = Get-PrivateField $sweepEditForm "nudByteSweepSecondPosition"
     $legacySecondLength = Get-PrivateField $sweepEditForm "nudByteSweepSecondLength"
     $sweepHexBox = Get-PrivateField $sweepEditForm "hbPacketData"
+    $packetValueInfo = Get-PrivateField $sweepEditForm "tableLayoutPanel1"
+    $packetPositionInfo = Get-PrivateField $sweepEditForm "lHexBox_Position"
     $perLineSelector = Get-PrivateField $sweepEditForm "tscbPerLine"
     $sweepSaveButton = Get-PrivateField $sweepEditForm "bSaveByteSweepPreset"
     $sweepStartButton = Get-PrivateField $sweepEditForm "bStartByteSweep"
     $sweepStopButton = Get-PrivateField $sweepEditForm "bStopByteSweep"
     $sweepSidePanel = Get-PrivateField $sweepEditForm "pnlByteSweepSide"
     $sweepEditorPanel = Get-PrivateField $sweepEditForm "byteSweepEditorPanel"
+    $sweepEditorScrollHost = Get-PrivateField $sweepEditorPanel "scrollHost"
     $sweepEditorLayout = Get-PrivateField $sweepEditorPanel "layout"
     $sweepEditorMode = Get-PrivateField $sweepEditorPanel "mode"
+    $sweepEditorTitle = Get-PrivateField $sweepEditorPanel "title"
+    $sweepEditorFooter = Get-PrivateField $sweepEditorPanel "footer"
     $sweepEditorSummary = Get-PrivateField $sweepEditorPanel "selection"
     $sweepEditorInterval = Get-PrivateField $sweepEditorPanel "interval"
     $sweepEditorFirstPosition = Get-PrivateField $sweepEditorPanel "firstPosition"
@@ -660,6 +667,7 @@ try {
     $sweepEditorStart = Get-PrivateField $sweepEditorPanel "send"
     $sweepEditorStop = Get-PrivateField $sweepEditorPanel "stop"
     $annotationController = Get-PrivateField $sweepEditForm "byteAnnotationController"
+    $annotationPanel = Get-PrivateField $annotationController "panel"
     $socketGroup = Get-PrivateField $sweepEditForm "gbSendSocket"
     $sendGroup = Get-PrivateField $sweepEditForm "gbSendType"
     $progressionGroup = Get-PrivateField $sweepEditForm "gbSendStep"
@@ -668,6 +676,14 @@ try {
     $idleSweepStatus = Get-PrivateField $sweepEditForm "tlByteSweepProgress"
     $sendButton = Get-PrivateField $sweepEditForm "bSend"
     Assert-True ($parameterLayout.ColumnCount -eq 2) "The lower editor must contain only send and progression columns."
+    Assert-True (
+        -not $packetValueInfo.Visible -and
+        -not $packetPositionInfo.Visible -and
+        $sweepEditForm.GetType().GetField(
+            "tlpPacketData",
+            [System.Reflection.BindingFlags]::Instance -bor
+            [System.Reflection.BindingFlags]::NonPublic).GetValue($sweepEditForm).ColumnStyles[1].Width -eq 0
+    ) "The byte type detail panel must stay hidden without reducing packet editor functionality."
     Assert-True (
         $parameterLayout.GetCellPosition($sendGroup).Column -eq 0 -and
         $parameterLayout.GetCellPosition($progressionGroup).Column -eq 1
@@ -710,18 +726,39 @@ try {
         $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorStop) -eq 1 -and
         $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorSave) -eq 2
     ) "The right sweep editor must provide its own accessible Start and Stop actions."
-    Assert-True ($sweepSidePanel.RowCount -eq 2 -and $sweepSidePanel.Controls.Count -eq 2) "The right packet panel must preserve annotation and add a separate sweep section."
+    Assert-True (
+        $sweepSidePanel.RowCount -eq 2 -and
+        $sweepSidePanel.Controls.Count -eq 2 -and
+        -not $annotationPanel.Visible -and
+        $sweepSidePanel.RowStyles[0].Height -eq 0
+    ) "The right packet panel must hide annotations and keep only the sweep section visible."
     Assert-True ($sweepEditorPanel.GetType().Name -eq "Socket_ByteSweepEditorPanel") "The right sweep section must use the reusable editor panel."
+    Assert-True (
+        $sweepEditorFooter.Dock -eq [System.Windows.Forms.DockStyle]::Fill -and
+        $sweepEditorFooter.RowCount -eq 2 -and
+        $sweepEditorStart.Parent.Parent -eq $sweepEditorFooter
+    ) "The right sweep editor must keep status and actions in a fixed footer."
+    Assert-True (
+        $sweepEditorTitle.Height -ge 24 -and
+        $sweepEditorTitle.Bottom -le $sweepEditorScrollHost.Top
+    ) "The right sweep editor must keep its title above the scrollable parameter area."
+    Assert-True (
+        $sweepEditorScrollHost.AutoScroll -and
+        $sweepEditorScrollHost.AutoScrollMinSize.Height -ge 210
+    ) "The right sweep editor must reserve a scrollable content area for compact windows."
     Assert-True ($sweepEditorSecondPosition.Parent -ne $null -and $sweepEditorSecondLength.Parent -ne $null) "The right sweep section must include visible byte B position and length inputs."
     Assert-True (
         $sweepSidePanel.ColumnStyles[0].SizeType -eq
         [System.Windows.Forms.SizeType]::Percent
     ) "The annotation section must not reduce the width of the shared sweep column."
     Assert-True (
-        $sweepEditorLayout.RowStyles[3].Height -gt 0 -and
-        $sweepEditorLayout.RowStyles[5].Height -eq 0
-    ) "Sequential mode must show only its relevant interval fields."
-    $sweepEditorMode.SelectedIndex = 1
+        -not $sweepEditorMode.Visible -and
+        $sweepEditorPanel.IsPairCombinationSelected -and
+        $sweepEditorLayout.RowStyles[0].Height -eq 0 -and
+        $sweepEditorLayout.RowStyles[3].Height -eq 0 -and
+        $sweepEditorLayout.RowStyles[5].Height -gt 0 -and
+        $sweepEditorLayout.RowStyles[10].Height -gt 0
+    ) "The right sweep editor must expose only the pair-combination surface."
     [System.Windows.Forms.Application]::DoEvents()
     Assert-True (
         $sweepEditorLayout.RowStyles[3].Height -eq 0 -and
@@ -746,8 +783,15 @@ try {
     )) {
         Assert-True (
             -not [string]::IsNullOrWhiteSpace($accessibleControl.AccessibleName)
-        ) "Every sweep input must have an accessible name."
+    ) "Every sweep input must have an accessible name."
     }
+    Assert-True (
+        $sweepSidePanel.RowStyles[0].SizeType -eq
+        [System.Windows.Forms.SizeType]::Absolute -and
+        $sweepSidePanel.RowStyles[0].Height -eq 0 -and
+        $sweepSidePanel.RowStyles[1].SizeType -eq
+        [System.Windows.Forms.SizeType]::Percent
+    ) "The hidden annotation area must release its row while the sweep area uses the remaining space."
     $collapseAnnotation = $annotationController.GetType().GetMethod(
         "Panel_CollapseRequested",
         [System.Reflection.BindingFlags]::Instance -bor
@@ -758,18 +802,11 @@ try {
     Assert-True (
         $sweepSidePanel.RowStyles[0].SizeType -eq
         [System.Windows.Forms.SizeType]::Absolute -and
-        $sweepSidePanel.RowStyles[0].Height -eq 28 -and
+        $sweepSidePanel.RowStyles[0].Height -eq 0 -and
         $sweepSidePanel.ColumnStyles[0].SizeType -eq
         [System.Windows.Forms.SizeType]::Percent
-    ) "Collapsing annotations must reduce only the annotation row, not the sweep editor width."
-    $collapseAnnotation.Invoke(
-        $annotationController,
-        [object[]]@($null, [System.EventArgs]::Empty))
-    Assert-True (
-        $sweepSidePanel.RowStyles[0].SizeType -eq
-        [System.Windows.Forms.SizeType]::Percent
-    ) "Expanding annotations must restore the original row sizing."
-    $sweepEditorMode.SelectedIndex = 0
+    ) "Hidden annotations must remain hidden and must not reduce the sweep editor width."
+    $sweepEditorMode.SelectedIndex = 1
     [System.Windows.Forms.Application]::DoEvents()
     Assert-True ($perLineSelector.Items.Count -eq 1) "Send page must expose only the adaptive packet layout."
     Assert-True ($perLineSelector.SelectedIndex -eq 0) "Send page must select the adaptive packet layout by default."
@@ -786,7 +823,7 @@ try {
     Assert-True $sweepSaveButton.Enabled "Sweep edit page must enable direct update for a valid selection."
 
     if (-not [string]::IsNullOrWhiteSpace($AuditScreenshotPath)) {
-        $sweepEditForm.ClientSize = [System.Drawing.Size]::new(1400, 950)
+        $sweepEditForm.ClientSize = [System.Drawing.Size]::new($AuditWidth, $AuditHeight)
         $sweepEditForm.StartPosition =
             [System.Windows.Forms.FormStartPosition]::Manual
         $sweepEditForm.Location = [System.Drawing.Point]::new(-32000, -32000)
@@ -797,6 +834,12 @@ try {
         $sweepEditorSecondPosition.Value = 1
         $sweepEditForm.PerformLayout()
         [System.Windows.Forms.Application]::DoEvents()
+        if ($AuditWidth -le 1200 -and $AuditHeight -le 620) {
+            Assert-True (
+                $sweepEditorScrollHost.VerticalScroll.Visible -or
+                $sweepEditorScrollHost.AutoScrollMinSize.Height -le $sweepEditorScrollHost.ClientSize.Height
+            ) "Compact windows must either scroll the right sweep editor or show all pair fields without clipping."
+        }
         $screenshotDirectory = Split-Path -Parent $AuditScreenshotPath
         if (-not [string]::IsNullOrWhiteSpace($screenshotDirectory)) {
             [void][System.IO.Directory]::CreateDirectory($screenshotDirectory)
@@ -839,6 +882,12 @@ try {
         0,
         0)
 
+    # Position pickers are only available in pair mode; restore that mode
+    # after the sequential-mode assertions above.
+    $sweepEditorMode.SelectedIndex = 1
+    $sweepEditorFirstPosition.Value = 0
+    $sweepEditorSecondPosition.Value = 1
+    [System.Windows.Forms.Application]::DoEvents()
     $buttonOnClick.Invoke(
         $sweepEditorPickSecond,
         [object[]]@([System.EventArgs]::Empty))
