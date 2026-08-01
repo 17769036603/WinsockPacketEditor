@@ -121,6 +121,7 @@
       <HintPath>..\packages\System.Runtime.CompilerServices.Unsafe.6.1.2\lib\net462\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
     </Reference>
     <Reference Include="System.Runtime.Remoting" />
+    <Reference Include="System.Security" />
     <Reference Include="System.Threading.Tasks.Extensions, Version=4.2.4.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
       <HintPath>..\packages\System.Threading.Tasks.Extensions.4.6.3\lib\net462\System.Threading.Tasks.Extensions.dll</HintPath>
     </Reference>
@@ -164,6 +165,7 @@
     <Compile Include="Lib\Socket_ByteSweepRuntime.cs" />
     <Compile Include="Lib\Socket_ByteAnnotationInfo.cs" />
     <Compile Include="Lib\Socket_ByteAnnotationEngine.cs" />
+    <Compile Include="Lib\Socket_PacketReadableAnalyzer.cs" />
     <Compile Include="Lib\Socket_SendInfo.cs" />
     <Compile Include="Lib\UserControl\HotkeyTextBox.cs">
       <SubType>Component</SubType>
@@ -294,6 +296,9 @@
     </Compile>
     <Compile Include="Socket_RobotForm.Designer.cs">
       <DependentUpon>Socket_RobotForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Socket_SendPresetPickerForm.cs">
+      <SubType>Form</SubType>
     </Compile>
     <Compile Include="Socket_SendListForm.cs">
       <SubType>Form</SubType>
@@ -539,6 +544,12 @@
     </EmbeddedResource>
     <EmbeddedResource Include="Socket_RobotForm.resx">
       <DependentUpon>Socket_RobotForm.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Socket_SendPresetPickerForm.en-US.resx">
+      <DependentUpon>Socket_SendPresetPickerForm.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Socket_SendPresetPickerForm.resx">
+      <DependentUpon>Socket_SendPresetPickerForm.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Socket_SendListForm.en-US.resx">
       <DependentUpon>Socket_SendListForm.cs</DependentUpon>

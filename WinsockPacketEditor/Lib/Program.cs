@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel;
 using System.Windows.Forms;
 using WPELibrary;
 using WPELibrary.Lib;
@@ -53,8 +54,24 @@ namespace WinsockPacketEditor
                     {
                         System.Diagnostics.Process.Start(startInfo);
                     }
-                    catch
+                    catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
                     {
+                        MessageBox.Show(
+                            MultiLanguage.DefaultLanguage == "en-US"
+                                ? "Administrator permission is required to start injection mode."
+                                : "注入模式需要管理员权限才能启动。",
+                            Socket_Cache.System.WPE,
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning);
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show(
+                            (MultiLanguage.DefaultLanguage == "en-US" ? "Failed to restart with administrator permission: " : "请求管理员权限失败：") + ex.Message,
+                            Socket_Cache.System.WPE,
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Error);
                         return;
                     }
                    
@@ -63,7 +80,11 @@ namespace WinsockPacketEditor
             }
             catch (Exception ex)
             {
-                string sError = ex.Message;
+                MessageBox.Show(
+                    (MultiLanguage.DefaultLanguage == "en-US" ? "Startup failed: " : "启动失败：") + ex.Message,
+                    Socket_Cache.System.WPE,
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
             }            
         }
 

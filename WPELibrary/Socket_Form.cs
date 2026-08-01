@@ -9,6 +9,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml.Linq;
 using WPELibrary.Lib;
@@ -19,10 +20,20 @@ namespace WPELibrary
 {
     public partial class Socket_Form : Form
     {
+        private static readonly Color UiNavigationTextColor = Color.FromArgb(31, 41, 55);
+        private static readonly Color UiNavigationBorderColor = Color.FromArgb(210, 214, 220);
+        private static readonly Color UiNavigationHoverColor = Color.FromArgb(245, 248, 252);
+        private static readonly Color UiNavigationPressedColor = Color.FromArgb(230, 238, 248);
+        private static readonly Color PacketSendAccentColor = Color.FromArgb(255, 167, 38);
+        private static readonly Color PacketReceiveAccentColor = Color.FromArgb(41, 182, 246);
+        private static readonly Color PacketSelectionTextColor = Color.FromArgb(15, 23, 42);
         private readonly Socket_Cache.System.SystemMode RunMode = Socket_Cache.System.SystemMode.Process;
         private bool bWakeUp = true;
         private readonly ToolTip tt = new ToolTip();
         private readonly WinSockHook ws = new WinSockHook();
+        private string hookStatusKey = "UI_HookStatusReady";
+        private bool hookUiTransitioning;
+        private bool socketListTickRunning;
         private Button bSettings;
         private TabControl tcAdvancedTools;
         private TableLayoutPanel tlpCurrentProcess;
@@ -30,6 +41,7 @@ namespace WPELibrary
         private Label lSendFoldersTitle;
         private Button bSendFolderAdd;
         private ToolStripButton tsSendListSelectAll;
+        private ToolStripButton tsSendListParallel;
         private ToolStripDropDownButton tsSendListMore;
         private ToolStripLabel tsSendListContext;
         private ToolStripMenuItem cmsSendListMoveToFolder;
@@ -43,9 +55,13 @@ namespace WPELibrary
         private readonly Dictionary<Guid, Socket_Send> manualSendOperations =
             new Dictionary<Guid, Socket_Send>();
         private readonly object sendOperationSync = new object();
-        private Guid activeBatchSendListId = Guid.Empty;
-        private Socket_Send activeBatchSendOperation;
+        private readonly Dictionary<Guid, Socket_Send> activeBatchSendOperations =
+            new Dictionary<Guid, Socket_Send>();
+        private bool sendListParallelMode;
         private Socket_PacketInfo packetDataEditingPacket;
+        private GroupBox gbReadableContent;
+        private Label lReadableContentMeta;
+        private RichTextBox rtbReadableContent;
         private bool robotSettingsPageActive;
         private ToolStripDropDownButton tsRobotListMore;
         private ToolStripDropDownButton tsFilterListMore;
@@ -66,6 +82,14 @@ namespace WPELibrary
         private Socket_Robot activeAssistantRobot;
         private Guid activeAssistantRobotId = Guid.Empty;
         private readonly Dictionary<Guid, Button> assistantButtons = new Dictionary<Guid, Button>();
+        private int requestedClientWidth = -1;
+
+        protected override void SetClientSizeCore(int x, int y)
+        {
+            this.requestedClientWidth = x;
+            base.SetClientSizeCore(x, y);
+            this.UpdateAutomationNavigationButtonLayout();
+        }
 
         #region//加载窗体
 
@@ -109,9 +133,12 @@ namespace WPELibrary
         private void InitSettingsButton()
         {
             this.MinimumSize = new System.Drawing.Size(900, 620);
+            this.AccessibleRole = AccessibleRole.Window;
             this.dgvSocketList.AccessibleName = UiText("Main_PacketList");
+            this.dgvSocketList.AccessibleRole = AccessibleRole.Table;
             this.hbPacketData.AccessibleName = UiText("Main_PacketData");
             this.tcAutomation.AccessibleName = UiText("Main_Automation");
+            this.tcAutomation.AccessibleRole = AccessibleRole.PageTabList;
 
             this.bSettings = new Button
             {
@@ -124,6 +151,7 @@ namespace WPELibrary
                 AccessibleName = UiText("Main_Settings")
             };
             this.bSettings.Click += this.bSettings_Click;
+            this.tt.SetToolTip(this.bSettings, this.bSettings.Text);
 
             this.tlpCurrentProcess = new TableLayoutPanel
             {
@@ -150,18 +178,24 @@ namespace WPELibrary
             this.bCleanUp.Anchor = AnchorStyles.None;
             this.bCleanUp.Margin = new Padding(4);
             this.bCleanUp.TextImageRelation = TextImageRelation.ImageBeforeText;
+            this.bCleanUp.AccessibleName = this.bCleanUp.Text;
+            this.tt.SetToolTip(this.bCleanUp, this.bCleanUp.Text);
 
             this.bStartHook.Text = UiText("Main_Start");
             this.bStartHook.Size = new System.Drawing.Size(96, 38);
             this.bStartHook.Anchor = AnchorStyles.None;
             this.bStartHook.Margin = new Padding(4);
             this.bStartHook.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+            this.bStartHook.AccessibleName = this.bStartHook.Text;
+            this.tt.SetToolTip(this.bStartHook, this.bStartHook.Text);
 
             this.bStopHook.Text = UiText("Main_Stop");
             this.bStopHook.Size = new System.Drawing.Size(96, 38);
             this.bStopHook.Anchor = AnchorStyles.None;
             this.bStopHook.Margin = new Padding(4);
             this.bStopHook.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+            this.bStopHook.AccessibleName = this.bStopHook.Text;
+            this.tt.SetToolTip(this.bStopHook, this.bStopHook.Text);
 
             this.tcAdvancedTools = new TabControl
             {
@@ -206,6 +240,9 @@ namespace WPELibrary
             }
 
             this.hbPacketData.ReadOnly = false;
+            this.Layout += this.Socket_Form_Layout;
+            this.hbPacketData.SelectionStartChanged += this.hbPacketData_ByteSweepSelectionChanged;
+            this.hbPacketData.SelectionLengthChanged += this.hbPacketData_ByteSweepSelectionChanged;
             this.InitSendFolderUI();
             this.InitByteSweepPresetUI();
             this.InitByteSweepLogUI();
@@ -213,6 +250,148 @@ namespace WPELibrary
             this.InitAutomationHomeUI();
             this.ConfigureRobotToolbarTextButtons();
             this.ConfigureFilterToolbarTextButtons();
+        }
+
+        private void InitReadableContentUI()
+        {
+            this.gbReadableContent = new GroupBox
+            {
+                Name = "gbReadableContent",
+                Text = UiText("UI_ReadableContentTitle"),
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 0, 0, 4),
+                Padding = new Padding(6, 5, 6, 6),
+                TabStop = false
+            };
+
+            TableLayoutPanel readableLayout = new TableLayoutPanel
+            {
+                Name = "tlpReadableContent",
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 2,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
+            };
+            readableLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            readableLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
+            readableLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
+            this.lReadableContentMeta = new Label
+            {
+                Name = "lReadableContentMeta",
+                Dock = DockStyle.Fill,
+                AutoEllipsis = true,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Text = UiText("UI_ReadableContentNone"),
+                AccessibleName = UiText("UI_ReadableContentMetaLabel")
+            };
+
+            this.rtbReadableContent = new RichTextBox
+            {
+                Name = "rtbReadableContent",
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                DetectUrls = false,
+                Multiline = true,
+                WordWrap = false,
+                ScrollBars = RichTextBoxScrollBars.Both,
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = SystemColors.Window,
+                ForeColor = SystemColors.ControlText,
+                Font = new Font("Consolas", 9F),
+                AccessibleName = UiText("UI_ReadableContentPreview")
+            };
+
+            readableLayout.Controls.Add(this.lReadableContentMeta, 0, 0);
+            readableLayout.Controls.Add(this.rtbReadableContent, 0, 1);
+            this.gbReadableContent.Controls.Add(readableLayout);
+
+            this.tlpPacketData.Controls.Remove(this.tlpHexBox);
+            this.tlpPacketData.RowCount = 2;
+            this.tlpPacketData.RowStyles.Clear();
+            this.tlpPacketData.RowStyles.Add(new RowStyle(SizeType.Absolute, 122F));
+            this.tlpPacketData.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            this.tlpPacketData.Controls.Add(this.gbReadableContent, 0, 0);
+            this.tlpPacketData.Controls.Add(this.tlpHexBox, 0, 1);
+
+            this.ClearReadableContent();
+        }
+
+        private void ClearReadableContent()
+        {
+            if (this.lReadableContentMeta == null || this.rtbReadableContent == null)
+            {
+                return;
+            }
+
+            this.lReadableContentMeta.Text = UiText("UI_ReadableContentNone");
+            this.rtbReadableContent.Clear();
+        }
+
+        private void UpdateReadableContent(byte[] buffer)
+        {
+            if (this.lReadableContentMeta == null || this.rtbReadableContent == null)
+            {
+                return;
+            }
+
+            Socket_PacketReadableResult result = Socket_PacketReadableAnalyzer.Analyze(buffer);
+            string kind = UiText(result.KindKey);
+            string encoding = string.IsNullOrEmpty(result.EncodingName)
+                ? UiText("UI_ReadableEncodingNone")
+                : result.EncodingName;
+            int length = buffer == null ? 0 : buffer.Length;
+
+            this.lReadableContentMeta.Text = string.Format(
+                UiText("UI_ReadableContentMeta"),
+                kind,
+                encoding,
+                length);
+
+            StringBuilder content = new StringBuilder();
+            if (result.IsEmpty)
+            {
+                content.Append(UiText("UI_ReadableContentEmpty"));
+            }
+            else
+            {
+                if (result.IsBinary)
+                {
+                    content.AppendLine(UiText("UI_ReadableContentBinaryNotice"));
+                }
+
+                if (!string.IsNullOrEmpty(result.Details))
+                {
+                    content.AppendLine(string.Format(
+                        UiText("UI_ReadableContentDetails"),
+                        result.Details));
+                }
+
+                if (result.IsBinary && !string.IsNullOrEmpty(result.Preview))
+                {
+                    content.AppendLine(UiText("UI_ReadableContentStrings"));
+                }
+
+                if (!string.IsNullOrEmpty(result.Preview))
+                {
+                    content.Append(result.Preview);
+                }
+                else if (result.IsBinary)
+                {
+                    content.Append(UiText("UI_ReadableContentNoStrings"));
+                }
+
+                if (result.IsTruncated)
+                {
+                    content.AppendLine();
+                    content.Append(UiText("UI_ReadableContentTruncated"));
+                }
+            }
+
+            this.rtbReadableContent.Text = content.ToString();
+            this.rtbReadableContent.SelectionStart = 0;
+            this.rtbReadableContent.SelectionLength = 0;
         }
 
         private void ConfigureFilterToolbarTextButtons()
@@ -329,13 +508,18 @@ namespace WPELibrary
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
                 RowCount = 2,
-                Padding = new Padding(4),
+                Padding = new Padding(12, 8, 12, 8),
                 Margin = Padding.Empty
             };
-            this.tlpAutomationNavigation.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            this.tlpAutomationNavigation.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            this.tlpAutomationNavigation.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
-            this.tlpAutomationNavigation.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+            for (int i = 0; i < 2; i++)
+            {
+                this.tlpAutomationNavigation.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            }
+            for (int i = 0; i < 2; i++)
+            {
+                this.tlpAutomationNavigation.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+            }
+            this.tlpAutomationNavigation.Resize += this.tlpAutomationNavigation_Resize;
 
             this.bAutomationSend = CreateAutomationNavigationButton(UiText("UI_Send"), this.tpSendList);
             this.bAutomationSweep = CreateAutomationNavigationButton(UiText("UI_ByteSweep"), this.tpByteSweepList);
@@ -355,7 +539,7 @@ namespace WPELibrary
                 Margin = Padding.Empty,
                 Padding = Padding.Empty
             };
-            this.tlpAutomationHome.RowStyles.Add(new RowStyle(SizeType.Absolute, 112F));
+            this.tlpAutomationHome.RowStyles.Add(new RowStyle(SizeType.Absolute, 104F));
             this.tlpAutomationHome.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             this.tlpAutomationHome.Controls.Add(this.tlpAutomationNavigation, 0, 0);
             this.tlpAutomationHome.Controls.Add(this.tcAutomation, 0, 1);
@@ -369,6 +553,7 @@ namespace WPELibrary
             this.tlpInformation.Controls.Add(this.tlpAutomationHome, 0, 0);
             this.tlpInformation.SetColumnSpan(this.tlpAutomationHome, 1);
             this.tcAutomation.SelectedTab = this.tpSendList;
+            this.UpdateAutomationNavigationButtonLayout();
             this.UpdateAutomationNavigationState();
         }
 
@@ -377,15 +562,56 @@ namespace WPELibrary
             Button button = new Button
             {
                 Text = text,
-                Dock = DockStyle.Fill,
-                Height = 44,
-                Margin = new Padding(4),
-                UseVisualStyleBackColor = true,
+                Anchor = AnchorStyles.None,
+                Dock = DockStyle.None,
+                Size = new Size(240, 36),
+                Margin = new Padding(4, 0, 4, 0),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.White,
+                ForeColor = UiNavigationTextColor,
+                UseVisualStyleBackColor = false,
+                TextAlign = ContentAlignment.MiddleCenter,
                 AccessibleName = text,
+                AccessibleRole = AccessibleRole.PushButton,
                 Tag = tab
             };
+            button.FlatAppearance.BorderSize = 1;
+            button.FlatAppearance.BorderColor = UiNavigationBorderColor;
+            button.FlatAppearance.MouseOverBackColor = UiNavigationHoverColor;
+            button.FlatAppearance.MouseDownBackColor = UiNavigationPressedColor;
             button.Click += this.automationNavigationButton_Click;
             return button;
+        }
+
+        private void tlpAutomationNavigation_Resize(object sender, EventArgs e)
+        {
+            this.UpdateAutomationNavigationButtonLayout();
+        }
+
+        private void Socket_Form_Layout(object sender, LayoutEventArgs e)
+        {
+            this.UpdateAutomationNavigationButtonLayout();
+        }
+
+        private void UpdateAutomationNavigationButtonLayout()
+        {
+            if (this.tlpAutomationNavigation == null)
+            {
+                return;
+            }
+
+            int availableWidth = Math.Max(1, (this.tlpAutomationNavigation.ClientSize.Width -
+                this.tlpAutomationNavigation.Padding.Horizontal) / 2 - 8);
+            int buttonWidth = Math.Min(240, availableWidth);
+
+            foreach (Control control in this.tlpAutomationNavigation.Controls)
+            {
+                Button button = control as Button;
+                if (button != null)
+                {
+                    button.Width = buttonWidth;
+                }
+            }
         }
 
         private void automationNavigationButton_Click(object sender, EventArgs e)
@@ -420,8 +646,18 @@ namespace WPELibrary
             foreach (Button button in buttons)
             {
                 bool active = ReferenceEquals(button.Tag, this.tcAutomation.SelectedTab);
-                button.BackColor = active ? SystemColors.Highlight : SystemColors.Control;
-                button.ForeColor = active ? SystemColors.HighlightText : SystemColors.ControlText;
+                button.BackColor = active ? SystemColors.Highlight : Color.White;
+                button.ForeColor = active ? SystemColors.HighlightText : UiNavigationTextColor;
+                button.FlatAppearance.BorderSize = active ? 2 : 1;
+                button.FlatAppearance.BorderColor = active
+                    ? SystemColors.Highlight
+                    : UiNavigationBorderColor;
+                button.FlatAppearance.MouseOverBackColor = active
+                    ? SystemColors.Highlight
+                    : UiNavigationHoverColor;
+                button.FlatAppearance.MouseDownBackColor = active
+                    ? SystemColors.Highlight
+                    : UiNavigationPressedColor;
             }
         }
 
@@ -475,16 +711,16 @@ namespace WPELibrary
             this.tlpAssistantButtons = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 4,
+                ColumnCount = 5,
                 RowCount = 1,
                 AutoScroll = true,
-                Padding = new Padding(4),
+                Padding = new Padding(8, 6, 8, 6),
                 Margin = Padding.Empty,
                 GrowStyle = TableLayoutPanelGrowStyle.AddRows
             };
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < 5; i++)
             {
-                this.tlpAssistantButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+                this.tlpAssistantButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96F));
             }
             this.lAssistantEmptyState = new Label
             {
@@ -636,11 +872,11 @@ namespace WPELibrary
             List<Socket_RobotInfo> robots = Socket_Cache.RobotList.lstRobot
                 .Where(robot => string.Equals(robot.RFolder, this.selectedRobotFolder, StringComparison.Ordinal))
                 .ToList();
-            this.tlpAssistantButtons.RowCount = Math.Max(1, (robots.Count + 3) / 4);
+            this.tlpAssistantButtons.RowCount = Math.Max(1, (robots.Count + 4) / 5);
             this.tlpAssistantButtons.RowStyles.Clear();
             for (int row = 0; row < this.tlpAssistantButtons.RowCount; row++)
             {
-                this.tlpAssistantButtons.RowStyles.Add(new RowStyle(SizeType.Absolute, 52F));
+                this.tlpAssistantButtons.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
             }
             for (int index = 0; index < robots.Count; index++)
             {
@@ -648,23 +884,37 @@ namespace WPELibrary
                 Button button = new Button
                 {
                     Text = robot.RName,
-                    Dock = DockStyle.Fill,
-                    Height = 44,
-                    Margin = new Padding(4),
-                    UseVisualStyleBackColor = true,
+                    Anchor = AnchorStyles.Left | AnchorStyles.Top,
+                    Dock = DockStyle.None,
+                    Size = new Size(84, 34),
+                    Margin = new Padding(6, 3, 6, 3),
+                    AutoEllipsis = true,
+                    Padding = new Padding(2, 0, 2, 0),
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(245, 248, 255),
+                    ForeColor = Color.FromArgb(32, 43, 61),
+                    UseVisualStyleBackColor = false,
+                    Cursor = Cursors.Hand,
                     Tag = robot,
                     ContextMenuStrip = this.cmsAssistantButton,
                     AccessibleName = robot.RName
                 };
+                button.FlatAppearance.BorderColor = Color.FromArgb(147, 177, 222);
+                button.FlatAppearance.BorderSize = 1;
+                button.FlatAppearance.MouseOverBackColor = Color.FromArgb(226, 237, 255);
+                button.FlatAppearance.MouseDownBackColor = Color.FromArgb(207, 225, 251);
+                button.AccessibleDescription = robot.RName;
+                this.tt.SetToolTip(button, robot.RName);
                 button.Click += this.AssistantButton_Click;
                 button.DoubleClick += this.AssistantButton_DoubleClick;
                 this.assistantButtons[robot.RID] = button;
-                this.tlpAssistantButtons.Controls.Add(button, index % 4, index / 4);
+                this.tlpAssistantButtons.Controls.Add(button, index % 5, index / 5);
             }
             if (robots.Count == 0)
             {
                 this.tlpAssistantButtons.Controls.Add(this.lAssistantEmptyState, 0, 0);
-                this.tlpAssistantButtons.SetColumnSpan(this.lAssistantEmptyState, 4);
+                this.tlpAssistantButtons.SetColumnSpan(this.lAssistantEmptyState, 5);
             }
             this.UpdateAssistantButtonState();
             this.tlpAssistantButtons.ResumeLayout(true);
@@ -732,8 +982,21 @@ namespace WPELibrary
                 bool active = pair.Key == this.activeAssistantRobotId && this.activeAssistantRobot != null;
                 bool enabled = this.activeAssistantRobot == null || active;
                 pair.Value.Enabled = enabled;
-                pair.Value.BackColor = active ? Color.Gold : SystemColors.Control;
-                pair.Value.ForeColor = active ? SystemColors.ControlText : SystemColors.ControlText;
+                pair.Value.BackColor = active
+                    ? Color.FromArgb(255, 223, 124)
+                    : enabled ? Color.FromArgb(245, 248, 255) : Color.FromArgb(239, 241, 245);
+                pair.Value.ForeColor = active
+                    ? Color.FromArgb(104, 73, 12)
+                    : enabled ? Color.FromArgb(32, 43, 61) : Color.FromArgb(142, 149, 160);
+                pair.Value.FlatAppearance.BorderColor = active
+                    ? Color.FromArgb(208, 143, 30)
+                    : enabled ? Color.FromArgb(147, 177, 222) : Color.FromArgb(210, 215, 224);
+                pair.Value.FlatAppearance.MouseOverBackColor = active
+                    ? Color.FromArgb(255, 232, 163)
+                    : Color.FromArgb(226, 237, 255);
+                pair.Value.FlatAppearance.MouseDownBackColor = active
+                    ? Color.FromArgb(245, 210, 102)
+                    : Color.FromArgb(207, 225, 251);
                 pair.Value.Text = active ? UiText("UI_Stop") : (pair.Value.Tag as Socket_RobotInfo).RName;
             }
             this.UpdateRobotToolbarState();
@@ -899,6 +1162,10 @@ namespace WPELibrary
             using (TabPage generalSettingsPage = new TabPage(UiText("Main_GeneralSettings")))
             using (TabPage advancedToolsPage = new TabPage(UiText("Main_AdvancedTools")))
             using (TableLayoutPanel settingsLayout = new TableLayoutPanel())
+            using (TableLayoutPanel settingsHost = new TableLayoutPanel())
+            using (FlowLayoutPanel settingsActions = new FlowLayoutPanel())
+            using (Label settingsHint = new Label())
+            using (Button settingsClose = new Button())
             {
                 settingsForm.Text = UiText("Main_Settings");
                 settingsForm.StartPosition = FormStartPosition.CenterParent;
@@ -908,12 +1175,48 @@ namespace WPELibrary
                 settingsForm.MaximizeBox = false;
                 settingsForm.ShowInTaskbar = false;
                 settingsForm.AutoScaleMode = AutoScaleMode.Dpi;
+                settingsForm.AutoScroll = true;
                 settingsForm.Font = this.Font;
 
+                settingsHost.Dock = DockStyle.Fill;
+                settingsHost.ColumnCount = 1;
+                settingsHost.RowCount = 3;
+                settingsHost.Padding = new Padding(6);
+                settingsHost.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                settingsHost.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                settingsHost.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+                settingsHint.Dock = DockStyle.Fill;
+                settingsHint.AutoSize = false;
+                settingsHint.Height = 30;
+                settingsHint.Padding = new Padding(4, 0, 4, 2);
+                settingsHint.Text = UiText("UI_SettingsHint");
+                settingsHint.AccessibleName = settingsHint.Text;
+                settingsHint.TextAlign = ContentAlignment.MiddleLeft;
+                settingsHint.ForeColor = UiNavigationTextColor;
+                settingsHost.Controls.Add(settingsHint, 0, 0);
+
+                settingsActions.Dock = DockStyle.Fill;
+                settingsActions.AutoSize = true;
+                settingsActions.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+                settingsActions.FlowDirection = FlowDirection.RightToLeft;
+                settingsActions.WrapContents = false;
+                settingsActions.Padding = new Padding(0, 4, 0, 0);
+                settingsClose.Name = "bSettingsClose";
+                settingsClose.Text = UiText("UI_Close");
+                settingsClose.AutoSize = true;
+                settingsClose.DialogResult = DialogResult.Cancel;
+                settingsClose.UseVisualStyleBackColor = true;
+                settingsClose.AccessibleName = settingsClose.Text;
+                settingsClose.AccessibleRole = AccessibleRole.PushButton;
+                settingsActions.Controls.Add(settingsClose);
+
                 settingsLayout.Dock = DockStyle.Fill;
+                settingsLayout.AutoScroll = true;
+                settingsLayout.Padding = new Padding(4);
                 settingsLayout.ColumnCount = 2;
                 settingsLayout.RowCount = 1;
-                settingsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 125F));
+                settingsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170F));
                 settingsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
                 settingsLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
@@ -921,10 +1224,13 @@ namespace WPELibrary
                 settingsLayout.Controls.Add(this.tcSocketInfo, 1, 0);
                 this.gbHookButton_Search.Dock = DockStyle.Top;
                 this.tcSocketInfo.Dock = DockStyle.Fill;
+                generalSettingsPage.AutoScroll = true;
+                advancedToolsPage.AutoScroll = true;
 
                 generalSettingsPage.Controls.Add(settingsLayout);
                 advancedToolsPage.Controls.Add(this.tcAdvancedTools);
                 settingsSections.Dock = DockStyle.Fill;
+                settingsSections.Multiline = false;
                 settingsSections.Controls.Add(generalSettingsPage);
                 settingsSections.Controls.Add(this.tpFilterList);
                 settingsSections.Controls.Add(this.tpRobotList);
@@ -934,7 +1240,10 @@ namespace WPELibrary
                     this.robotSettingsPageActive =
                         ReferenceEquals(settingsSections.SelectedTab, this.tpRobotList);
                 };
-                settingsForm.Controls.Add(settingsSections);
+                settingsHost.Controls.Add(settingsSections, 0, 1);
+                settingsHost.Controls.Add(settingsActions, 0, 2);
+                settingsForm.Controls.Add(settingsHost);
+                settingsForm.CancelButton = settingsClose;
 
                 try
                 {
@@ -1068,29 +1377,44 @@ namespace WPELibrary
                 ToolTipText = UiText("UI_SelectAllTip"),
                 DisplayStyle = ToolStripItemDisplayStyle.Text,
                 AutoSize = true,
-                Overflow = ToolStripItemOverflow.Never,
+                Overflow = ToolStripItemOverflow.AsNeeded,
                 Margin = new Padding(3),
                 TextAlign = System.Drawing.ContentAlignment.MiddleCenter
             };
             this.tsSendListSelectAll.Click += this.tsSendListSelectAll_Click;
+            this.tsSendListParallel = new ToolStripButton
+            {
+                Name = "tsSendListParallel",
+                Text = UiText("UI_SequentialSend"),
+                DisplayStyle = ToolStripItemDisplayStyle.Text,
+                AutoSize = true,
+                CheckOnClick = true,
+                Overflow = ToolStripItemOverflow.AsNeeded,
+                Margin = new Padding(3),
+                TextAlign = System.Drawing.ContentAlignment.MiddleCenter
+            };
+            this.tsSendListParallel.Click += this.tsSendListParallel_Click;
             this.tsSendList.Items.Remove(this.tsSendList_Add);
             this.tsSendList.Items.Remove(this.tsSendListSelectAll);
+            this.tsSendList.Items.Remove(this.tsSendListParallel);
             this.tsSendList.Items.Remove(this.tsSendList_Start);
             this.tsSendList.Items.Remove(this.tsSendList_Stop);
             this.tsSendList.Items.AddRange(new ToolStripItem[]
             {
                 this.tsSendList_Add,
                 this.tsSendListSelectAll,
+                this.tsSendListParallel,
                 this.tsSendList_Start,
                 this.tsSendList_Stop
             });
+            this.UpdateSendListParallelModeText();
             this.tsSendListContext = new ToolStripLabel
             {
                 Name = "tsSendListContext",
                 Alignment = ToolStripItemAlignment.Right,
                 AutoSize = true,
                 Margin = new Padding(8, 3, 6, 3),
-                Overflow = ToolStripItemOverflow.Never,
+                Overflow = ToolStripItemOverflow.AsNeeded,
                 ForeColor = System.Drawing.SystemColors.GrayText
             };
             this.tsSendList.Items.Add(this.tsSendListContext);
@@ -1336,8 +1660,10 @@ namespace WPELibrary
             button.DisplayStyle = ToolStripItemDisplayStyle.Text;
             button.Image = null;
             button.Text = text;
+            button.ToolTipText = text;
+            button.AccessibleName = text;
             button.AutoSize = true;
-            button.Overflow = ToolStripItemOverflow.Never;
+            button.Overflow = ToolStripItemOverflow.AsNeeded;
             button.Margin = new Padding(3);
         }
 
@@ -1458,10 +1784,27 @@ namespace WPELibrary
                 !batchIsBusy &&
                 !hasManualSend;
             this.tsSendList_Stop.Enabled = batchIsBusy;
+            if (this.tsSendListParallel != null)
+            {
+                this.tsSendListParallel.Enabled = !batchIsBusy;
+            }
             if (this.tsSendListMore != null)
             {
                 this.tsSendListMore.Enabled = !batchIsBusy;
             }
+        }
+
+        private void UpdateSendListParallelModeText()
+        {
+            if (this.tsSendListParallel == null)
+            {
+                return;
+            }
+
+            this.tsSendListParallel.Text = UiText(
+                this.tsSendListParallel.Checked ? "UI_ConcurrentSend" : "UI_SequentialSend");
+            this.tsSendListParallel.ToolTipText = UiText(
+                this.tsSendListParallel.Checked ? "UI_ConcurrentSendTip" : "UI_SequentialSendTip");
         }
 
         private bool HasSelectedSendFolder()
@@ -1832,9 +2175,6 @@ namespace WPELibrary
             // 也不得在没有可见配置入口的情况下启动 HTTP 服务。
             Socket_Cache.System.IsRemote = false;
             Socket_Cache.System.LoadSystemList_FromDB();
-            Socket_Cache.ProxyAccount.LoadProxyAccountList_FromDB();
-            Socket_Cache.ProxyMapping.LoadProxyMapLocal_FromDB();
-            Socket_Cache.ProxyMapping.LoadProxyMapRemote_FromDB();
         }
 
         private void Socket_Form_FormClosing(object sender, FormClosingEventArgs e)
@@ -1895,17 +2235,24 @@ namespace WPELibrary
             {
                 foreach (Socket_Send manualSend in this.manualSendOperations.Values.ToList())
                 {
-                    manualSend.StopSend();
+                    if (!manualSend.WaitForStop(2000))
+                    {
+                        Socket_Operation.DoLog(nameof(ExitMainForm), "Timed out while stopping a manual send task.");
+                    }
                 }
                 this.manualSendOperations.Clear();
+                List<Socket_Send> batchSends;
                 lock (this.sendOperationSync)
                 {
-                    if (this.activeBatchSendOperation != null)
+                    batchSends = this.activeBatchSendOperations.Values.ToList();
+                    this.activeBatchSendOperations.Clear();
+                }
+                foreach (Socket_Send batchSend in batchSends)
+                {
+                    if (!batchSend.WaitForStop(2000))
                     {
-                        this.activeBatchSendOperation.StopSend();
+                        Socket_Operation.DoLog(nameof(ExitMainForm), "Timed out while stopping a batch send task.");
                     }
-                    this.activeBatchSendListId = Guid.Empty;
-                    this.activeBatchSendOperation = null;
                 }
 
                 ws.ExitHook();
@@ -1914,9 +2261,6 @@ namespace WPELibrary
                 Socket_Operation.StopRemoteMGT(this.RunMode);
                 Socket_Cache.System.SaveSystemList_ToDB();
                 Socket_Cache.System.SaveRunConfig_ToDB(this.RunMode);
-                Socket_Cache.ProxyAccount.SaveProxyAccountList_ToDB(this.RunMode);
-                Socket_Cache.ProxyMapping.SaveProxyMapLocal_ToDB(this.RunMode);
-                Socket_Cache.ProxyMapping.SaveProxyMapRemote_ToDB(this.RunMode);
             }
             catch (Exception ex)
             {
@@ -1976,10 +2320,11 @@ namespace WPELibrary
 
                 this.tsslProcessInfo.Text = Socket_Operation.GetProcessInfo();
                 this.tsslWinSock.Text = Socket_Operation.GetWinSockSupportInfo();
-                this.tsslProcessInfo.Visible = false;
+                this.tsslProcessInfo.Visible = true;
                 this.tsslWinSock.Visible = false;
-                this.tsslSplit1.Visible = false;
+                this.tsslSplit1.Visible = true;
                 this.tsslSplit2.Visible = false;
+                this.tsslProcessInfo.Text = UiText("UI_HookStatusReady");
 
                 this.bStartHook.Enabled = true;
                 this.bStopHook.Enabled = false;
@@ -2039,24 +2384,32 @@ namespace WPELibrary
             {
                 dgvSocketList.AutoGenerateColumns = false;
                 dgvSocketList.DataSource = Socket_Cache.SocketList.lstRecPacket;
+                dgvSocketList.BackgroundColor = System.Drawing.Color.FromArgb(248, 248, 248);
+                dgvSocketList.Paint += this.dgvSocketList_Paint;
                 dgvSocketList.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvSocketList, true, null);
 
                 dgvFilterList.AutoGenerateColumns = false;
                 dgvFilterList.DataSource = Socket_Cache.FilterList.lstFilter;
+                dgvFilterList.AccessibleName = UiText("Main_Filter");
+                dgvFilterList.AccessibleRole = AccessibleRole.Table;
+                dgvFilterList.Paint += this.dgvFilterList_Paint;
                 dgvFilterList.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvFilterList, true, null);
 
                 dgvSendList.AutoGenerateColumns = false;
                 dgvSendList.DataSource = Socket_Cache.SendList.lstSend;
+                dgvSendList.AccessibleRole = AccessibleRole.Table;
                 dgvSendList.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvSendList, true, null);
                 this.RefreshSendFolderView();
 
                 dgvRobotList.AutoGenerateColumns = false;
                 dgvRobotList.DataSource = Socket_Cache.RobotList.lstRobot;
+                dgvRobotList.AccessibleRole = AccessibleRole.Table;
                 dgvRobotList.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvRobotList, true, null);
                 this.RefreshAssistantFolders();
 
                 dgvLogList.AutoGenerateColumns = false;
                 dgvLogList.DataSource = Socket_Cache.LogList.lstSocketLog;
+                dgvLogList.AccessibleRole = AccessibleRole.Table;
                 dgvLogList.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvLogList, true, null);
             }
             catch (Exception ex)
@@ -2734,6 +3087,7 @@ namespace WPELibrary
 
             this.packetDataEditingPacket = null;
             this.byteSweepEditingPreset = null;
+            this.ClearReadableContent();
         }        
 
         private void AutoCleanUp_SocketList()
@@ -2796,20 +3150,25 @@ namespace WPELibrary
         {
             try
             {
-                this.tcSocketInfo_FilterSet.Enabled = false;
-                this.tcSocketInfo_HookSet.Enabled = false;
-                this.gbSystemSet_FilterSet.Enabled = false;
-
-                this.bStartHook.Enabled = false;
-                this.bStopHook.Enabled = true;
-
-                this.cmsIcon_StartHook.Enabled = false;
-                this.cmsIcon_StopHook.Enabled = true;
+                this.SetHookUiState("UI_HookStatusStarting", false, true);
 
                 this.SaveConfigs_Parameter();
                 Socket_Cache.FilterList.InitFilterList_Count();
 
-                ws.StartHook();
+                HookStartResult hookResult = ws.StartHook();
+                if (!hookResult.Success)
+                {
+                    this.SetHookUiState("UI_HookStatusFailed", false, false);
+                    Socket_Operation.DoLog(
+                        MethodBase.GetCurrentMethod().Name,
+                        string.Format(
+                            "Hook start failed at {0}: {1}",
+                            hookResult.FailedHook,
+                            hookResult.ErrorMessage));
+                    return;
+                }
+
+                this.SetHookUiState("UI_HookStatusListening", true, false);
 
                 if (this.cbWorkingMode_Speed.Checked)
                 {
@@ -2827,7 +3186,46 @@ namespace WPELibrary
             }
             catch (Exception ex)
             {
+                this.SetHookUiState("UI_HookStatusFailed", false, false);
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
+        private void SetHookUiState(string statusKey, bool isRunning, bool isTransitioning)
+        {
+            this.hookStatusKey = statusKey;
+            this.hookUiTransitioning = isTransitioning;
+            bool editable = !isRunning && !isTransitioning;
+            this.tcSocketInfo_FilterSet.Enabled = editable;
+            this.tcSocketInfo_HookSet.Enabled = editable;
+            this.gbSystemSet_FilterSet.Enabled = editable;
+            this.bStartHook.Enabled = editable;
+            this.bStopHook.Enabled = isRunning && !isTransitioning;
+            this.cmsIcon_StartHook.Enabled = editable;
+            this.cmsIcon_StopHook.Enabled = isRunning && !isTransitioning;
+            this.tsslProcessInfo.Text = UiText(statusKey);
+            this.tsslProcessInfo.ForeColor =
+                statusKey == "UI_HookStatusFailed"
+                    ? Color.Firebrick
+                    : statusKey == "UI_HookStatusListening"
+                        ? Color.ForestGreen
+                        : SystemColors.ControlText;
+        }
+
+        private void SynchronizeHookUiState()
+        {
+            if (this.hookUiTransitioning)
+            {
+                return;
+            }
+
+            string expectedStatusKey = this.ws.IsRunning
+                ? "UI_HookStatusListening"
+                : "UI_HookStatusReady";
+
+            if (!string.Equals(this.hookStatusKey, expectedStatusKey, StringComparison.Ordinal))
+            {
+                this.SetHookUiState(expectedStatusKey, this.ws.IsRunning, false);
             }
         }
 
@@ -2844,22 +3242,17 @@ namespace WPELibrary
         {
             try
             {
-                this.tcSocketInfo_FilterSet.Enabled = true;
-                this.tcSocketInfo_HookSet.Enabled = true;
-                this.gbSystemSet_FilterSet.Enabled = true;
-
-                this.bStartHook.Enabled = true;
-                this.bStopHook.Enabled = false;
-
-                this.cmsIcon_StartHook.Enabled = true;
-                this.cmsIcon_StopHook.Enabled = false;
+                this.SetHookUiState("UI_HookStatusStopping", false, true);
 
                 ws.StopHook();
+
+                this.SetHookUiState("UI_HookStatusReady", false, false);
 
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_40));
             }
             catch (Exception ex)
             {
+                this.SetHookUiState("UI_HookStatusFailed", false, false);
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
         }
@@ -2881,9 +3274,13 @@ namespace WPELibrary
         {
             try
             {
+                this.SynchronizeHookUiState();
                 this.tlTotal_CNT.Text = Socket_Cache.SocketPacket.TotalPackets.ToString();
                 this.tlFilterExecute_CNT.Text = Socket_Cache.Filter.FilterExecute_CNT.ToString();
-                this.tlQueue_CNT.Text = Socket_Cache.SocketQueue.qSocket_PacketInfo.Count.ToString();
+                long droppedCount = Socket_Cache.SocketQueue.Dropped_CNT;
+                this.tlQueue_CNT.Text = droppedCount > 0
+                    ? string.Format(UiText("UI_QueueDropped"), Socket_Cache.SocketQueue.qSocket_PacketInfo.Count, droppedCount)
+                    : Socket_Cache.SocketQueue.qSocket_PacketInfo.Count.ToString();
                 this.tlFilterSocketList_CNT.Text = Socket_Cache.SocketQueue.FilterSocketList_CNT.ToString();
                 this.tlSend_CNT.Text = Socket_Cache.SocketQueue.Send_CNT.ToString();
                 this.tlRecv_CNT.Text = Socket_Cache.SocketQueue.Recv_CNT.ToString();
@@ -2905,11 +3302,17 @@ namespace WPELibrary
 
         private async void tSocketList_Tick(object sender, EventArgs e)
         {
+            if (this.socketListTickRunning)
+            {
+                return;
+            }
+
+            this.socketListTickRunning = true;
             try
             {
                 if (Socket_Cache.SocketQueue.qSocket_PacketInfo.Count > 0)
                 {
-                    await Socket_Cache.SocketList.SocketToList();
+                    await Socket_Cache.SocketList.SocketToList(200);
                     this.AutoScrollDataGridView(dgvSocketList, cbSocketList_AutoRoll.Checked);
                     this.AutoCleanUp_SocketList();
                 }
@@ -2924,6 +3327,10 @@ namespace WPELibrary
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(nameof(tSocketList_Tick), ex.Message);
+            }
+            finally
+            {
+                this.socketListTickRunning = false;
             }
         }
 
@@ -2952,12 +3359,13 @@ namespace WPELibrary
                         packetType == Socket_Cache.SocketPacket.PacketType.WSASend ||
                         packetType == Socket_Cache.SocketPacket.PacketType.WSASendTo;
                     System.Drawing.Color packetTypeColor = isSend
-                        ? System.Drawing.Color.FromArgb(255, 167, 38)
-                        : System.Drawing.Color.FromArgb(41, 182, 246);
+                        ? PacketSendAccentColor
+                        : PacketReceiveAccentColor;
 
                     e.Value = Socket_Cache.SocketPacket.GetName_ByPacketType(packetType);
                     e.CellStyle.ForeColor = packetTypeColor;
-                    e.CellStyle.SelectionForeColor = packetTypeColor;
+                    e.CellStyle.SelectionBackColor = packetTypeColor;
+                    e.CellStyle.SelectionForeColor = PacketSelectionTextColor;
                     e.FormattingApplied = true;
                 }
                 else if (e.ColumnIndex == dgvSocketList.Columns["cPacketID"].Index)
@@ -3176,11 +3584,12 @@ namespace WPELibrary
 
             lock (this.sendOperationSync)
             {
-                if (this.activeBatchSendListId == sendListId &&
-                    this.activeBatchSendOperation != null &&
-                    this.activeBatchSendOperation.Worker.IsBusy)
+                Socket_Send batchSend;
+                if (this.activeBatchSendOperations.TryGetValue(sendListId, out batchSend) &&
+                    batchSend != null &&
+                    batchSend.Worker.IsBusy)
                 {
-                    activeSend = this.activeBatchSendOperation;
+                    activeSend = batchSend;
                     return true;
                 }
             }
@@ -3206,8 +3615,7 @@ namespace WPELibrary
         {
             lock (this.sendOperationSync)
             {
-                this.activeBatchSendListId = sendListId;
-                this.activeBatchSendOperation = batchSend;
+                this.activeBatchSendOperations[sendListId] = batchSend;
             }
             this.NotifySendListStateChanged(sendListId);
         }
@@ -3216,14 +3624,33 @@ namespace WPELibrary
         {
             lock (this.sendOperationSync)
             {
-                if (this.activeBatchSendListId == sendListId &&
-                    ReferenceEquals(this.activeBatchSendOperation, batchSend))
+                Socket_Send activeBatchSend;
+                if (this.activeBatchSendOperations.TryGetValue(sendListId, out activeBatchSend) &&
+                    ReferenceEquals(activeBatchSend, batchSend))
                 {
-                    this.activeBatchSendListId = Guid.Empty;
-                    this.activeBatchSendOperation = null;
+                    this.activeBatchSendOperations.Remove(sendListId);
                 }
             }
             this.NotifySendListStateChanged(sendListId);
+        }
+
+        private List<Socket_Send> GetActiveBatchSends()
+        {
+            lock (this.sendOperationSync)
+            {
+                return this.activeBatchSendOperations.Values
+                    .Where(send => send != null)
+                    .Distinct()
+                    .ToList();
+            }
+        }
+
+        private void StopActiveBatchSends()
+        {
+            foreach (Socket_Send batchSend in this.GetActiveBatchSends())
+            {
+                batchSend.StopSend();
+            }
         }
 
         private void NotifySendListStateChanged(Guid sendListId)
@@ -3426,6 +3853,48 @@ namespace WPELibrary
             textBox.ForeColor = System.Drawing.SystemColors.WindowText;
             textBox.TextAlign = HorizontalAlignment.Center;
             this.BeginInvoke(new Action(textBox.SelectAll));
+        }
+
+        private void dgvSocketList_Paint(object sender, PaintEventArgs e)
+        {
+            if (this.dgvSocketList.Rows.Count > 0)
+            {
+                return;
+            }
+
+            System.Drawing.Rectangle contentBounds = this.dgvSocketList.ClientRectangle;
+            contentBounds.Y += this.dgvSocketList.ColumnHeadersHeight;
+            contentBounds.Height -= this.dgvSocketList.ColumnHeadersHeight;
+            TextRenderer.DrawText(
+                e.Graphics,
+                UiText("UI_PacketListEmpty"),
+                this.dgvSocketList.Font,
+                contentBounds,
+                System.Drawing.SystemColors.GrayText,
+                TextFormatFlags.HorizontalCenter |
+                TextFormatFlags.VerticalCenter |
+                TextFormatFlags.SingleLine);
+        }
+
+        private void dgvFilterList_Paint(object sender, PaintEventArgs e)
+        {
+            if (this.dgvFilterList.Rows.Count > 0)
+            {
+                return;
+            }
+
+            System.Drawing.Rectangle contentBounds = this.dgvFilterList.ClientRectangle;
+            contentBounds.Y += this.dgvFilterList.ColumnHeadersHeight;
+            contentBounds.Height -= this.dgvFilterList.ColumnHeadersHeight;
+            TextRenderer.DrawText(
+                e.Graphics,
+                UiText("UI_FilterEmpty"),
+                this.dgvFilterList.Font,
+                contentBounds,
+                System.Drawing.SystemColors.GrayText,
+                TextFormatFlags.HorizontalCenter |
+                TextFormatFlags.VerticalCenter |
+                TextFormatFlags.SingleLine);
         }
 
         private void dgvSendList_Paint(object sender, PaintEventArgs e)
@@ -3773,6 +4242,7 @@ namespace WPELibrary
                         dbp.LengthChanged += this.PacketDataProvider_Changed;
                         hbPacketData.ByteProvider = dbp;
                         this.packetDataEditingPacket = Socket_Cache.SocketList.spiSelect;
+                        this.UpdateReadableContent(this.packetDataEditingPacket.PacketBuffer);
                     }
                 }
             }
@@ -3808,6 +4278,7 @@ namespace WPELibrary
                 Socket_Cache.SocketPacket.PacketData_MaxLen);
             provider.ApplyChanges();
             this.CommitByteSweepPresetBuffer(editedBuffer);
+            this.UpdateReadableContent(editedBuffer);
 
             int rowIndex = Socket_Cache.SocketList.lstRecPacket.IndexOf(this.packetDataEditingPacket);
             if (rowIndex >= 0 && rowIndex < this.dgvSocketList.Rows.Count)
@@ -4876,6 +5347,8 @@ namespace WPELibrary
                     return;
                 }
 
+                this.sendListParallelMode = this.tsSendListParallel != null &&
+                    this.tsSendListParallel.Checked;
                 this.tsSendList_Start.Enabled = false;
                 this.tsSendList_Stop.Enabled = true;
                 Socket_Cache.SendList.lstExecute.Clear();
@@ -4910,6 +5383,12 @@ namespace WPELibrary
         private void tsSendList_Stop_Click(object sender, EventArgs e)
         {
             this.bgwSendList.CancelAsync();
+            this.StopActiveBatchSends();
+        }
+
+        private void tsSendListParallel_Click(object sender, EventArgs e)
+        {
+            this.UpdateSendListParallelModeText();
         }
 
         private void tsSendList_CleanUp_Click(object sender, EventArgs e)
@@ -4930,7 +5409,21 @@ namespace WPELibrary
         {
             try
             {
-                foreach (Socket_SendInfo ssi in this.sendBatchQueue.ToList())
+                List<Socket_SendInfo> queue = this.sendBatchQueue.ToList();
+                if (this.sendListParallelMode)
+                {
+                    Task[] tasks = queue
+                        .Select(ssi => Task.Run(() => this.ExecuteSendListItem(ssi)))
+                        .ToArray();
+                    Task.WaitAll(tasks);
+                    if (this.bgwSendList.CancellationPending)
+                    {
+                        e.Cancel = true;
+                    }
+                    return;
+                }
+
+                foreach (Socket_SendInfo ssi in queue)
                 {
                     if (this.bgwSendList.CancellationPending)
                     {
@@ -4938,38 +5431,52 @@ namespace WPELibrary
                         return;
                     }
 
-                    Socket_Send ss = Socket_Cache.Send.DoSend(ssi.SID);
-                    if (ss == null)
-                    {
-                        continue;
-                    }
-
-                    this.SetActiveBatchSend(ssi.SID, ss);
-                    Socket_Cache.SendList.lstExecute.Add(ss);
-                    try
-                    {
-                        while (ss.Worker.IsBusy)
-                        {
-                            if (this.bgwSendList.CancellationPending)
-                            {
-                                ss.StopSend();
-                                e.Cancel = true;
-                                return;
-                            }
-
-                            Thread.Sleep(100);
-                        }
-                    }
-                    finally
-                    {
-                        Socket_Cache.SendList.lstExecute.Remove(ss);
-                        this.ClearActiveBatchSend(ssi.SID, ss);
-                    }
+                    this.ExecuteSendListItem(ssi);
                 }
             }
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
+        private void ExecuteSendListItem(Socket_SendInfo sendInfo)
+        {
+            if (sendInfo == null || this.bgwSendList.CancellationPending)
+            {
+                return;
+            }
+
+            Socket_Send sendOperation = Socket_Cache.Send.DoSend(sendInfo.SID);
+            if (sendOperation == null)
+            {
+                return;
+            }
+
+            this.SetActiveBatchSend(sendInfo.SID, sendOperation);
+            lock (this.sendOperationSync)
+            {
+                Socket_Cache.SendList.lstExecute.Add(sendOperation);
+            }
+            try
+            {
+                while (sendOperation.Worker.IsBusy)
+                {
+                    if (this.bgwSendList.CancellationPending)
+                    {
+                        sendOperation.StopSend();
+                    }
+
+                    Thread.Sleep(100);
+                }
+            }
+            finally
+            {
+                lock (this.sendOperationSync)
+                {
+                    Socket_Cache.SendList.lstExecute.Remove(sendOperation);
+                }
+                this.ClearActiveBatchSend(sendInfo.SID, sendOperation);
             }
         }
 

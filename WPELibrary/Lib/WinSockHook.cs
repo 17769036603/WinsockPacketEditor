@@ -1,5 +1,6 @@
 ﻿using EasyHook;
 using System;
+using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -8,12 +9,40 @@ using WPELibrary.Lib.NativeMethods;
 
 namespace WPELibrary.Lib
 {
+    public sealed class HookStartResult
+    {
+        private HookStartResult(bool success, int createdHookCount, string failedHook, string errorMessage)
+        {
+            this.Success = success;
+            this.CreatedHookCount = createdHookCount;
+            this.FailedHook = failedHook ?? string.Empty;
+            this.ErrorMessage = errorMessage ?? string.Empty;
+        }
+
+        public bool Success { get; private set; }
+        public int CreatedHookCount { get; private set; }
+        public string FailedHook { get; private set; }
+        public string ErrorMessage { get; private set; }
+
+        public static HookStartResult Succeeded(int createdHookCount)
+        {
+            return new HookStartResult(true, createdHookCount, string.Empty, string.Empty);
+        }
+
+        public static HookStartResult Failed(string failedHook, string errorMessage)
+        {
+            return new HookStartResult(false, 0, failedHook, errorMessage);
+        }
+    }
+
     public class WinSockHook : IEntryPoint
     {        
         private LocalHook lhWS1_Send, lhWS1_SendTo, lhWS1_Recv, lhWS1_RecvFrom;
         private LocalHook lhWS2_Send, lhWS2_SendTo, lhWS2_Recv, lhWS2_RecvFrom;
         private LocalHook lhWSA_Send, lhWSA_SendTo, lhWSA_Recv, lhWSA_RecvFrom;
         private LocalHook lhWSA_RecvEx;
+
+        public bool IsRunning { get; private set; }
 
         #region//EasyHook
 
@@ -46,12 +75,45 @@ namespace WPELibrary.Lib
             }          
         }
 
+        private static Socket_Cache.Filter.FilterAction ApplyFilterSafely(
+            int socket,
+            Span<byte> buffer,
+            out byte[] newBuffer,
+            Socket_Cache.SocketPacket.PacketType packetType,
+            Socket_Cache.SocketPacket.SockAddr address)
+        {
+            try
+            {
+                Socket_Cache.Filter.FilterAction action = Socket_Cache.FilterList.DoFilterList(
+                    socket,
+                    buffer,
+                    out newBuffer,
+                    packetType,
+                    address);
+
+                if (action != Socket_Cache.Filter.FilterAction.Intercept && newBuffer == null)
+                {
+                    newBuffer = buffer.ToArray();
+                }
+
+                return action;
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(nameof(ApplyFilterSafely), ex.Message);
+                newBuffer = buffer.ToArray();
+                return Socket_Cache.Filter.FilterAction.NoModify_Display;
+            }
+        }
+
         #endregion
 
         #region//开始拦截
 
-        public void StartHook()
+        public HookStartResult StartHook()
         {
+            int createdHookCount = 0;
+            string failedHook = string.Empty;
             try
             {
                 if (Socket_Cache.SocketPacket.Support_WS1)
@@ -60,26 +122,34 @@ namespace WPELibrary.Lib
 
                     if (Socket_Cache.SocketPacket.HookWS1_Send)
                     {
+                        failedHook = "WS1.send";
                         lhWS1_Send = LocalHook.Create(LocalHook.GetProcAddress(WSock32.ModuleName, "send"), new WSock32.DSend(WSock32.SendHook), this);
                         lhWS1_Send.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWS1_SendTo)
                     {
+                        failedHook = "WS1.sendto";
                         lhWS1_SendTo = LocalHook.Create(LocalHook.GetProcAddress(WSock32.ModuleName, "sendto"), new WSock32.DSendTo(WSock32.SendToHook), this);
                         lhWS1_SendTo.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWS1_Recv)
                     {
+                        failedHook = "WS1.recv";
                         lhWS1_Recv = LocalHook.Create(LocalHook.GetProcAddress(WSock32.ModuleName, "recv"), new WSock32.Drecv(WSock32.RecvHook), this);
                         lhWS1_Recv.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWS1_RecvFrom)
                     {
+                        failedHook = "WS1.recvfrom";
                         lhWS1_RecvFrom = LocalHook.Create(LocalHook.GetProcAddress(WSock32.ModuleName, "recvfrom"), new WSock32.DRecvFrom(WSock32.RecvFromHook), this);
                         lhWS1_RecvFrom.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
                     }
 
                     #endregion
@@ -91,50 +161,66 @@ namespace WPELibrary.Lib
 
                     if (Socket_Cache.SocketPacket.HookWS2_Send)
                     {
+                        failedHook = "WS2.send";
                         lhWS2_Send = LocalHook.Create(LocalHook.GetProcAddress(WS2_32.ModuleName, "send"), new WS2_32.DSend(WS2_32.SendHook), this);
                         lhWS2_Send.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWS2_SendTo)
                     {
+                        failedHook = "WS2.sendto";
                         lhWS2_SendTo = LocalHook.Create(LocalHook.GetProcAddress(WS2_32.ModuleName, "sendto"), new WS2_32.DSendTo(WS2_32.SendToHook), this);
                         lhWS2_SendTo.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWS2_Recv)
                     {
+                        failedHook = "WS2.recv";
                         lhWS2_Recv = LocalHook.Create(LocalHook.GetProcAddress(WS2_32.ModuleName, "recv"), new WS2_32.Drecv(WS2_32.RecvHook), this);
                         lhWS2_Recv.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWS2_RecvFrom)
                     {
+                        failedHook = "WS2.recvfrom";
                         lhWS2_RecvFrom = LocalHook.Create(LocalHook.GetProcAddress(WS2_32.ModuleName, "recvfrom"), new WS2_32.DRecvFrom(WS2_32.RecvFromHook), this);
                         lhWS2_RecvFrom.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWSA_Send)
                     {
+                        failedHook = "WSA.send";
                         lhWSA_Send = LocalHook.Create(LocalHook.GetProcAddress(WS2_32.ModuleName, "WSASend"), new WS2_32.DWSASend(WSASend_Hook), this);
                         lhWSA_Send.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWSA_SendTo)
                     {
+                        failedHook = "WSA.sendto";
                         lhWSA_SendTo = LocalHook.Create(LocalHook.GetProcAddress(WS2_32.ModuleName, "WSASendTo"), new WS2_32.DWSASendTo(WSASendTo_Hook), this);
                         lhWSA_SendTo.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWSA_Recv)
                     {
+                        failedHook = "WSA.recv";
                         lhWSA_Recv = LocalHook.Create(LocalHook.GetProcAddress(WS2_32.ModuleName, "WSARecv"), new WS2_32.DWSARecv(WSARecv_Hook), this);
                         lhWSA_Recv.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWSA_RecvFrom)
                     {
+                        failedHook = "WSA.recvfrom";
                         lhWSA_RecvFrom = LocalHook.Create(LocalHook.GetProcAddress(WS2_32.ModuleName, "WSARecvFrom"), new WS2_32.DWSARecvFrom(WSARecvFrom_Hook), this);
                         lhWSA_RecvFrom.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
                     }
 
                     #endregion
@@ -146,17 +232,28 @@ namespace WPELibrary.Lib
 
                     if (Socket_Cache.SocketPacket.HookWSA_Recv)
                     {
+                        failedHook = "Mswsock.WSARecvEx";
                         lhWSA_RecvEx = LocalHook.Create(LocalHook.GetProcAddress(Mswsock.ModuleName, "WSARecvEx"), new Mswsock.DWSARecvEx(Mswsock.WSARecvExHook), this);
                         lhWSA_RecvEx.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
                     }
 
                     #endregion
                 }
+                if (createdHookCount == 0)
+                {
+                    return HookStartResult.Failed("configuration", "No Winsock hooks are enabled.");
+                }
+
+                this.IsRunning = true;
+                return HookStartResult.Succeeded(createdHookCount);
             }
             catch (Exception ex)
             {
+                this.StopHook();
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
-            }            
+                return HookStartResult.Failed(failedHook, ex.Message);
+            }
         }
 
         #endregion
@@ -165,97 +262,47 @@ namespace WPELibrary.Lib
 
         public void StopHook()
         {
+            List<string> errors = new List<string>();
+            this.DisposeHook(ref this.lhWS1_Send, errors, "WS1.send");
+            this.DisposeHook(ref this.lhWS1_SendTo, errors, "WS1.sendto");
+            this.DisposeHook(ref this.lhWS1_Recv, errors, "WS1.recv");
+            this.DisposeHook(ref this.lhWS1_RecvFrom, errors, "WS1.recvfrom");
+            this.DisposeHook(ref this.lhWS2_Send, errors, "WS2.send");
+            this.DisposeHook(ref this.lhWS2_SendTo, errors, "WS2.sendto");
+            this.DisposeHook(ref this.lhWS2_Recv, errors, "WS2.recv");
+            this.DisposeHook(ref this.lhWS2_RecvFrom, errors, "WS2.recvfrom");
+            this.DisposeHook(ref this.lhWSA_Send, errors, "WSA.send");
+            this.DisposeHook(ref this.lhWSA_SendTo, errors, "WSA.sendto");
+            this.DisposeHook(ref this.lhWSA_Recv, errors, "WSA.recv");
+            this.DisposeHook(ref this.lhWSA_RecvFrom, errors, "WSA.recvfrom");
+            this.DisposeHook(ref this.lhWSA_RecvEx, errors, "Mswsock.WSARecvEx");
+
+            if (errors.Count > 0)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, string.Join("; ", errors.ToArray()));
+            }
+
+            this.IsRunning = false;
+        }
+
+        private void DisposeHook(ref LocalHook hook, List<string> errors, string name)
+        {
+            if (hook == null)
+            {
+                return;
+            }
+
             try
             {
-                if (Socket_Cache.SocketPacket.Support_WS1)
-                {
-                    #region//Winsock 1.1 Stop Hook
-
-                    if (lhWS1_Send != null)
-                    {
-                        lhWS1_Send.Dispose();
-                    }
-
-                    if (lhWS1_SendTo != null)
-                    {
-                        lhWS1_SendTo.Dispose();
-                    }
-
-                    if (lhWS1_Recv != null)
-                    {
-                        lhWS1_Recv.Dispose();
-                    }
-
-                    if (lhWS1_RecvFrom != null)
-                    {
-                        lhWS1_RecvFrom.Dispose();
-                    }
-
-                    #endregion
-                }
-
-                if (Socket_Cache.SocketPacket.Support_WS2)
-                {
-                    #region//Winsock 2.0 Stop Hook
-
-                    if (lhWS2_Send != null)
-                    {
-                        lhWS2_Send.Dispose();
-                    }
-
-                    if (lhWS2_SendTo != null)
-                    {
-                        lhWS2_SendTo.Dispose();
-                    }
-
-                    if (lhWS2_Recv != null)
-                    {
-                        lhWS2_Recv.Dispose();
-                    }
-
-                    if (lhWS2_RecvFrom != null)
-                    {
-                        lhWS2_RecvFrom.Dispose();
-                    }
-
-                    if (lhWSA_Send != null)
-                    {
-                        lhWSA_Send.Dispose();
-                    }
-
-                    if (lhWSA_SendTo != null)
-                    {
-                        lhWSA_SendTo.Dispose();
-                    }
-
-                    if (lhWSA_Recv != null)
-                    {
-                        lhWSA_Recv.Dispose();
-                    }
-
-                    if (lhWSA_RecvFrom != null)
-                    {
-                        lhWSA_RecvFrom.Dispose();
-                    }
-
-                    #endregion
-                }
-
-                if (Socket_Cache.SocketPacket.Support_MsWS)
-                {
-                    #region//Winsock Microsoft Stop Hook
-
-                    if (lhWSA_RecvEx != null)
-                    {
-                        lhWSA_RecvEx.Dispose();
-                    }
-
-                    #endregion
-                }
+                hook.Dispose();
             }
             catch (Exception ex)
             {
-                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                errors.Add(name + ": " + ex.Message);
+            }
+            finally
+            {
+                hook = null;
             }
         }
 
@@ -297,7 +344,7 @@ namespace WPELibrary.Lib
                 Span<byte> bBufferSpan = new Span<byte>((byte*)lpBuffer, Length);
                 bRawBuffer = bBufferSpan.ToArray();
 
-                Socket_Cache.Filter.FilterAction FilterAction = Socket_Cache.FilterList.DoFilterList(Socket, bBufferSpan, out bNewBuffer, ptType, new Socket_Cache.SocketPacket.SockAddr());
+                Socket_Cache.Filter.FilterAction FilterAction = ApplyFilterSafely(Socket, bBufferSpan, out bNewBuffer, ptType, new Socket_Cache.SocketPacket.SockAddr());
 
                 if (FilterAction == Socket_Cache.Filter.FilterAction.Intercept)
                 {
@@ -369,7 +416,7 @@ namespace WPELibrary.Lib
                     Span<byte> bBufferSpan = new Span<byte>((byte*)lpBuffer, res);
                     bRawBuffer = bBufferSpan.ToArray();
 
-                    Socket_Cache.Filter.FilterAction FilterAction = Socket_Cache.FilterList.DoFilterList(Socket, bBufferSpan, out bNewBuffer, ptType, new Socket_Cache.SocketPacket.SockAddr());
+                    Socket_Cache.Filter.FilterAction FilterAction = ApplyFilterSafely(Socket, bBufferSpan, out bNewBuffer, ptType, new Socket_Cache.SocketPacket.SockAddr());
 
                     if (FilterAction == Socket_Cache.Filter.FilterAction.Intercept)
                     {
@@ -415,7 +462,7 @@ namespace WPELibrary.Lib
                 Span<byte> bBufferSpan = new Span<byte>((byte*)lpBuffer, Length);
                 bRawBuffer = bBufferSpan.ToArray();
 
-                Socket_Cache.Filter.FilterAction FilterAction = Socket_Cache.FilterList.DoFilterList(Socket, bBufferSpan, out bNewBuffer, ptType, To);
+                Socket_Cache.Filter.FilterAction FilterAction = ApplyFilterSafely(Socket, bBufferSpan, out bNewBuffer, ptType, To);
 
                 if (FilterAction == Socket_Cache.Filter.FilterAction.Intercept)
                 {
@@ -485,7 +532,7 @@ namespace WPELibrary.Lib
                     Span<byte> bBufferSpan = new Span<byte>((byte*)lpBuffer, res);
                     bRawBuffer = bBufferSpan.ToArray();
 
-                    Socket_Cache.Filter.FilterAction FilterAction = Socket_Cache.FilterList.DoFilterList(Socket, bBufferSpan, out bNewBuffer, ptType, From);
+                    Socket_Cache.Filter.FilterAction FilterAction = ApplyFilterSafely(Socket, bBufferSpan, out bNewBuffer, ptType, From);
 
                     if (FilterAction == Socket_Cache.Filter.FilterAction.Intercept)
                     {
@@ -543,7 +590,7 @@ namespace WPELibrary.Lib
                         bRawBuffer = bBufferSpan.ToArray();
 
                         Socket_Cache.Filter.FilterAction filterAction =
-                        Socket_Cache.FilterList.DoFilterList(
+                        ApplyFilterSafely(
                             socket,
                             bBufferSpan,
                             out bNewBuffer,
@@ -617,7 +664,7 @@ namespace WPELibrary.Lib
                         }
 
                         Socket_Cache.Filter.FilterAction filterAction =
-                            Socket_Cache.FilterList.DoFilterList(
+                            ApplyFilterSafely(
                                 socket,
                                 bRawBuffer.AsSpan(),
                                 out bNewBuffer,
@@ -743,7 +790,7 @@ namespace WPELibrary.Lib
                             bRawBuffer = bufferSpan.ToArray();
 
                             Socket_Cache.Filter.FilterAction filterAction =
-                                Socket_Cache.FilterList.DoFilterList(
+                                ApplyFilterSafely(
                                     socket,
                                     bufferSpan,
                                     out bNewBuffer,
@@ -799,7 +846,7 @@ namespace WPELibrary.Lib
 
                             byte[] bNewBuffer = null;
                             Socket_Cache.Filter.FilterAction filterAction =
-                                Socket_Cache.FilterList.DoFilterList(
+                                ApplyFilterSafely(
                                     socket,
                                     bRawBuffer.AsSpan(),
                                     out bNewBuffer,
@@ -886,7 +933,7 @@ namespace WPELibrary.Lib
                         bRawBuffer = bBufferSpan.ToArray();
 
                         Socket_Cache.Filter.FilterAction filterAction =
-                        Socket_Cache.FilterList.DoFilterList(
+                        ApplyFilterSafely(
                             socket,
                             bBufferSpan,
                             out bNewBuffer,
@@ -962,7 +1009,7 @@ namespace WPELibrary.Lib
                         }
 
                         Socket_Cache.Filter.FilterAction filterAction =
-                            Socket_Cache.FilterList.DoFilterList(
+                            ApplyFilterSafely(
                                 socket,
                                 bRawBuffer.AsSpan(),
                                 out bNewBuffer,
@@ -1092,7 +1139,7 @@ namespace WPELibrary.Lib
                             bRawBuffer = bufferSpan.ToArray();
 
                             Socket_Cache.Filter.FilterAction filterAction =
-                                Socket_Cache.FilterList.DoFilterList(
+                                ApplyFilterSafely(
                                     socket,
                                     bufferSpan,
                                     out bNewBuffer,
@@ -1148,7 +1195,7 @@ namespace WPELibrary.Lib
 
                             byte[] bNewBuffer = null;
                             Socket_Cache.Filter.FilterAction filterAction =
-                                Socket_Cache.FilterList.DoFilterList(
+                                ApplyFilterSafely(
                                     socket,
                                     bRawBuffer.AsSpan(),
                                     out bNewBuffer,

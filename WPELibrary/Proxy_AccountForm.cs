@@ -42,7 +42,8 @@ namespace WPELibrary
                         this.Text = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_136), pai.CreateTime.ToString("yyyy-MM-dd HH:mm"));
                         this.cbIsEnable.Checked = pai.IsEnable;
                         this.txtUserName.Text = pai.UserName;
-                        this.txtPassWord.Text = Socket_Operation.PassWord_Decrypt(pai.PassWord);
+                        // Existing passwords are never rendered back into the form.
+                        // Leave the field blank to keep the current password unchanged.
                         this.cbIsLimitLinks.Checked = pai.IsLimitLinks;
                         this.cbIsLimitDevices.Checked = pai.IsLimitDevices;
 
@@ -137,7 +138,10 @@ namespace WPELibrary
                 bool IsEnable = this.cbIsEnable.Checked;
                 string UserName = this.txtUserName.Text.Trim();
                 string PassWord = this.txtPassWord.Text.Trim();
-                PassWord = Socket_Operation.PassWord_Encrypt(PassWord);
+                if (!string.IsNullOrEmpty(PassWord))
+                {
+                    PassWord = Socket_Operation.PassWord_Encrypt(PassWord);
+                }
                 bool IsLimitLinks = this.cbIsLimitLinks.Checked;
                 int LimitLinks = ((int)this.nudLimitLinks.Value);
                 bool IsLimitDevices = this.cbIsLimitDevices.Checked;
@@ -214,7 +218,8 @@ namespace WPELibrary
                 }
 
                 string Password = this.txtPassWord.Text.Trim();
-                if (string.IsNullOrEmpty(Password))
+                if (string.IsNullOrEmpty(Password) &&
+                    (this.SelectAID == null || this.SelectAID == Guid.Empty))
                 {
                     return false;
                 }

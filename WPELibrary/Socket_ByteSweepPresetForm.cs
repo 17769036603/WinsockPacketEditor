@@ -109,7 +109,21 @@ namespace WPELibrary
 
         private static string ResourceText(string key)
         {
-            return Properties.Resources.ResourceManager.GetString(key) ?? key;
+            string chinese;
+            string english;
+            switch (key)
+            {
+                case "ByteSweep_NewTitle": chinese = "新建递进预设"; english = "New byte-sweep preset"; break;
+                case "ByteSweep_EditTitle": chinese = "编辑递进预设"; english = "Edit byte-sweep preset"; break;
+                case "ByteSweep_EditDetails": chinese = "其他修改项"; english = "Other settings"; break;
+                case "ByteSweep_Name": chinese = "预设名称"; english = "Preset name"; break;
+                case "ByteSweep_Folder": chinese = "递进分组"; english = "Sweep group"; break;
+                case "ByteSweep_Cancel": chinese = "取消"; english = "Cancel"; break;
+                case "ByteSweep_Save": chinese = "保存"; english = "Save"; break;
+                default: return Properties.Resources.ResourceManager.GetString(key) ?? key;
+            }
+
+            return MultiLanguage.GetDefaultLanguage(new[] { chinese, english });
         }
 
         private void EditDetails_Click(object sender, EventArgs e)

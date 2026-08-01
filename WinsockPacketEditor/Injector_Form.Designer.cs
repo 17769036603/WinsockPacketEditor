@@ -103,7 +103,7 @@ namespace WinsockPacketEditor
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Dpi;
             this.Controls.Add(this.tlpInjectorForm);
             this.DoubleBuffered = true;
-            this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle;
+            this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.SizableToolWindow;
             this.MaximizeBox = false;
             this.Name = "Injector_Form";
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.Injector_Form_FormClosing);

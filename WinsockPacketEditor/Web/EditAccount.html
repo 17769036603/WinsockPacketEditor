@@ -83,8 +83,8 @@
                 <td class="text-left"><input type="text" id="username" name="username" required readonly></td>
             </tr>
             <tr>
-                <td class="text-left"><label for="password">密码:</label></td>
-                <td class="text-left"><input type="password" id="password" name="password" required></td>
+                <td class="text-left"><label for="password">新密码（留空保持不变）:</label></td>
+                <td class="text-left"><input type="password" id="password" name="password"></td>
             </tr>
             <tr>
                 <td class="text-left"><label for="isExpiry">是否过期:</label></td>
@@ -118,10 +118,6 @@
 
                 document.getElementById('isEnable').checked = data.IsEnable;
                 document.getElementById('username').value = data.UserName;
-
-                const passwordResponse = await fetch(`./ProxyAccount/GetPassWordDecrypt?PassWord=${data.PassWord}`);
-                const decryptedPassword = await passwordResponse.json();
-                document.getElementById('password').value = decryptedPassword;
 
                 document.getElementById('isExpiry').checked = data.IsExpiry;
                 document.getElementById('expiryTime').value = formatDate(new Date(data.ExpiryTime));

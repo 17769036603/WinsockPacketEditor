@@ -51,12 +51,45 @@
   <data name="UI_GroupName" xml:space="preserve"><value>Group name</value></data>
   <data name="UI_Edit" xml:space="preserve"><value>Edit</value></data>
   <data name="UI_AssistantEmpty" xml:space="preserve"><value>No assistant in this group. Click “Add robot”.</value></data>
+  <data name="Robot_InstructionEmpty" xml:space="preserve"><value>No robot instructions yet. Select one from the left and insert it.</value></data>
+  <data name="Robot_ExecuteEmpty" xml:space="preserve"><value>No execution log yet. Click “Execute” to see the log.</value></data>
+  <data name="UI_FilterEmpty" xml:space="preserve"><value>No filters yet. Click “Add filter”.</value></data>
+  <data name="UI_ByteSweepEmpty" xml:space="preserve"><value>No byte-sweep presets in this group. Click “New preset”.</value></data>
   <data name="UI_MoveToGroup" xml:space="preserve"><value>Move to group</value></data>
   <data name="UI_GroupMustBeEmpty" xml:space="preserve"><value>Only empty groups can be deleted. Move assistants first.</value></data>
   <data name="Main_GeneralSettings" xml:space="preserve"><value>General</value></data>
   <data name="Main_AdvancedTools" xml:space="preserve"><value>Advanced tools</value></data>
   <data name="Main_PacketList" xml:space="preserve"><value>Packet list</value></data>
   <data name="Main_PacketData" xml:space="preserve"><value>Packet data</value></data>
+  <data name="UI_ReadableContentTitle" xml:space="preserve"><value>Readable content (auto detected)</value></data>
+  <data name="UI_ReadableContentMetaLabel" xml:space="preserve"><value>Readable content information</value></data>
+  <data name="UI_ReadableContentPreview" xml:space="preserve"><value>Readable content preview</value></data>
+  <data name="UI_ReadableContentNone" xml:space="preserve"><value>No packet selected</value></data>
+  <data name="UI_ReadableContentMeta" xml:space="preserve"><value>Type: {0} | Encoding: {1} | Length: {2} bytes</value></data>
+  <data name="UI_ReadableContentEmpty" xml:space="preserve"><value>The selected packet has no data.</value></data>
+  <data name="UI_ReadableContentBinaryNotice" xml:space="preserve"><value>This is binary data and cannot be shown as ordinary text.</value></data>
+  <data name="UI_ReadableContentDetails" xml:space="preserve"><value>Detection details: {0}</value></data>
+  <data name="UI_ReadableContentStrings" xml:space="preserve"><value>Readable strings:</value></data>
+  <data name="UI_ReadableContentNoStrings" xml:space="preserve"><value>No continuous readable strings were found.</value></data>
+  <data name="UI_ReadableContentTruncated" xml:space="preserve"><value>The content is long and has been truncated; the original data remains in the Hex area below.</value></data>
+  <data name="UI_ReadableEncodingNone" xml:space="preserve"><value>None</value></data>
+  <data name="UI_ReadableKind_Empty" xml:space="preserve"><value>Empty data</value></data>
+  <data name="UI_ReadableKind_PE" xml:space="preserve"><value>Windows PE/EXE</value></data>
+  <data name="UI_ReadableKind_MZ" xml:space="preserve"><value>Possible MZ header</value></data>
+  <data name="UI_ReadableKind_PNG" xml:space="preserve"><value>PNG image</value></data>
+  <data name="UI_ReadableKind_JPEG" xml:space="preserve"><value>JPEG image</value></data>
+  <data name="UI_ReadableKind_GIF" xml:space="preserve"><value>GIF image</value></data>
+  <data name="UI_ReadableKind_BMP" xml:space="preserve"><value>BMP image</value></data>
+  <data name="UI_ReadableKind_PDF" xml:space="preserve"><value>PDF document</value></data>
+  <data name="UI_ReadableKind_ZIP" xml:space="preserve"><value>ZIP archive data</value></data>
+  <data name="UI_ReadableKind_GZip" xml:space="preserve"><value>GZip compressed data</value></data>
+  <data name="UI_ReadableKind_RAR" xml:space="preserve"><value>RAR archive data</value></data>
+  <data name="UI_ReadableKind_7z" xml:space="preserve"><value>7z archive data</value></data>
+  <data name="UI_ReadableKind_HTTP" xml:space="preserve"><value>HTTP text</value></data>
+  <data name="UI_ReadableKind_JSON" xml:space="preserve"><value>JSON data</value></data>
+  <data name="UI_ReadableKind_XML" xml:space="preserve"><value>XML data</value></data>
+  <data name="UI_ReadableKind_Text" xml:space="preserve"><value>Plain text</value></data>
+  <data name="UI_ReadableKind_Binary" xml:space="preserve"><value>Binary data</value></data>
   <data name="Main_Automation" xml:space="preserve"><value>Send and byte sweep</value></data>
   <data name="UI_NewGroup" xml:space="preserve"><value>New group</value></data>
   <data name="UI_RenameGroup" xml:space="preserve"><value>Rename group</value></data>
@@ -92,6 +125,10 @@
   <data name="SendPreset_Required" xml:space="preserve"><value>Enter a preset name and group.</value></data>
   <data name="SendPreset_Duplicate" xml:space="preserve"><value>A preset with this name already exists in the group.</value></data>
   <data name="UI_SendSelected" xml:space="preserve"><value>Send selected</value></data>
+  <data name="UI_SequentialSend" xml:space="preserve"><value>Sequential</value></data>
+  <data name="UI_ConcurrentSend" xml:space="preserve"><value>Concurrent</value></data>
+  <data name="UI_SequentialSendTip" xml:space="preserve"><value>Run selected presets in order</value></data>
+  <data name="UI_ConcurrentSendTip" xml:space="preserve"><value>Start selected presets together; each preset keeps its own intervals</value></data>
   <data name="UI_StopBatch" xml:space="preserve"><value>Stop batch</value></data>
   <data name="UI_SelectAll" xml:space="preserve"><value>Select all</value></data>
   <data name="UI_ClearSelection" xml:space="preserve"><value>Clear selection</value></data>
@@ -143,6 +180,9 @@
   <data name="UI_CreateGroupFirst" xml:space="preserve"><value>Use “New group” below to create and select a group first.</value></data>
   <data name="UI_NewSendList" xml:space="preserve"><value>New send list</value></data>
   <data name="UI_CurrentGroupEmpty" xml:space="preserve"><value>No packets in the current group</value></data>
+  <data name="UI_PacketListEmpty" xml:space="preserve"><value>No packets yet. Start capture to see packets.</value></data>
+  <data name="UI_SettingsHint" xml:space="preserve"><value>Settings are grouped as General, Filter, Assistant, and Advanced tools. Select a tab to continue.</value></data>
+  <data name="UI_Close" xml:space="preserve"><value>Close</value></data>
   <data name="UI_CreatePacketGroup" xml:space="preserve"><value>Create a packet group first</value></data>
   <data name="UI_NewSweepGroup" xml:space="preserve"><value>New sweep group</value></data>
   <data name="UI_RenameSweepGroup" xml:space="preserve"><value>Rename sweep group</value></data>
@@ -190,9 +230,11 @@
   <data name="ByteSweep_CombinationEstimate" xml:space="preserve"><value>Combination / planned</value></data>
   <data name="ByteSweep_NoSelection" xml:space="preserve"><value>No range selected</value></data>
   <data name="ByteSweep_NormalInterval" xml:space="preserve"><value>Normal interval (ms)</value></data>
+  <data name="ByteSweep_FirstByte" xml:space="preserve"><value>Byte A</value></data>
   <data name="ByteSweep_FirstPosition" xml:space="preserve"><value>Byte A position</value></data>
   <data name="ByteSweep_FirstLength" xml:space="preserve"><value>Byte A length</value></data>
   <data name="ByteSweep_FirstInterval" xml:space="preserve"><value>Byte A interval (ms)</value></data>
+  <data name="ByteSweep_SecondByte" xml:space="preserve"><value>Byte B</value></data>
   <data name="ByteSweep_SecondPosition" xml:space="preserve"><value>Byte B position</value></data>
   <data name="ByteSweep_SecondLength" xml:space="preserve"><value>Byte B length</value></data>
   <data name="ByteSweep_SecondInterval" xml:space="preserve"><value>Byte B interval (ms)</value></data>
@@ -223,10 +265,18 @@
   <data name="ByteSweep_PickSecond" xml:space="preserve"><value>Pick B</value></data>
   <data name="ByteSweep_PickInstruction" xml:space="preserve"><value>Click a byte in the packet to select byte {0}</value></data>
   <data name="ByteSweep_PickDuplicate" xml:space="preserve"><value>Byte A and byte B must use different positions. Pick another byte.</value></data>
-  <data name="ByteSweep_PickComplete" xml:space="preserve"><value>Byte {0} selected at position {1}</value></data>
+  <data name="ByteSweep_PickComplete" xml:space="preserve"><value>Byte {0} selected: current value {1}</value></data>
+  <data name="ByteSweep_CurrentByteFormat" xml:space="preserve"><value>0x{0:X2}</value></data>
+  <data name="ByteSweep_NoByteValue" xml:space="preserve"><value>Not selected</value></data>
   <data name="ByteSweep_LogTitle" xml:space="preserve"><value>Byte-sweep log</value></data>
   <data name="ByteSweep_LogClear" xml:space="preserve"><value>Clear log</value></data>
   <data name="ByteSweep_LogExport" xml:space="preserve"><value>Export CSV</value></data>
+  <data name="ByteSweep_LogEmpty" xml:space="preserve"><value>No byte-sweep logs yet</value></data>
+  <data name="ByteSweep_LogCsvFilter" xml:space="preserve"><value>CSV files (*.csv)|*.csv|All files (*.*)|*.*</value></data>
+  <data name="ByteSweep_LogDefaultFileName" xml:space="preserve"><value>ByteSweepLog.csv</value></data>
+  <data name="ByteSweep_LogCsvHeader" xml:space="preserve"><value>Time,State,Preset,Mode,Progress,Total,Success,Failure,Detail</value></data>
+  <data name="ByteSweep_LogProgressFormat" xml:space="preserve"><value>Byte {0}/{1} · {2}/255 · {3}/{4}</value></data>
+  <data name="ByteSweep_LogPairProgressFormat" xml:space="preserve"><value>A={0:X2} ({1}/{2}) · B={3:X2} ({4}/{5}) · {6}/{7}</value></data>
   <data name="ByteSweep_LogTime" xml:space="preserve"><value>Time</value></data>
   <data name="ByteSweep_LogState" xml:space="preserve"><value>State</value></data>
   <data name="ByteSweep_LogPreset" xml:space="preserve"><value>Preset</value></data>
@@ -258,4 +308,15 @@
   <data name="Send_Save" xml:space="preserve"><value>Save send presets</value></data>
   <data name="Send_Copy" xml:space="preserve"><value>Copy send preset</value></data>
   <data name="Send_Clear" xml:space="preserve"><value>Clear send presets</value></data>
+  <data name="UI_HookStatusReady" xml:space="preserve"><value>Not listening</value></data>
+  <data name="UI_HookStatusStarting" xml:space="preserve"><value>Starting listener</value></data>
+  <data name="UI_HookStatusListening" xml:space="preserve"><value>Listening</value></data>
+  <data name="UI_HookStatusStopping" xml:space="preserve"><value>Stopping listener</value></data>
+  <data name="UI_HookStatusFailed" xml:space="preserve"><value>Listener start failed</value></data>
+  <data name="UI_QueueDropped" xml:space="preserve"><value>Queue {0} / dropped {1}</value></data>
+  <data name="UI_SendModeNormal" xml:space="preserve"><value>Normal send</value></data>
+  <data name="UI_SendModeSequential" xml:space="preserve"><value>Single-byte sweep</value></data>
+  <data name="UI_SendModePair" xml:space="preserve"><value>Two-byte combination</value></data>
+  <data name="UI_AdvancedEditorCollapse" xml:space="preserve"><value>Advanced editor (collapse)</value></data>
+  <data name="UI_AdvancedEditorExpand" xml:space="preserve"><value>Advanced editor (expand)</value></data>
 </root>

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
 using System.Reflection;
@@ -19,7 +20,8 @@ namespace WPELibrary.Lib
 
         private CancellationTokenSource cts;
         private int resolvedSystemSocket;
-        private BindingList<Socket_PacketInfo> SendCollection;
+        private List<Socket_PacketInfo> SendCollection;
+        private readonly ManualResetEventSlim sendStopped = new ManualResetEventSlim(true);
         public BackgroundWorker Worker = new BackgroundWorker();
 
         #region//初始化
@@ -91,10 +93,19 @@ namespace WPELibrary.Lib
                         this.resolvedSystemSocket = Math.Max(0, ResolvedSystemSocket);
                         this.LoopCNT = LoopCNT;
                         this.LoopINT = LoopINT;
-                        this.SendCollection = SendCollection;
+                        this.SendCollection = CreateSendSnapshot(SendCollection);
 
                         this.cts = new CancellationTokenSource();
-                        this.Worker.RunWorkerAsync();
+                        this.sendStopped.Reset();
+                        try
+                        {
+                            this.Worker.RunWorkerAsync();
+                        }
+                        catch
+                        {
+                            this.sendStopped.Set();
+                            throw;
+                        }
 
                         string sLog = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_84), this.SendName);
                         Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, sLog);
@@ -131,6 +142,35 @@ namespace WPELibrary.Lib
             }
         }
 
+        public bool WaitForStop(int millisecondsTimeout)
+        {
+            this.StopSend();
+            return this.sendStopped.Wait(Math.Max(0, millisecondsTimeout));
+        }
+
+        private static List<Socket_PacketInfo> CreateSendSnapshot(BindingList<Socket_PacketInfo> source)
+        {
+            List<Socket_PacketInfo> snapshot = new List<Socket_PacketInfo>(source.Count);
+            foreach (Socket_PacketInfo packet in source)
+            {
+                snapshot.Add(new Socket_PacketInfo
+                {
+                    PacketTime = packet.PacketTime,
+                    PacketSocket = packet.PacketSocket,
+                    PacketType = packet.PacketType,
+                    PacketFrom = packet.PacketFrom,
+                    PacketTo = packet.PacketTo,
+                    RawBuffer = packet.RawBuffer == null ? null : (byte[])packet.RawBuffer.Clone(),
+                    PacketBuffer = packet.PacketBuffer == null ? null : (byte[])packet.PacketBuffer.Clone(),
+                    PacketData = packet.PacketData,
+                    PacketLen = packet.PacketLen,
+                    FilterAction = packet.FilterAction
+                });
+            }
+
+            return snapshot;
+        }
+
         #endregion
 
         #region//执行发送集
@@ -143,8 +183,8 @@ namespace WPELibrary.Lib
                 {
                     if (this.resolvedSystemSocket <= 0)
                     {
-                        Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_49));
-                        return;
+                        throw new InvalidOperationException(
+                            MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_49));
                     }
                 }
 
@@ -207,6 +247,10 @@ namespace WPELibrary.Lib
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
                 throw;
             }
+            finally
+            {
+                this.sendStopped.Set();
+            }
         }
 
         #endregion
@@ -241,6 +285,9 @@ namespace WPELibrary.Lib
                     string sLog = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_165), this.SendName);
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, sLog);
                 }
+
+                this.cts?.Dispose();
+                this.cts = null;
             }
             catch (Exception ex)
             {

@@ -303,6 +303,12 @@
   <data name="pbLoading.AccessibleName" xml:space="preserve">
     <value>正在加载进程</value>
   </data>
+  <data name="Process_EmptyState" xml:space="preserve">
+    <value>未找到可注入的模拟器引擎，请启动模拟器后刷新</value>
+  </data>
+  <data name="Process_EmptySearch" xml:space="preserve">
+    <value>没有匹配的模拟器进程</value>
+  </data>
   <data name="&gt;&gt;bCreate.Name" xml:space="preserve">
     <value>bCreate</value>
   </data>
@@ -622,5 +628,11 @@
   </data>
   <data name="&gt;&gt;$this.Type" xml:space="preserve">
     <value>System.Windows.Forms.Form, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="cArchitecture.HeaderText" xml:space="preserve">
+    <value>架构</value>
+  </data>
+  <data name="cCompatibility.HeaderText" xml:space="preserve">
+    <value>状态</value>
   </data>
 </root>

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Web.Http;
 
@@ -14,9 +15,9 @@ namespace WPELibrary.Lib.WebAPI
         [HttpGet]
         [Route("GetProxyAccountList")]
 
-        public IEnumerable<Proxy_AccountInfo> GetProxyAccountList()
+        public IEnumerable<ProxyAccountSummary> GetProxyAccountList()
         {
-            return Socket_Cache.ProxyAccount.lstProxyAccount;
+            return Socket_Cache.ProxyAccount.lstProxyAccount.Select(ProxyAccountSummary.FromAccount);
         }
 
         #endregion
@@ -26,21 +27,10 @@ namespace WPELibrary.Lib.WebAPI
         [HttpGet]
         [Route("GetProxyAccountByID")]
 
-        public Proxy_AccountInfo GetProxyAccountByID(Guid AID)
+        public ProxyAccountSummary GetProxyAccountByID(Guid AID)
         {
-            return Socket_Cache.ProxyAccount.GetProxyAccount_ByAccountID(AID);
-        }
-
-        #endregion
-
-        #region//获取解密后的密码
-
-        [HttpGet]
-        [Route("GetPassWordDecrypt")]
-
-        public string GetPassWordDecrypt(string PassWord)
-        {
-            return Socket_Operation.PassWord_Decrypt(PassWord);
+            Proxy_AccountInfo account = Socket_Cache.ProxyAccount.GetProxyAccount_ByAccountID(AID);
+            return account == null ? null : ProxyAccountSummary.FromAccount(account);
         }
 
         #endregion
@@ -135,7 +125,20 @@ namespace WPELibrary.Lib.WebAPI
                 pai.ExpiryTime = DateTime.Now;
             }
 
-            pai.PassWord = Socket_Operation.PassWord_Encrypt(pai.PassWord);
+            if (!string.IsNullOrEmpty(pai.PassWord))
+            {
+                pai.PassWord = Socket_Operation.PassWord_Encrypt(pai.PassWord);
+            }
+            else
+            {
+                Proxy_AccountInfo existing = Socket_Cache.ProxyAccount.GetProxyAccount_ByAccountID(pai.AID);
+                if (existing == null)
+                {
+                    return BadRequest(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_195));
+                }
+
+                pai.PassWord = existing.PassWord;
+            }
 
             bool bOK = Socket_Cache.ProxyAccount.UpdateProxyAccount_ByAccountID(
                 pai.AID, 
@@ -159,5 +162,44 @@ namespace WPELibrary.Lib.WebAPI
         }
 
         #endregion
+
+        public sealed class ProxyAccountSummary
+        {
+            public Guid AID { get; set; }
+            public bool IsEnable { get; set; }
+            public string UserName { get; set; }
+            public DateTime LoginTime { get; set; }
+            public string LoginIP { get; set; }
+            public string IPLocation { get; set; }
+            public bool IsLimitLinks { get; set; }
+            public int LimitLinks { get; set; }
+            public bool IsLimitDevices { get; set; }
+            public int LimitDevices { get; set; }
+            public bool IsExpiry { get; set; }
+            public DateTime ExpiryTime { get; set; }
+            public DateTime CreateTime { get; set; }
+            public bool IsOnLine { get; set; }
+
+            public static ProxyAccountSummary FromAccount(Proxy_AccountInfo account)
+            {
+                return new ProxyAccountSummary
+                {
+                    AID = account.AID,
+                    IsEnable = account.IsEnable,
+                    UserName = account.UserName,
+                    LoginTime = account.LoginTime,
+                    LoginIP = account.LoginIP,
+                    IPLocation = account.IPLocation,
+                    IsLimitLinks = account.IsLimitLinks,
+                    LimitLinks = account.LimitLinks,
+                    IsLimitDevices = account.IsLimitDevices,
+                    LimitDevices = account.LimitDevices,
+                    IsExpiry = account.IsExpiry,
+                    ExpiryTime = account.ExpiryTime,
+                    CreateTime = account.CreateTime,
+                    IsOnLine = account.IsOnLine
+                };
+            }
+        }
     }
 }

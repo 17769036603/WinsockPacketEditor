@@ -40,6 +40,7 @@ function Assert-NotContains {
 }
 
 $socketForm = Read-SourceFile "WPELibrary\Socket_Form.cs"
+$socketCache = Read-SourceFile "WPELibrary\Lib\Socket_Cache.cs"
 Assert-Contains $socketForm "Socket_Cache.System.IsRemote = false;" `
     "Injection-only startup must disable persisted remote-management configuration."
 Assert-NotContains $socketForm "Socket_Operation.StartRemoteMGT();" `
@@ -58,8 +59,8 @@ Assert-Contains $sendForm "progress.TotalSend += completedSend;" `
     "Multi-loop sweep progress must keep cumulative send totals."
 Assert-Contains $sendForm "this.hbPacketData.ReadOnly = true;" `
     "Packet bytes must be locked against editing while a send is running."
-Assert-Contains $sendForm "SizeType.Absolute, 205F" `
-    "The annotation area must use a stable height so the right sweep editor is not compressed by percentage layout."
+Assert-Contains $sendForm 'Name = "bAdvancedPairEditorToggle"' `
+    "The two-byte editor must reserve a stable advanced-editor header."
 Assert-Contains $sendForm "this.tableLayoutPanel1.Visible = false;" `
     "The byte type detail panel must be hidden from the send page."
 Assert-Contains $sendForm "private bool byteSweepEditorDirty;" `
@@ -96,6 +97,17 @@ Assert-Contains $sendForm "this.byteSweepLiveValueActive ||" `
     "Live-preview cleanup must include byte A state."
 Assert-Contains $sendForm "this.byteSweepLiveSecondValueActive;" `
     "Live-preview cleanup must include byte B state independently."
+Assert-Contains $sendForm "KeepByteSweepLiveSelection" `
+    "The send preview must keep the active byte selected while a sweep is running."
+
+$mainForm = Read-SourceFile "WPELibrary\Socket_Form.cs"
+$mainByteSweep = Read-SourceFile "WPELibrary\Socket_Form.ByteSweep.cs"
+Assert-Contains $mainForm "SelectionStartChanged += this.hbPacketData_ByteSweepSelectionChanged;" `
+    "The main packet preview must observe selection changes during a sweep."
+Assert-Contains $mainByteSweep "KeepByteSweepLiveSelection" `
+    "The main preview must keep the active byte selected while a sweep is running."
+Assert-Contains $mainByteSweep "RestoreByteSweepLiveSelection();" `
+    "The main preview must restore the user's original selection after a sweep."
 $saveHandler = [regex]::Match(
     $sendForm,
     '(?s)private void bSave_Click\(object sender, EventArgs e\).*?private bool ApplyCurrentPacketEdits').Value
@@ -108,6 +120,130 @@ if ($saveAsSweepIndex -lt 0 -or $applyEditsIndex -le $saveAsSweepIndex) {
 $sendWorker = Read-SourceFile "WPELibrary\Lib\Socket_Send.cs"
 Assert-Contains $sendWorker "catch (OperationCanceledException)" `
     "Stopping during an interval must complete as cancellation."
+Assert-Contains $sendWorker "CreateSendSnapshot(SendCollection)" `
+    "Send workers must run against an immutable packet-list snapshot."
+Assert-Contains $sendWorker "WaitForStop(int millisecondsTimeout)" `
+    "Send workers must expose a bounded shutdown wait."
+Assert-Contains $sendWorker "throw new InvalidOperationException" `
+    "A missing resolved Socket must complete as an explicit worker error."
+Assert-Contains $sendWorker "this.sendStopped.Set();" `
+    "Send workers must signal completion even when they fail."
+
+$hook = Read-SourceFile "WPELibrary\Lib\WinSockHook.cs"
+Assert-Contains $hook "private static Socket_Cache.Filter.FilterAction ApplyFilterSafely" `
+    "Hook filter failures must use the pass-through safety path."
+Assert-NotContains $hook "Socket_Cache.FilterList.DoFilterList(Socket, bBufferSpan" `
+    "Direct hook filter calls must not bypass the pass-through safety path."
+Assert-Contains $hook "public HookStartResult StartHook()" `
+    "Hook startup must return an explicit result instead of hiding partial failures."
+Assert-Contains $hook "HookStartResult.Failed(failedHook, ex.Message)" `
+    "Hook startup failures must identify the failed API and roll back created hooks."
+Assert-Contains $hook "this.DisposeHook(ref this.lhWS1_Send" `
+    "Hook shutdown must dispose every created hook independently."
+Assert-Contains $hook "public bool IsRunning { get; private set; }" `
+    "The hook implementation must expose its actual running state to the UI."
+Assert-Contains $hook "this.IsRunning = true;" `
+    "The hook must mark itself running only after all configured hooks are created."
+Assert-Contains $hook "this.IsRunning = false;" `
+    "The hook must clear its running state after shutdown."
+
+$queue = Read-SourceFile "WPELibrary\Lib\Socket_Cache.cs"
+Assert-Contains $queue "public const int MaxQueueCount = 10000;" `
+    "Capture queue must have a hard upper bound."
+Assert-Contains $queue "Interlocked.Increment(ref Dropped_CNT)" `
+    "Capture queue overflow must report dropped packets."
+Assert-Contains $queue "lock (QueueSync)" `
+    "Capture queue capacity enforcement must be serialized across producer threads."
+Assert-Contains $queue "public static async Task SocketToList(int maxItems = 1)" `
+    "Capture list draining must support bounded batch consumption."
+
+$mainHook = Read-SourceFile "WPELibrary\Socket_Form.cs"
+Assert-Contains $mainHook "UI_HookStatusStarting" `
+    "The main workspace must expose an explicit hook-starting state."
+Assert-Contains $mainHook "SynchronizeHookUiState" `
+    "The main workspace must reconcile the status bar with the actual hook state."
+Assert-Contains $mainHook "this.ws.IsRunning" `
+    "The status bar must use the hook implementation state as its source of truth."
+Assert-Contains $mainHook "await Socket_Cache.SocketList.SocketToList(200);" `
+    "The main workspace must drain captured packets in batches."
+Assert-Contains $socketCache "List<Socket_PacketInfo> visiblePackets = new List<Socket_PacketInfo>();" `
+    "Capture queue drain must collect a batch before scheduling one UI refresh."
+Assert-Contains $socketCache "Action appendVisiblePackets = () =>" `
+    "Capture queue drain must schedule one UI append action for each visible batch."
+Assert-Contains $socketCache "foreach (Socket_PacketInfo packet in visiblePackets)" `
+    "Capture queue drain must preserve visible packet arrival order."
+Assert-Contains $socketCache "Socket_Cache.SocketList.lstRecPacket.Add(packet);" `
+    "Capture queue drain must append every visible packet from the batch."
+Assert-NotContains $socketForm "LoadProxyAccountList_FromDB" `
+    "Injection-only socket form must not load proxy accounts."
+Assert-NotContains $socketForm "LoadProxyMapLocal_FromDB" `
+    "Injection-only socket form must not load local proxy mappings."
+Assert-NotContains $socketForm "LoadProxyMapRemote_FromDB" `
+    "Injection-only socket form must not load remote proxy mappings."
+Assert-NotContains $socketForm "SaveProxyAccountList_ToDB" `
+    "Injection-only socket form must not save proxy accounts."
+Assert-NotContains $socketForm "SaveProxyMapLocal_ToDB" `
+    "Injection-only socket form must not save local proxy mappings."
+Assert-NotContains $socketForm "SaveProxyMapRemote_ToDB" `
+    "Injection-only socket form must not save remote proxy mappings."
+
+$processList = Read-SourceFile "WinsockPacketEditor\ProcessList_Form.cs"
+Assert-Contains $processList "private bool ShowEmulatorOnly = true;" `
+    "Injection target selection must default to approved emulator processes."
+Assert-Contains $processList "IsSupportedInjectionProcess" `
+    "Injection target selection must validate the live process name."
+Assert-NotContains $processList "OpenFileDialog" `
+    "Injection-only process selection must not expose arbitrary EXE selection."
+Assert-Contains $processList "PArch" `
+    "Process selection must expose target architecture."
+
+Assert-Contains $sendForm "private enum SendUiMode" `
+    "The send editor must expose explicit execution modes."
+Assert-Contains $sendForm "UI_SendModeSequential" `
+    "The send editor must expose a single-byte sweep mode label."
+Assert-Contains $sendForm "this.gbSendType.Visible = normalMode;" `
+    "The send editor must show only the active mode panel."
+Assert-Contains $sendForm "private void UpdatePairEditorVisibility()" `
+    "The two-byte editor must be limited to the two-byte combination mode."
+Assert-Contains $sendForm "UI_AdvancedEditorCollapse" `
+    "The two-byte editor must expose a collapsible advanced-editor header."
+
+$web = Read-SourceFile "WPELibrary\Lib\WebAPI\Socket_Web.cs"
+$accountController = Read-SourceFile "WPELibrary\Lib\WebAPI\ProxyAccount_Controller.cs"
+$ccProxyController = Read-SourceFile "WPELibrary\Lib\WebAPI\CCProxy_Controller.cs"
+$accountForm = Read-SourceFile "WPELibrary\Proxy_AccountForm.cs"
+Assert-Contains $web "TryGetBasicCredentials" `
+    "Malformed Basic authentication must be rejected without request exceptions."
+Assert-Contains $web 'authorization.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase)' `
+    "Basic authentication must validate the complete authentication scheme."
+Assert-Contains $accountController "IEnumerable<ProxyAccountSummary>" `
+    "Proxy account APIs must return a password-free DTO."
+Assert-NotContains $accountController "GetPassWordDecrypt" `
+    "The remote API must not expose a password decryption endpoint."
+Assert-Contains $accountController "existing.PassWord" `
+    "Editing an account with a blank password must preserve the existing secret."
+Assert-NotContains $ccProxyController "PassWord_Decrypt(pai.PassWord)" `
+    "Legacy proxy account pages must not render stored passwords."
+Assert-NotContains $accountForm "PassWord_Decrypt(pai.PassWord)" `
+    "The desktop proxy account editor must not render stored passwords."
+Assert-Contains $accountForm "Leave the field blank to keep the current password unchanged." `
+    "The desktop proxy account editor must support password-preserving edits."
+
+$crypto = Read-SourceFile "WPELibrary\Lib\Socket_Operation.cs"
+Assert-Contains $crypto "EncryptedXmlMagic" `
+    "New encrypted exports must use a versioned envelope."
+Assert-Contains $crypto "ProtectedData.Protect" `
+    "Stored proxy passwords must use Windows user-scoped protection."
+Assert-Contains $crypto "ProtectedPasswordPrefix" `
+    "Stored proxy passwords must use an explicit version marker."
+Assert-Contains $crypto "Rfc2898DeriveBytes" `
+    "New encrypted exports must derive keys with a password KDF."
+Assert-Contains $crypto "RandomNumberGenerator.Create()" `
+    "New encrypted exports must use random salt and IV material."
+Assert-Contains $crypto "HMACSHA256" `
+    "New encrypted exports must authenticate their ciphertext."
+Assert-Contains $crypto "GetLegacyAESKeyFromString" `
+    "Encrypted imports must remain compatible with older export files."
 
 $hexBox = Read-SourceFile "ThirdParty\Be.Windows.Forms.HexBox\HexBox.cs"
 Assert-Contains $hexBox "bool replaceSingleByteInPlace = sw && sel == 1;" `
@@ -172,12 +308,16 @@ Assert-Contains $mainRobotUi "tsSendListMore" `
 $resources = Read-SourceFile "WPELibrary\Properties\Resources.resx"
 $englishResources = Read-SourceFile "WPELibrary\Properties\Resources.en-US.resx"
 $sweepEditor = Read-SourceFile "WPELibrary\Socket_ByteSweepEditorPanel.cs"
-Assert-Contains $sweepEditor "AutoScrollMinSize" `
-    "The right sweep editor must reserve a scrollable content area when the window is compact."
+Assert-Contains $sweepEditor "ConfigurePairLayout" `
+    "The pair editor must provide a dedicated compact layout."
+Assert-Contains $sweepEditor "this.scrollHost.AutoScroll = false;" `
+    "The pair editor must not require vertical scrolling."
 Assert-Contains $sweepEditor "SetPairOnlyMode" `
     "The right sweep editor must expose a dedicated pair-combination surface."
 Assert-Contains $sendForm "this.byteSweepEditorPanel.SetPairOnlyMode(true);" `
-    "The send page must configure the right sweep editor as pair-only."
+    "The send page must configure the lower sweep editor as pair-only."
+Assert-Contains $sendForm "this.tlpParameter.Controls.Add(this.pnlByteSweepSide, 0, 1);" `
+    "The send page must place the pair editor below the packet data."
 Assert-Contains $sendForm "SetUiVisible(false)" `
     "The send page must hide the annotation UI without removing its compatibility controller."
 Assert-Contains $socketForm 'UiText("UI_ClearCaptureConfirm")' `
@@ -208,7 +348,18 @@ foreach ($resourceKey in @(
     "Robot_Start",
     "Robot_Clear",
     "UI_More",
-    "Send_Copy"
+    "Send_Copy",
+    "UI_HookStatusReady",
+    "UI_HookStatusStarting",
+    "UI_HookStatusListening",
+    "UI_HookStatusStopping",
+    "UI_HookStatusFailed",
+    "UI_QueueDropped",
+    "UI_SendModeNormal",
+    "UI_SendModeSequential",
+    "UI_SendModePair",
+    "UI_AdvancedEditorCollapse",
+    "UI_AdvancedEditorExpand"
 )) {
     Assert-Contains $resources ('name="' + $resourceKey + '"') `
         "Chinese byte-sweep resources must include $resourceKey."
@@ -256,8 +407,8 @@ Assert-NotContains $hotkeySend "Task.Run(() => DoSendAsync(SID))" `
     "Hotkey sends must not deadlock while resolving the current Socket."
 
 $processList = Read-SourceFile "WinsockPacketEditor\ProcessList_Form.cs"
-Assert-Contains $processList "StartsWith(searchText, StringComparison.CurrentCultureIgnoreCase)" `
-    "Process search must compare process names directly."
+Assert-Contains $processList "IndexOf(searchText, StringComparison.CurrentCultureIgnoreCase)" `
+    "Process search must compare names and paths without using a DataView expression."
 Assert-NotContains $processList "RowFilter =" `
     "Process search must not concatenate user input into a DataView RowFilter."
 

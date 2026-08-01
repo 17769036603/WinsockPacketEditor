@@ -15,10 +15,12 @@ namespace WPELibrary
         private readonly NumericUpDown interval;
         private readonly NumericUpDown nextInterval;
         private readonly NumericUpDown firstPosition;
+        private readonly TextBox firstByteValue;
         private readonly NumericUpDown firstLength;
         private readonly NumericUpDown firstInterval;
         private readonly Button pickFirst;
         private readonly NumericUpDown secondPosition;
+        private readonly TextBox secondByteValue;
         private readonly NumericUpDown secondLength;
         private readonly NumericUpDown secondInterval;
         private readonly Button pickSecond;
@@ -31,11 +33,13 @@ namespace WPELibrary
         private readonly TableLayoutPanel footer;
         private readonly Font titleFont;
         private readonly ToolTip toolTip;
+        private readonly Panel hiddenPositionState;
         private int selectionStart;
         private int selectionLength;
         private bool loading;
         private bool busy;
         private bool pairOnlyMode;
+        private bool pairLayoutConfigured;
         private int positionPickTarget;
 
         public event EventHandler SendRequested;
@@ -44,12 +48,24 @@ namespace WPELibrary
         public event EventHandler Changed;
         public event EventHandler PickFirstRequested;
         public event EventHandler PickSecondRequested;
+        public event EventHandler StatusChanged;
+
+        internal string StatusText
+        {
+            get { return this.status == null ? string.Empty : this.status.Text; }
+        }
+
+        internal Color StatusForeColor
+        {
+            get { return this.status == null ? SystemColors.ControlText : this.status.ForeColor; }
+        }
 
         public Socket_ByteSweepEditorPanel()
         {
             this.MinimumSize = new Size(270, 210);
             this.Dock = DockStyle.Fill;
             this.BorderStyle = BorderStyle.FixedSingle;
+            this.AccessibleRole = AccessibleRole.Pane;
 
             this.titleFont = new Font(this.Font, FontStyle.Bold);
             this.toolTip = new ToolTip();
@@ -89,7 +105,8 @@ namespace WPELibrary
                 Dock = DockStyle.Fill,
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Name = "cbbSweepEditorMode",
-                AccessibleName = ResourceText("ByteSweep_Mode")
+                AccessibleName = ResourceText("ByteSweep_Mode"),
+                AccessibleRole = AccessibleRole.ComboBox
             };
             this.mode.Items.AddRange(new object[]
             {
@@ -115,7 +132,8 @@ namespace WPELibrary
                 AutoEllipsis = true,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Text = ResourceText("ByteSweep_NoSelection"),
-                AccessibleName = ResourceText("ByteSweep_RangeEstimate")
+                AccessibleName = ResourceText("ByteSweep_RangeEstimate"),
+                AccessibleRole = AccessibleRole.StaticText
             };
             this.selectionCaption = AddRow(
                 this.layout,
@@ -133,6 +151,9 @@ namespace WPELibrary
             AddRow(this.layout, 4, ResourceText("ByteSweep_NextInterval"), this.nextInterval);
 
             this.firstPosition = CreateNumber("nudSweepEditorFirstPosition", ResourceText("ByteSweep_FirstPosition"), 0, 65535, 0, 1);
+            this.firstByteValue = CreateByteValueDisplay(
+                "txtSweepEditorFirstByte",
+                ResourceText("ByteSweep_FirstByte"));
             this.firstLength = CreateNumber("nudSweepEditorFirstLength", ResourceText("ByteSweep_FirstLength"), 1, 255, 255, 1);
             this.firstInterval = CreateNumber("nudSweepEditorFirstInterval", ResourceText("ByteSweep_FirstInterval"), 0, 999999999, 1000, 10);
             this.pickFirst = NewButton(
@@ -148,14 +169,17 @@ namespace WPELibrary
             AddRow(
                 this.layout,
                 5,
-                ResourceText("ByteSweep_FirstPosition"),
-                CreatePositionPicker(this.firstPosition, this.pickFirst));
+                ResourceText("ByteSweep_FirstByte"),
+                CreatePositionPicker(this.firstByteValue, this.pickFirst));
             AddRow(this.layout, 6, ResourceText("ByteSweep_FirstLength"), this.firstLength);
             AddRow(this.layout, 7, ResourceText("ByteSweep_FirstInterval"), this.firstInterval);
 
             this.secondPosition = CreateNumber("nudSweepEditorSecondPosition", ResourceText("ByteSweep_SecondPosition"), 0, 65535, 1, 1);
+            this.secondByteValue = CreateByteValueDisplay(
+                "txtSweepEditorSecondByte",
+                ResourceText("ByteSweep_SecondByte"));
             this.secondLength = CreateNumber("nudSweepEditorSecondLength", ResourceText("ByteSweep_SecondLength"), 1, 255, 255, 1);
-            this.secondInterval = CreateNumber("nudSweepEditorSecondInterval", ResourceText("ByteSweep_SecondInterval"), 0, 999999999, 10, 10);
+            this.secondInterval = CreateNumber("nudSweepEditorSecondInterval", ResourceText("ByteSweep_SecondInterval"), 0, 999999999, 100, 10);
             this.pickSecond = NewButton(
                 "bSweepEditorPickSecond",
                 ResourceText("ByteSweep_PickSecond"),
@@ -169,8 +193,8 @@ namespace WPELibrary
             AddRow(
                 this.layout,
                 8,
-                ResourceText("ByteSweep_SecondPosition"),
-                CreatePositionPicker(this.secondPosition, this.pickSecond));
+                ResourceText("ByteSweep_SecondByte"),
+                CreatePositionPicker(this.secondByteValue, this.pickSecond));
             AddRow(this.layout, 9, ResourceText("ByteSweep_SecondLength"), this.secondLength);
             AddRow(this.layout, 10, ResourceText("ByteSweep_SecondInterval"), this.secondInterval);
 
@@ -183,42 +207,67 @@ namespace WPELibrary
                 Text = ResourceText("ByteSweep_Idle"),
                 ForeColor = Color.RoyalBlue,
                 AccessibleName = ResourceText("ByteSweep_Status"),
+                AccessibleRole = AccessibleRole.StatusBar,
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
-            FlowLayoutPanel actions = new FlowLayoutPanel
+            TableLayoutPanel actions = new TableLayoutPanel
             {
-                AutoSize = true,
+                ColumnCount = 1,
                 Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
                 Margin = new Padding(0, 2, 0, 0),
-                WrapContents = false
+                Padding = new Padding(0),
+                RowCount = 1
             };
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            actions.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             this.save = NewButton("bSweepEditorSave", ResourceText("UI_SaveSweepPreset"), 112);
             this.send = NewButton("bSweepEditorSend", ResourceText("ByteSweep_StartAction"), 72);
             this.stop = NewButton("bSweepEditorStop", ResourceText("ByteSweep_StopAction"), 72);
             this.send.AccessibleName = ResourceText("ByteSweep_StartAction");
             this.stop.AccessibleName = ResourceText("ByteSweep_StopAction");
+            this.send.Font = new Font(this.send.Font, FontStyle.Bold);
+            this.send.BackColor = Color.FromArgb(225, 238, 252);
+            this.send.FlatStyle = FlatStyle.Standard;
+            this.stop.FlatStyle = FlatStyle.Standard;
+            this.save.FlatStyle = FlatStyle.Standard;
             this.save.Click += delegate { Raise(SaveRequested); };
             this.send.Click += delegate { Raise(SendRequested); };
             this.stop.Click += delegate { Raise(StopRequested); };
-            actions.Controls.Add(this.send);
-            actions.Controls.Add(this.stop);
-            actions.Controls.Add(this.save);
+
+            TableLayoutPanel actionGrid = new TableLayoutPanel
+            {
+                ColumnCount = 3,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                RowCount = 1
+            };
+            actionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333F));
+            actionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333F));
+            actionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.334F));
+            actionGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            foreach (Button button in new[] { this.send, this.stop, this.save })
+            {
+                button.Dock = DockStyle.Fill;
+                button.Margin = new Padding(3, 4, 3, 3);
+            }
+            actionGrid.Controls.Add(this.send, 0, 0);
+            actionGrid.Controls.Add(this.stop, 1, 0);
+            actionGrid.Controls.Add(this.save, 2, 0);
+            actions.Controls.Add(actionGrid);
 
             this.footer = new TableLayoutPanel
             {
                 ColumnCount = 1,
                 Dock = DockStyle.Fill,
-                Height = 61,
+                Height = 36,
                 Padding = new Padding(6, 0, 6, 5),
-                RowCount = 2
+                RowCount = 1
             };
             this.footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            this.footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
-            this.footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
-            this.footer.Controls.Add(this.status, 0, 0);
-            this.footer.Controls.Add(actions, 0, 1);
+            this.footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
+            this.footer.Controls.Add(actions, 0, 0);
 
             TableLayoutPanel root = new TableLayoutPanel
             {
@@ -231,11 +280,22 @@ namespace WPELibrary
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 61F));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
             root.Controls.Add(this.title, 0, 0);
             root.Controls.Add(this.scrollHost, 0, 1);
             root.Controls.Add(this.footer, 0, 2);
             this.Controls.Add(root);
+            this.RaiseStatusChanged();
+
+            this.hiddenPositionState = new Panel
+            {
+                Location = new Point(-1, -1),
+                Size = new Size(1, 1),
+                Visible = false
+            };
+            this.hiddenPositionState.Controls.Add(this.firstPosition);
+            this.hiddenPositionState.Controls.Add(this.secondPosition);
+            this.Controls.Add(this.hiddenPositionState);
 
             foreach (NumericUpDown number in new[]
             {
@@ -268,6 +328,7 @@ namespace WPELibrary
                 Name = name,
                 Text = text,
                 AccessibleName = text,
+                AccessibleRole = AccessibleRole.PushButton,
                 Width = width,
                 Height = 26,
                 UseVisualStyleBackColor = true,
@@ -276,7 +337,7 @@ namespace WPELibrary
         }
 
         private static Control CreatePositionPicker(
-            NumericUpDown position,
+            Control position,
             Button pickButton)
         {
             TableLayoutPanel picker = new TableLayoutPanel
@@ -314,6 +375,7 @@ namespace WPELibrary
                 Minimum = minimum,
                 Name = name,
                 AccessibleName = accessibleName,
+                AccessibleRole = AccessibleRole.SpinButton,
                 Value = value,
                 Margin = new Padding(0, 1, 0, 1)
             };
@@ -322,6 +384,23 @@ namespace WPELibrary
                 control.Controls[0].Visible = false;
             }
             return control;
+        }
+
+        private static TextBox CreateByteValueDisplay(string name, string accessibleName)
+        {
+            return new TextBox
+            {
+                AccessibleName = accessibleName,
+                AccessibleRole = AccessibleRole.Text,
+                BackColor = SystemColors.Window,
+                BorderStyle = BorderStyle.FixedSingle,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 1, 3, 1),
+                Name = name,
+                ReadOnly = true,
+                TabStop = false,
+                Text = ResourceText("ByteSweep_NoByteValue")
+            };
         }
 
         private static Label AddRow(TableLayoutPanel layout, int row, string labelText, Control control)
@@ -366,9 +445,19 @@ namespace WPELibrary
                 this.loading = false;
             }
 
+            if (value && !this.pairLayoutConfigured)
+            {
+                this.ConfigurePairLayout();
+                this.pairLayoutConfigured = true;
+            }
+
             this.title.Text = value
                 ? ResourceText("ByteSweep_PairTitle")
                 : ResourceText("ByteSweep_ControlTitle");
+            this.footer.Visible = true;
+            this.send.Visible = true;
+            this.stop.Visible = true;
+            this.save.Visible = true;
             this.selectionCaption.Text = value
                 ? ResourceText("ByteSweep_CombinationEstimate")
                 : ResourceText("ByteSweep_RangeEstimate");
@@ -391,6 +480,22 @@ namespace WPELibrary
             this.pickFirst.Enabled = enabled;
             this.pickSecond.Enabled = enabled;
             this.interval.Enabled = !this.IsPairMode && !this.busy;
+
+            if (this.pairLayoutConfigured)
+            {
+                this.mode.Visible = false;
+                this.interval.Visible = true;
+                this.layout.RowStyles[0].Height = 0F;
+                this.layout.RowStyles[1].Height = 25F;
+                this.layout.RowStyles[2].Height = 25F;
+                for (int row = 3; row <= 5; row++)
+                {
+                    this.layout.RowStyles[row].Height = this.IsPairMode ? 25F : 0F;
+                }
+                this.UpdateScrollHost();
+                return;
+            }
+
             SetRowVisible(0, !this.pairOnlyMode);
             SetRowVisible(3, !this.IsPairMode);
             for (int row = 5; row <= 10; row++)
@@ -402,11 +507,101 @@ namespace WPELibrary
 
         private void UpdateScrollHost()
         {
+            if (this.pairLayoutConfigured)
+            {
+                this.layout.MinimumSize = Size.Empty;
+                this.scrollHost.AutoScroll = false;
+                this.scrollHost.AutoScrollMinSize = Size.Empty;
+                return;
+            }
+
             int minimumHeight = this.IsPairMode ? 300 : 210;
             this.layout.MinimumSize = Size.Empty;
             this.scrollHost.AutoScrollMinSize = new Size(
                 0,
                 Math.Max(minimumHeight, this.layout.PreferredSize.Height));
+        }
+
+        private void ConfigurePairLayout()
+        {
+            Control modeLabel = this.layout.GetControlFromPosition(0, 0);
+            Control selectionLabel = this.layout.GetControlFromPosition(0, 1);
+            Control firstByteLabel = this.layout.GetControlFromPosition(0, 5);
+            Control firstBytePicker = this.layout.GetControlFromPosition(1, 5);
+            Control firstLengthLabel = this.layout.GetControlFromPosition(0, 6);
+            Control firstLength = this.layout.GetControlFromPosition(1, 6);
+            Control firstIntervalLabel = this.layout.GetControlFromPosition(0, 7);
+            Control firstInterval = this.layout.GetControlFromPosition(1, 7);
+            Control secondByteLabel = this.layout.GetControlFromPosition(0, 8);
+            Control secondBytePicker = this.layout.GetControlFromPosition(1, 8);
+            Control secondLengthLabel = this.layout.GetControlFromPosition(0, 9);
+            Control secondLength = this.layout.GetControlFromPosition(1, 9);
+            Control secondIntervalLabel = this.layout.GetControlFromPosition(0, 10);
+            Control secondInterval = this.layout.GetControlFromPosition(1, 10);
+            Control loopLabel = this.layout.GetControlFromPosition(0, 2);
+            Control loop = this.layout.GetControlFromPosition(1, 2);
+            Control intervalLabel = this.layout.GetControlFromPosition(0, 3);
+            Control interval = this.layout.GetControlFromPosition(1, 3);
+            Control nextIntervalLabel = this.layout.GetControlFromPosition(0, 4);
+            Control nextInterval = this.layout.GetControlFromPosition(1, 4);
+
+            this.layout.SuspendLayout();
+            this.layout.Controls.Clear();
+            this.layout.ColumnCount = 6;
+            this.layout.RowCount = 6;
+            this.layout.ColumnStyles.Clear();
+            this.layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            this.layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333F));
+            this.layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16.667F));
+            this.layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            this.layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333F));
+            this.layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16.667F));
+            this.layout.RowStyles.Clear();
+            for (int row = 0; row < 6; row++)
+            {
+                this.layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 25F));
+            }
+            this.layout.RowStyles[0].Height = 0F;
+
+            intervalLabel.Visible = true;
+            interval.Visible = true;
+
+            this.layout.Controls.Add(modeLabel, 0, 0);
+            this.layout.Controls.Add(this.mode, 1, 0);
+            this.layout.SetColumnSpan(this.mode, 5);
+
+            this.layout.Controls.Add(selectionLabel, 0, 1);
+            this.layout.Controls.Add(this.selection, 1, 1);
+            this.layout.SetColumnSpan(this.selection, 5);
+
+            this.layout.Controls.Add(loopLabel, 0, 2);
+            this.layout.Controls.Add(loop, 1, 2);
+            this.layout.Controls.Add(intervalLabel, 2, 2);
+            this.layout.Controls.Add(interval, 3, 2);
+            this.layout.Controls.Add(nextIntervalLabel, 4, 2);
+            this.layout.Controls.Add(nextInterval, 5, 2);
+
+            this.AddPairLayoutField(firstByteLabel, firstBytePicker, secondByteLabel, secondBytePicker, 3);
+            this.AddPairLayoutField(firstLengthLabel, firstLength, secondLengthLabel, secondLength, 4);
+            this.AddPairLayoutField(firstIntervalLabel, firstInterval, secondIntervalLabel, secondInterval, 5);
+
+            this.layout.ResumeLayout(true);
+            this.scrollHost.AutoScroll = false;
+        }
+
+        private void AddPairLayoutField(
+            Control firstLabel,
+            Control firstControl,
+            Control secondLabel,
+            Control secondControl,
+            int row)
+        {
+            this.layout.Controls.Add(firstLabel, 0, row);
+            this.layout.Controls.Add(firstControl, 1, row);
+            this.layout.SetColumnSpan(firstControl, 2);
+            this.layout.Controls.Add(secondLabel, 3, row);
+            this.layout.Controls.Add(secondControl, 4, row);
+            this.layout.SetColumnSpan(secondControl, 2);
         }
 
         private void SetRowVisible(int row, bool visible)
@@ -458,6 +653,15 @@ namespace WPELibrary
             }
         }
 
+        private void RaiseStatusChanged()
+        {
+            EventHandler handler = this.StatusChanged;
+            if (handler != null)
+            {
+                handler(this, EventArgs.Empty);
+            }
+        }
+
         private void Raise(EventHandler handler)
         {
             if (handler != null)
@@ -482,7 +686,7 @@ namespace WPELibrary
                 this.firstInterval.Value = Clamp(this.firstInterval, value == null ? 1000 : value.BCombinationFirstInterval);
                 this.secondPosition.Value = Clamp(this.secondPosition, value == null ? Math.Min(1, Math.Max(0, bufferLength - 1)) : value.BCombinationSecondPosition);
                 this.secondLength.Value = Clamp(this.secondLength, value == null ? 255 : value.BCombinationSecondLength);
-                this.secondInterval.Value = Clamp(this.secondInterval, value == null ? 10 : value.BCombinationSecondInterval);
+                this.secondInterval.Value = Clamp(this.secondInterval, value == null ? 100 : value.BCombinationSecondInterval);
                 SetSelection(selectionStart, selectionLength);
             }
             finally
@@ -503,6 +707,21 @@ namespace WPELibrary
             this.selectionLength = length;
             UpdateSummary();
             RaiseChanged();
+        }
+
+        public void SetCurrentByteValues(byte? first, byte? second)
+        {
+            SetByteValueDisplay(this.firstByteValue, first);
+            SetByteValueDisplay(this.secondByteValue, second);
+        }
+
+        private static void SetByteValueDisplay(TextBox display, byte? value)
+        {
+            display.Text = value.HasValue
+                ? string.Format(
+                    ResourceText("ByteSweep_CurrentByteFormat"),
+                    value.Value)
+                : ResourceText("ByteSweep_NoByteValue");
         }
 
         public Socket_ByteSweepPresetInfo ReadSettings(int selectionStart, int selectionLength)
@@ -552,10 +771,11 @@ namespace WPELibrary
                     : ResourceText("ByteSweep_Idle"))
                 : progressText;
             this.toolTip.SetToolTip(this.status, this.status.Text);
+            this.RaiseStatusChanged();
             UpdatePairEnabled();
         }
 
-        public bool ApplyPickedPosition(bool first, int position)
+        public bool ApplyPickedPosition(bool first, int position, byte currentByte)
         {
             NumericUpDown target = first ? this.firstPosition : this.secondPosition;
             NumericUpDown other = first ? this.secondPosition : this.firstPosition;
@@ -569,17 +789,20 @@ namespace WPELibrary
                 this.status.ForeColor = Color.Firebrick;
                 this.status.Text = ResourceText("ByteSweep_PickDuplicate");
                 this.toolTip.SetToolTip(this.status, this.status.Text);
+                this.RaiseStatusChanged();
                 return false;
             }
 
             target.Value = position;
+            SetByteValueDisplay(first ? this.firstByteValue : this.secondByteValue, currentByte);
             ResetPositionPickButtons();
             this.status.ForeColor = Color.RoyalBlue;
             this.status.Text = string.Format(
                 ResourceText("ByteSweep_PickComplete"),
                 first ? "A" : "B",
-                position);
+                string.Format(ResourceText("ByteSweep_CurrentByteFormat"), currentByte));
             this.toolTip.SetToolTip(this.status, this.status.Text);
+            this.RaiseStatusChanged();
             return true;
         }
 
@@ -594,6 +817,7 @@ namespace WPELibrary
             this.status.ForeColor = Color.RoyalBlue;
             this.status.Text = ResourceText("ByteSweep_Idle");
             this.toolTip.SetToolTip(this.status, this.status.Text);
+            this.RaiseStatusChanged();
         }
 
         private void SetPositionPickState(int target)
@@ -615,6 +839,7 @@ namespace WPELibrary
                 ResourceText("ByteSweep_PickInstruction"),
                 target == 1 ? "A" : "B");
             this.toolTip.SetToolTip(this.status, this.status.Text);
+            this.RaiseStatusChanged();
         }
 
         private void ResetPositionPickButtons()

@@ -31,13 +31,17 @@ $resources = Read-SourceFile "WPELibrary\Properties\Resources.resx"
 Assert-Contains $form "private void InitAutomationHomeUI()" `
     "The homepage automation host must be initialized explicitly."
 Assert-Contains $form "ColumnCount = 2" `
-    "The homepage navigation must use two columns."
+    "The homepage navigation must use two columns for a responsive 2x2 layout."
 Assert-Contains $form "RowCount = 2" `
-    "The homepage navigation must use two rows."
-Assert-Contains $form "Height = 44" `
-    "Homepage and assistant buttons must use the fixed 44px height."
-Assert-Contains $form "Padding = new Padding(4)" `
-    "Homepage button spacing must preserve the 8px visual outer spacing."
+    "The homepage navigation must use two rows for a responsive 2x2 layout."
+Assert-Contains $form "Size = new Size(240, 36)" `
+    "Homepage navigation buttons must use the consistent 240x36px size."
+Assert-Contains $form "Padding = new Padding(12, 8, 12, 8)" `
+    "Homepage navigation must use the balanced fixed outer spacing."
+Assert-Contains $form "tlpAutomationNavigation_Resize" `
+    "Homepage navigation buttons must adapt to narrow layouts."
+Assert-Contains $form "int buttonWidth = Math.Min(240, availableWidth)" `
+    "Homepage navigation buttons must keep the consistent maximum while adapting down."
 Assert-Contains $form "this.bAutomationSend, 0, 0" `
     "Send must be the first homepage entry."
 Assert-Contains $form "this.bAutomationSweep, 1, 0" `
@@ -59,12 +63,16 @@ Assert-Contains $form "this.tcAutomation.Controls.Add(this.tpRobotList)" `
 
 Assert-Contains $form "private void InitAssistantButtonUI()" `
     "Assistant buttons must be initialized separately from the legacy grid."
-Assert-Contains $form "ColumnCount = 4" `
-    "Assistant buttons must use a fixed four-column grid."
+Assert-Contains $form "ColumnCount = 5" `
+    "Assistant buttons must use a fixed five-column grid."
 Assert-Contains $form "GrowStyle = TableLayoutPanelGrowStyle.AddRows" `
     "Assistant buttons must grow vertically for more than 16 items."
-Assert-Contains $form "Math.Max(1, (robots.Count + 3) / 4)" `
-    "Assistant grid rows must be calculated in groups of four."
+Assert-Contains $form "Math.Max(1, (robots.Count + 4) / 5)" `
+    "Assistant grid rows must be calculated in groups of five."
+Assert-Contains $form "Size = new Size(84, 34)" `
+    "Assistant buttons must use the compact 84x34px size."
+Assert-Contains $form "AutoEllipsis = true" `
+    "Long assistant names must remain usable in compact buttons."
 Assert-Contains $form "Socket_Cache.Robot.DoRobot(robot.RID, null)" `
     "An assistant button must start only its own assistant."
 Assert-Contains $form "this.activeAssistantRobot.StopRobot()" `

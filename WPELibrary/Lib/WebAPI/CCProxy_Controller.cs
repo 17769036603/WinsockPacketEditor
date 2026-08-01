@@ -24,11 +24,13 @@ namespace WPELibrary.Lib.WebAPI
                     var sb = new StringBuilder();
                     foreach (Proxy_AccountInfo pai in Socket_Cache.ProxyAccount.lstProxyAccount)
                     {
-                        string userTemplate = template
+                            string userTemplate = template
                             .Replace("$username", pai.UserName)
-                            .Replace("$password", Socket_Operation.PassWord_Decrypt(pai.PassWord))
+                            // Do not render stored proxy passwords back into the remote page.
+                            // The administrator can enter a new password when needed.
+                            .Replace("$password", string.Empty)
                             .Replace("$checkenable", pai.IsEnable ? "checked" : "")
-                            .Replace("$checkusepassword", true ? "checked" : "")
+                            .Replace("$checkusepassword", string.Empty)
                             .Replace("$checkautodisable", pai.IsExpiry ? "checked" : "")
                             .Replace("$disabledate", pai.ExpiryTime.ToString("yyyy-MM-dd"))
                             .Replace("$disabletime", pai.ExpiryTime.ToString("HH:mm:ss"))

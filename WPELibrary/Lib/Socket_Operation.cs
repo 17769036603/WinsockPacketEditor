@@ -408,6 +408,8 @@ namespace WPELibrary.Lib
             dtProcessList.Columns.Add("PName", typeof(string));
             dtProcessList.Columns.Add("PID", typeof(int));
             dtProcessList.Columns.Add("PPath", typeof(string));
+            dtProcessList.Columns.Add("PArch", typeof(string));
+            dtProcessList.Columns.Add("PCompatibility", typeof(string));
 
             try
             {
@@ -422,12 +424,20 @@ namespace WPELibrary.Lib
                         string sPPath = Socket_Operation.GetProcessPath(p);                        
                         int iPID = p.Id;
                         Image iICO = IconFromFile(p);
+                        bool isWin64 = Socket_Operation.IsWin64Process(iPID);
+                        string injectionLibrary = Path.Combine(
+                            Path.GetDirectoryName(typeof(Socket_Operation).Assembly.Location),
+                            Socket_Cache.System.WPE64_DLL);
 
                         DataRow dr = dtProcessList.NewRow();
                         dr["ICO"] = iICO;
                         dr["PName"] = sPName;
                         dr["PID"] = iPID;
                         dr["PPath"] = sPPath;
+                        dr["PArch"] = isWin64 ? "x64" : "x86";
+                        dr["PCompatibility"] = File.Exists(injectionLibrary)
+                            ? (MultiLanguage.DefaultLanguage == "en-US" ? "Ready" : "可注入")
+                            : (MultiLanguage.DefaultLanguage == "en-US" ? "Missing DLL" : "缺少 DLL");
                         dtProcessList.Rows.Add(dr);
                     }
 
@@ -526,6 +536,8 @@ namespace WPELibrary.Lib
 
         #region//密码字典        
 
+        private const string ProtectedPasswordPrefix = "DPAPI1:";
+
         public static string PassWord_Encrypt(string plainText)
         {
             try
@@ -533,22 +545,13 @@ namespace WPELibrary.Lib
                 if (string.IsNullOrEmpty(plainText))
                 {
                     return string.Empty;
-                }                    
-
-                StringBuilder encrypted = new StringBuilder();
-                foreach (char c in plainText)
-                {
-                    if (encryptionMap.TryGetValue(c, out string code))
-                    {
-                        encrypted.Append(code);
-                    }
-                    else
-                    {
-                        encrypted.Append(c);
-                    }
                 }
 
-                return encrypted.ToString();
+                byte[] protectedBytes = ProtectedData.Protect(
+                    Encoding.UTF8.GetBytes(plainText),
+                    null,
+                    DataProtectionScope.CurrentUser);
+                return ProtectedPasswordPrefix + Convert.ToBase64String(protectedBytes);
             }
             catch (Exception ex)
             {
@@ -565,29 +568,21 @@ namespace WPELibrary.Lib
                 if (string.IsNullOrEmpty(encryptedText))
                 {
                     return string.Empty;
-                }                    
-
-                StringBuilder plainText = new StringBuilder();
-
-                int i = 0;
-                while (i < encryptedText.Length)
-                {
-                    if (i + 3 <= encryptedText.Length)
-                    {
-                        string code = encryptedText.Substring(i, 3);
-                        if (decryptionMap.TryGetValue(code, out char c))
-                        {
-                            plainText.Append(c);
-                            i += 3;
-                            continue;
-                        }
-                    }
-
-                    plainText.Append(encryptedText[i]);
-                    i++;
                 }
 
-                return plainText.ToString();
+                if (encryptedText.StartsWith(ProtectedPasswordPrefix, StringComparison.Ordinal))
+                {
+                    byte[] protectedBytes = Convert.FromBase64String(
+                        encryptedText.Substring(ProtectedPasswordPrefix.Length));
+                    byte[] plainBytes = ProtectedData.Unprotect(
+                        protectedBytes,
+                        null,
+                        DataProtectionScope.CurrentUser);
+                    return Encoding.UTF8.GetString(plainBytes);
+                }
+
+                // Import and authenticate passwords written by older releases.
+                return LegacyPassWord_Decrypt(encryptedText);
             }
             catch (Exception ex)
             {
@@ -595,6 +590,53 @@ namespace WPELibrary.Lib
             }
 
             return string.Empty;
+        }
+
+        private static string LegacyPassWord_Encrypt(string plainText)
+        {
+            StringBuilder encrypted = new StringBuilder();
+            foreach (char c in plainText)
+            {
+                if (encryptionMap.TryGetValue(c, out string code))
+                {
+                    encrypted.Append(code);
+                }
+                else
+                {
+                    encrypted.Append(c);
+                }
+            }
+
+            return encrypted.ToString();
+        }
+
+        internal static string LegacyPassWord_EncryptForCompatibility(string plainText)
+        {
+            return string.IsNullOrEmpty(plainText) ? string.Empty : LegacyPassWord_Encrypt(plainText);
+        }
+
+        private static string LegacyPassWord_Decrypt(string encryptedText)
+        {
+            StringBuilder plainText = new StringBuilder();
+            int i = 0;
+            while (i < encryptedText.Length)
+            {
+                if (i + 3 <= encryptedText.Length)
+                {
+                    string code = encryptedText.Substring(i, 3);
+                    if (decryptionMap.TryGetValue(code, out char c))
+                    {
+                        plainText.Append(c);
+                        i += 3;
+                        continue;
+                    }
+                }
+
+                plainText.Append(encryptedText[i]);
+                i++;
+            }
+
+            return plainText.ToString();
         }
 
         #endregion        
@@ -4042,7 +4084,14 @@ namespace WPELibrary.Lib
             return bReturn;
         }
 
-        private static byte[] GetAESKeyFromString(string Password)
+        private static readonly byte[] EncryptedXmlMagic = Encoding.ASCII.GetBytes("WPEXML2");
+        private const int EncryptedXmlSaltSize = 16;
+        private const int EncryptedXmlIvSize = 16;
+        private const int EncryptedXmlMacSize = 32;
+        private const int EncryptedXmlDerivedKeySize = 64;
+        private const int EncryptedXmlPbkdf2Iterations = 100000;
+
+        private static byte[] GetLegacyAESKeyFromString(string Password)
         {
             byte[] bReturn = null;
 
@@ -4070,25 +4119,71 @@ namespace WPELibrary.Lib
         {
             try
             {
-                byte[] bAES = Socket_Operation.GetAESKeyFromString(Password);
+                if (string.IsNullOrEmpty(Password))
+                {
+                    throw new ArgumentException("An export password is required.", nameof(Password));
+                }
+
+                XDocument xmlDoc = XDocument.Load(FilePath);
+                byte[] plainBytes;
+                using (MemoryStream xmlStream = new MemoryStream())
+                {
+                    xmlDoc.Save(xmlStream, SaveOptions.DisableFormatting);
+                    plainBytes = xmlStream.ToArray();
+                }
+
+                byte[] salt = new byte[EncryptedXmlSaltSize];
+                byte[] iv = new byte[EncryptedXmlIvSize];
+                using (RandomNumberGenerator random = RandomNumberGenerator.Create())
+                {
+                    random.GetBytes(salt);
+                    random.GetBytes(iv);
+                }
+
+                byte[] derived = DeriveEncryptedXmlKeys(Password, salt, EncryptedXmlPbkdf2Iterations);
+                byte[] cipherBytes;
 
                 using (Aes aesAlg = Aes.Create())
                 {
-                    aesAlg.Key = bAES;
-                    aesAlg.IV = bAES;
-
-                    XDocument xmlDoc = XDocument.Load(FilePath);
+                    aesAlg.KeySize = 256;
+                    aesAlg.BlockSize = 128;
+                    aesAlg.Mode = CipherMode.CBC;
+                    aesAlg.Padding = PaddingMode.PKCS7;
+                    aesAlg.Key = derived.Take(32).ToArray();
+                    aesAlg.IV = iv;
 
                     using (MemoryStream ms = new MemoryStream())
                     {
                         using (CryptoStream cs = new CryptoStream(ms, aesAlg.CreateEncryptor(), CryptoStreamMode.Write))
                         {
-                            xmlDoc.Save(cs);
+                            cs.Write(plainBytes, 0, plainBytes.Length);
+                            cs.FlushFinalBlock();
                         }
 
-                        File.WriteAllBytes(FilePath, ms.ToArray());
+                        cipherBytes = ms.ToArray();
                     }
                 }
+
+                int headerLength = EncryptedXmlMagic.Length + sizeof(int) + salt.Length + iv.Length;
+                byte[] envelope = new byte[headerLength + cipherBytes.Length + EncryptedXmlMacSize];
+                int offset = 0;
+                Buffer.BlockCopy(EncryptedXmlMagic, 0, envelope, offset, EncryptedXmlMagic.Length);
+                offset += EncryptedXmlMagic.Length;
+                Buffer.BlockCopy(BitConverter.GetBytes(EncryptedXmlPbkdf2Iterations), 0, envelope, offset, sizeof(int));
+                offset += sizeof(int);
+                Buffer.BlockCopy(salt, 0, envelope, offset, salt.Length);
+                offset += salt.Length;
+                Buffer.BlockCopy(iv, 0, envelope, offset, iv.Length);
+                offset += iv.Length;
+                Buffer.BlockCopy(cipherBytes, 0, envelope, offset, cipherBytes.Length);
+
+                using (HMACSHA256 hmac = new HMACSHA256(derived.Skip(32).Take(32).ToArray()))
+                {
+                    byte[] mac = hmac.ComputeHash(envelope, 0, headerLength + cipherBytes.Length);
+                    Buffer.BlockCopy(mac, 0, envelope, headerLength + cipherBytes.Length, mac.Length);
+                }
+
+                File.WriteAllBytes(FilePath, envelope);
             }
             catch (Exception ex)
             {
@@ -4098,31 +4193,32 @@ namespace WPELibrary.Lib
 
         public static XDocument DecryptXMLFile(string FilterList_Path, string Password)
         {
-            XDocument xdReturn = new XDocument();
-
             try
             {
-                byte[] bAES = Socket_Operation.GetAESKeyFromString(Password);
+                if (string.IsNullOrEmpty(Password))
+                {
+                    return null;
+                }
+
+                byte[] xmlBytes = File.ReadAllBytes(FilterList_Path);
+                if (IsCurrentEncryptedXml(xmlBytes))
+                {
+                    return DecryptCurrentXML(xmlBytes, Password);
+                }
+
+                // Keep importing files created by older releases.
+                byte[] bAES = Socket_Operation.GetLegacyAESKeyFromString(Password);
 
                 using (Aes aesAlg = Aes.Create())
                 {
                     aesAlg.Key = bAES;
                     aesAlg.IV = bAES;
 
-                    byte[] xmlBytes = File.ReadAllBytes(FilterList_Path);
-
                     using (MemoryStream ms = new MemoryStream(xmlBytes))
                     {
-                        try
+                        using (CryptoStream cs = new CryptoStream(ms, aesAlg.CreateDecryptor(), CryptoStreamMode.Read))
                         {
-                            using (CryptoStream cs = new CryptoStream(ms, aesAlg.CreateDecryptor(), CryptoStreamMode.Read))
-                            {
-                                xdReturn = XDocument.Load(cs);
-                            }
-                        }
-                        catch
-                        {
-                            xdReturn = null;
+                            return XDocument.Load(cs);
                         }
                     }
                 }
@@ -4132,7 +4228,108 @@ namespace WPELibrary.Lib
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
 
-            return xdReturn;
+            return null;
+        }
+
+        private static byte[] DeriveEncryptedXmlKeys(string password, byte[] salt, int iterations)
+        {
+            using (Rfc2898DeriveBytes derive = new Rfc2898DeriveBytes(password, salt, iterations))
+            {
+                return derive.GetBytes(EncryptedXmlDerivedKeySize);
+            }
+        }
+
+        private static bool IsCurrentEncryptedXml(byte[] data)
+        {
+            if (data == null || data.Length < EncryptedXmlMagic.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < EncryptedXmlMagic.Length; i++)
+            {
+                if (data[i] != EncryptedXmlMagic[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static XDocument DecryptCurrentXML(byte[] envelope, string password)
+        {
+            int headerLength = EncryptedXmlMagic.Length + sizeof(int) + EncryptedXmlSaltSize + EncryptedXmlIvSize;
+            if (envelope.Length < headerLength + EncryptedXmlMacSize + 16)
+            {
+                throw new CryptographicException("Encrypted XML payload is incomplete.");
+            }
+
+            int offset = EncryptedXmlMagic.Length;
+            int iterations = BitConverter.ToInt32(envelope, offset);
+            offset += sizeof(int);
+            if (iterations < 10000 || iterations > 10000000)
+            {
+                throw new CryptographicException("Encrypted XML iteration count is invalid.");
+            }
+
+            byte[] salt = new byte[EncryptedXmlSaltSize];
+            Buffer.BlockCopy(envelope, offset, salt, 0, salt.Length);
+            offset += salt.Length;
+            byte[] iv = new byte[EncryptedXmlIvSize];
+            Buffer.BlockCopy(envelope, offset, iv, 0, iv.Length);
+
+            int macOffset = envelope.Length - EncryptedXmlMacSize;
+            byte[] derived = DeriveEncryptedXmlKeys(password, salt, iterations);
+            byte[] expectedMac;
+            using (HMACSHA256 hmac = new HMACSHA256(derived.Skip(32).Take(32).ToArray()))
+            {
+                expectedMac = hmac.ComputeHash(envelope, 0, macOffset);
+            }
+
+            byte[] actualMac = new byte[EncryptedXmlMacSize];
+            Buffer.BlockCopy(envelope, macOffset, actualMac, 0, actualMac.Length);
+            if (!FixedTimeEquals(expectedMac, actualMac))
+            {
+                throw new CryptographicException("Encrypted XML authentication failed.");
+            }
+
+            byte[] cipherBytes = new byte[macOffset - headerLength];
+            Buffer.BlockCopy(envelope, headerLength, cipherBytes, 0, cipherBytes.Length);
+            using (Aes aesAlg = Aes.Create())
+            {
+                aesAlg.KeySize = 256;
+                aesAlg.BlockSize = 128;
+                aesAlg.Mode = CipherMode.CBC;
+                aesAlg.Padding = PaddingMode.PKCS7;
+                aesAlg.Key = derived.Take(32).ToArray();
+                aesAlg.IV = iv;
+
+                using (MemoryStream input = new MemoryStream(cipherBytes))
+                using (CryptoStream cs = new CryptoStream(input, aesAlg.CreateDecryptor(), CryptoStreamMode.Read))
+                using (MemoryStream plain = new MemoryStream())
+                {
+                    cs.CopyTo(plain);
+                    plain.Position = 0;
+                    return XDocument.Load(plain);
+                }
+            }
+        }
+
+        private static bool FixedTimeEquals(byte[] left, byte[] right)
+        {
+            if (left == null || right == null || left.Length != right.Length)
+            {
+                return false;
+            }
+
+            int difference = 0;
+            for (int i = 0; i < left.Length; i++)
+            {
+                difference |= left[i] ^ right[i];
+            }
+
+            return difference == 0;
         }
 
         #endregion

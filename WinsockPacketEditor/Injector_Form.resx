@@ -252,6 +252,9 @@
   <data name="bInject.Text" xml:space="preserve">
     <value>注入进程 (&amp;I)</value>
   </data>
+  <data name="rtbLog.AccessibleName" xml:space="preserve">
+    <value>注入日志</value>
+  </data>
   <data name="&gt;&gt;bInject.Name" xml:space="preserve">
     <value>bInject</value>
   </data>

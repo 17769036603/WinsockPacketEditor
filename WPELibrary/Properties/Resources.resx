@@ -342,12 +342,45 @@
   <data name="UI_GroupName" xml:space="preserve"><value>分组名称</value></data>
   <data name="UI_Edit" xml:space="preserve"><value>编辑</value></data>
   <data name="UI_AssistantEmpty" xml:space="preserve"><value>当前分组暂无助手，请点击“新增机器人”</value></data>
+  <data name="Robot_InstructionEmpty" xml:space="preserve"><value>暂无机器人指令，请从左侧选择并插入</value></data>
+  <data name="Robot_ExecuteEmpty" xml:space="preserve"><value>暂无执行记录，点击“执行”后会显示日志</value></data>
+  <data name="UI_FilterEmpty" xml:space="preserve"><value>当前没有滤镜，请点击“新增滤镜”</value></data>
+  <data name="UI_ByteSweepEmpty" xml:space="preserve"><value>当前分组暂无递进预设，请点击“新建预设”</value></data>
   <data name="UI_MoveToGroup" xml:space="preserve"><value>移动到分组</value></data>
   <data name="UI_GroupMustBeEmpty" xml:space="preserve"><value>只能删除空分组，请先移动其中的助手</value></data>
   <data name="Main_GeneralSettings" xml:space="preserve"><value>常规设置</value></data>
   <data name="Main_AdvancedTools" xml:space="preserve"><value>高级工具</value></data>
   <data name="Main_PacketList" xml:space="preserve"><value>封包列表</value></data>
   <data name="Main_PacketData" xml:space="preserve"><value>封包数据</value></data>
+  <data name="UI_ReadableContentTitle" xml:space="preserve"><value>可读内容（自动识别）</value></data>
+  <data name="UI_ReadableContentMetaLabel" xml:space="preserve"><value>可读内容信息</value></data>
+  <data name="UI_ReadableContentPreview" xml:space="preserve"><value>可读内容预览</value></data>
+  <data name="UI_ReadableContentNone" xml:space="preserve"><value>未选择封包</value></data>
+  <data name="UI_ReadableContentMeta" xml:space="preserve"><value>类型：{0} | 编码：{1} | 长度：{2} 字节</value></data>
+  <data name="UI_ReadableContentEmpty" xml:space="preserve"><value>当前封包没有数据。</value></data>
+  <data name="UI_ReadableContentBinaryNotice" xml:space="preserve"><value>这是二进制数据，不能直接按普通文字显示。</value></data>
+  <data name="UI_ReadableContentDetails" xml:space="preserve"><value>识别信息：{0}</value></data>
+  <data name="UI_ReadableContentStrings" xml:space="preserve"><value>可读字符串：</value></data>
+  <data name="UI_ReadableContentNoStrings" xml:space="preserve"><value>未发现连续可读字符串。</value></data>
+  <data name="UI_ReadableContentTruncated" xml:space="preserve"><value>内容较长，已截断显示；原始内容仍保留在下方 Hex 区。</value></data>
+  <data name="UI_ReadableEncodingNone" xml:space="preserve"><value>无</value></data>
+  <data name="UI_ReadableKind_Empty" xml:space="preserve"><value>空数据</value></data>
+  <data name="UI_ReadableKind_PE" xml:space="preserve"><value>Windows PE/EXE</value></data>
+  <data name="UI_ReadableKind_MZ" xml:space="preserve"><value>疑似 MZ 文件头</value></data>
+  <data name="UI_ReadableKind_PNG" xml:space="preserve"><value>PNG 图片</value></data>
+  <data name="UI_ReadableKind_JPEG" xml:space="preserve"><value>JPEG 图片</value></data>
+  <data name="UI_ReadableKind_GIF" xml:space="preserve"><value>GIF 图片</value></data>
+  <data name="UI_ReadableKind_BMP" xml:space="preserve"><value>BMP 图片</value></data>
+  <data name="UI_ReadableKind_PDF" xml:space="preserve"><value>PDF 文档</value></data>
+  <data name="UI_ReadableKind_ZIP" xml:space="preserve"><value>ZIP 压缩数据</value></data>
+  <data name="UI_ReadableKind_GZip" xml:space="preserve"><value>GZip 压缩数据</value></data>
+  <data name="UI_ReadableKind_RAR" xml:space="preserve"><value>RAR 压缩数据</value></data>
+  <data name="UI_ReadableKind_7z" xml:space="preserve"><value>7z 压缩数据</value></data>
+  <data name="UI_ReadableKind_HTTP" xml:space="preserve"><value>HTTP 文本</value></data>
+  <data name="UI_ReadableKind_JSON" xml:space="preserve"><value>JSON 数据</value></data>
+  <data name="UI_ReadableKind_XML" xml:space="preserve"><value>XML 数据</value></data>
+  <data name="UI_ReadableKind_Text" xml:space="preserve"><value>普通文本</value></data>
+  <data name="UI_ReadableKind_Binary" xml:space="preserve"><value>二进制数据</value></data>
   <data name="Main_Automation" xml:space="preserve"><value>发送与递进</value></data>
   <data name="UI_NewGroup" xml:space="preserve"><value>新建分组</value></data>
   <data name="UI_RenameGroup" xml:space="preserve"><value>重命名分组</value></data>
@@ -383,6 +416,10 @@
   <data name="SendPreset_Required" xml:space="preserve"><value>请输入预设名称和分组。</value></data>
   <data name="SendPreset_Duplicate" xml:space="preserve"><value>当前分组中已存在同名预设。</value></data>
   <data name="UI_SendSelected" xml:space="preserve"><value>发送选中</value></data>
+  <data name="UI_SequentialSend" xml:space="preserve"><value>顺序发送</value></data>
+  <data name="UI_ConcurrentSend" xml:space="preserve"><value>同时发送</value></data>
+  <data name="UI_SequentialSendTip" xml:space="preserve"><value>按序号依次执行选中的预设</value></data>
+  <data name="UI_ConcurrentSendTip" xml:space="preserve"><value>同时启动选中的预设；每条预设内部仍按自己的间隔执行</value></data>
   <data name="UI_StopBatch" xml:space="preserve"><value>停止批量</value></data>
   <data name="UI_SelectAll" xml:space="preserve"><value>全选</value></data>
   <data name="UI_ClearSelection" xml:space="preserve"><value>取消全选</value></data>
@@ -434,6 +471,9 @@
   <data name="UI_CreateGroupFirst" xml:space="preserve"><value>请先使用底部“新建分组”创建并选择一个分组。</value></data>
   <data name="UI_NewSendList" xml:space="preserve"><value>新建发送列表</value></data>
   <data name="UI_CurrentGroupEmpty" xml:space="preserve"><value>当前分组暂无封包</value></data>
+  <data name="UI_PacketListEmpty" xml:space="preserve"><value>暂无封包，开始监听后这里会显示数据</value></data>
+  <data name="UI_SettingsHint" xml:space="preserve"><value>设置分为常规、滤镜、助手和高级工具；进入常规后，右侧标签页为对应选项。</value></data>
+  <data name="UI_Close" xml:space="preserve"><value>关闭</value></data>
   <data name="UI_CreatePacketGroup" xml:space="preserve"><value>请先新建封包分组</value></data>
   <data name="UI_NewSweepGroup" xml:space="preserve"><value>新建递进分组</value></data>
   <data name="UI_RenameSweepGroup" xml:space="preserve"><value>重命名递进分组</value></data>
@@ -481,9 +521,11 @@
   <data name="ByteSweep_CombinationEstimate" xml:space="preserve"><value>组合 / 预计</value></data>
   <data name="ByteSweep_NoSelection" xml:space="preserve"><value>未选择范围</value></data>
   <data name="ByteSweep_NormalInterval" xml:space="preserve"><value>普通间隔(ms)</value></data>
+  <data name="ByteSweep_FirstByte" xml:space="preserve"><value>字节A</value></data>
   <data name="ByteSweep_FirstPosition" xml:space="preserve"><value>字节A位置</value></data>
   <data name="ByteSweep_FirstLength" xml:space="preserve"><value>字节A长度</value></data>
   <data name="ByteSweep_FirstInterval" xml:space="preserve"><value>字节A间隔(ms)</value></data>
+  <data name="ByteSweep_SecondByte" xml:space="preserve"><value>字节B</value></data>
   <data name="ByteSweep_SecondPosition" xml:space="preserve"><value>字节B位置</value></data>
   <data name="ByteSweep_SecondLength" xml:space="preserve"><value>字节B长度</value></data>
   <data name="ByteSweep_SecondInterval" xml:space="preserve"><value>字节B间隔(ms)</value></data>
@@ -514,10 +556,18 @@
   <data name="ByteSweep_PickSecond" xml:space="preserve"><value>选取 B</value></data>
   <data name="ByteSweep_PickInstruction" xml:space="preserve"><value>请点击左侧封包选择字节 {0}</value></data>
   <data name="ByteSweep_PickDuplicate" xml:space="preserve"><value>字节 A 和字节 B 不能是同一个位置，请重新选择。</value></data>
-  <data name="ByteSweep_PickComplete" xml:space="preserve"><value>已选择字节 {0}：位置 {1}</value></data>
+  <data name="ByteSweep_PickComplete" xml:space="preserve"><value>已选择字节 {0}：当前值 {1}</value></data>
+  <data name="ByteSweep_CurrentByteFormat" xml:space="preserve"><value>0x{0:X2}</value></data>
+  <data name="ByteSweep_NoByteValue" xml:space="preserve"><value>未选择</value></data>
   <data name="ByteSweep_LogTitle" xml:space="preserve"><value>递进日志</value></data>
   <data name="ByteSweep_LogClear" xml:space="preserve"><value>清空日志</value></data>
   <data name="ByteSweep_LogExport" xml:space="preserve"><value>导出 CSV</value></data>
+  <data name="ByteSweep_LogEmpty" xml:space="preserve"><value>暂无递进日志</value></data>
+  <data name="ByteSweep_LogCsvFilter" xml:space="preserve"><value>CSV 文件 (*.csv)|*.csv|所有文件 (*.*)|*.*</value></data>
+  <data name="ByteSweep_LogDefaultFileName" xml:space="preserve"><value>递进日志.csv</value></data>
+  <data name="ByteSweep_LogCsvHeader" xml:space="preserve"><value>时间,状态,预设,模式,进度,总发送,成功,失败,详情</value></data>
+  <data name="ByteSweep_LogProgressFormat" xml:space="preserve"><value>字节 {0}/{1} · {2}/255 · {3}/{4}</value></data>
+  <data name="ByteSweep_LogPairProgressFormat" xml:space="preserve"><value>A={0:X2} ({1}/{2}) · B={3:X2} ({4}/{5}) · {6}/{7}</value></data>
   <data name="ByteSweep_LogTime" xml:space="preserve"><value>时间</value></data>
   <data name="ByteSweep_LogState" xml:space="preserve"><value>状态</value></data>
   <data name="ByteSweep_LogPreset" xml:space="preserve"><value>预设</value></data>
@@ -549,4 +599,15 @@
   <data name="Send_Save" xml:space="preserve"><value>保存发送预设</value></data>
   <data name="Send_Copy" xml:space="preserve"><value>复制发送预设</value></data>
   <data name="Send_Clear" xml:space="preserve"><value>清空发送预设</value></data>
+  <data name="UI_HookStatusReady" xml:space="preserve"><value>未监听</value></data>
+  <data name="UI_HookStatusStarting" xml:space="preserve"><value>监听启动中</value></data>
+  <data name="UI_HookStatusListening" xml:space="preserve"><value>监听中</value></data>
+  <data name="UI_HookStatusStopping" xml:space="preserve"><value>监听停止中</value></data>
+  <data name="UI_HookStatusFailed" xml:space="preserve"><value>监听启动失败</value></data>
+  <data name="UI_QueueDropped" xml:space="preserve"><value>队列 {0} / 丢弃 {1}</value></data>
+  <data name="UI_SendModeNormal" xml:space="preserve"><value>普通发送</value></data>
+  <data name="UI_SendModeSequential" xml:space="preserve"><value>单字节递进</value></data>
+  <data name="UI_SendModePair" xml:space="preserve"><value>双字节组合</value></data>
+  <data name="UI_AdvancedEditorCollapse" xml:space="preserve"><value>高级编辑（收起）</value></data>
+  <data name="UI_AdvancedEditorExpand" xml:space="preserve"><value>高级编辑（展开）</value></data>
 </root>

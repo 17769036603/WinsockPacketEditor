@@ -1,7 +1,10 @@
 ﻿using System;
 using System.Data;
 using System.Drawing;
+using System.Globalization;
+using System.Linq;
 using System.Reflection;
+using System.Resources;
 using System.Windows.Forms;
 using WPELibrary.Lib;
 
@@ -13,6 +16,14 @@ namespace WPELibrary
         private bool bIsModifierKeys = true;
         private DataTable dtRobotInstruction = new DataTable();
         private readonly Socket_Robot sr = new Socket_Robot();        
+        private readonly ResourceManager sendPresetPickerResources =
+            new ResourceManager(
+                "WPELibrary.Socket_SendPresetPickerForm",
+                typeof(Socket_RobotForm).Assembly);
+        private Guid selectedSendPresetId = Guid.Empty;
+        private Label lSelectedSendPreset;
+        private Label lSelectedSendFolder;
+        private Button bSelectSendPreset;
 
         #region//窗体加载
 
@@ -22,6 +33,7 @@ namespace WPELibrary
             {
                 MultiLanguage.SetDefaultLanguage(MultiLanguage.DefaultLanguage);
                 InitializeComponent();
+                this.InitSendPresetPickerLayout();
 
                 if (sri != null)
                 { 
@@ -54,7 +66,7 @@ namespace WPELibrary
                 this.cbbMouse.SelectedIndex = 0;
                 this.cbbMouseWheel_Direction.SelectedIndex = 0;
                 
-                this.InitComboBox();
+                this.InitSendPresetPicker();
                 this.InitRobot();
             }
             catch (Exception ex)
@@ -84,8 +96,16 @@ namespace WPELibrary
             try
             {
                 dgvRobotInstruction.AutoGenerateColumns = false;
+                dgvRobotInstruction.BackgroundColor = Color.FromArgb(248, 248, 248);
+                dgvRobotInstruction.Paint += this.dgvRobotInstruction_Paint;
                 dgvRobotInstruction.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvRobotInstruction, true, null);
                 dgvRobotInstruction.DataSource = this.dtRobotInstruction;
+                this.txtExecute.BackColor = Color.FromArgb(248, 248, 248);
+                this.txtExecute.ForeColor = Color.FromArgb(55, 65, 81);
+                if (string.IsNullOrEmpty(this.txtExecute.Text))
+                {
+                    this.txtExecute.Text = UiText("Robot_ExecuteEmpty");
+                }
             }
             catch (Exception ex)
             {
@@ -93,15 +113,141 @@ namespace WPELibrary
             }
         }
 
-        private void InitComboBox()
+        private string SendPresetPickerText(string key)
+        {
+            return this.sendPresetPickerResources.GetString(
+                key,
+                CultureInfo.CurrentUICulture) ?? key;
+        }
+
+        private static string UiText(string key)
+        {
+            return Properties.Resources.ResourceManager.GetString(key) ?? key;
+        }
+
+        private void dgvRobotInstruction_Paint(object sender, PaintEventArgs e)
+        {
+            if (this.dgvRobotInstruction.Rows.Count > 0)
+            {
+                return;
+            }
+
+            TextRenderer.DrawText(
+                e.Graphics,
+                UiText("Robot_InstructionEmpty"),
+                this.dgvRobotInstruction.Font,
+                this.dgvRobotInstruction.ClientRectangle,
+                SystemColors.GrayText,
+                TextFormatFlags.HorizontalCenter |
+                TextFormatFlags.VerticalCenter |
+                TextFormatFlags.SingleLine);
+        }
+
+        private void InitSendPresetPickerLayout()
+        {
+            this.cbbSend_SendLIst.Visible = false;
+            this.tlpSend_SendLIst.Controls.Clear();
+            this.tlpSend_SendLIst.ColumnCount = 4;
+            this.tlpSend_SendLIst.RowCount = 2;
+            this.tlpSend_SendLIst.ColumnStyles.Clear();
+            this.tlpSend_SendLIst.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            this.tlpSend_SendLIst.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 8F));
+            this.tlpSend_SendLIst.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80F));
+            this.tlpSend_SendLIst.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80F));
+            this.tlpSend_SendLIst.RowStyles.Clear();
+            this.tlpSend_SendLIst.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+            this.tlpSend_SendLIst.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+
+            this.lSelectedSendPreset = new Label
+            {
+                Name = "lSelectedSendPreset",
+                AutoSize = false,
+                AutoEllipsis = true,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(3, 1, 3, 1),
+                TextAlign = ContentAlignment.MiddleLeft,
+                UseMnemonic = false
+            };
+            this.lSelectedSendFolder = new Label
+            {
+                Name = "lSelectedSendFolder",
+                AutoSize = false,
+                AutoEllipsis = true,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(3, 1, 3, 1),
+                TextAlign = ContentAlignment.MiddleLeft,
+                UseMnemonic = false
+            };
+            this.bSelectSendPreset = new Button
+            {
+                Name = "bSelectSendPreset",
+                Dock = DockStyle.Fill,
+                Margin = new Padding(1),
+                Text = this.SendPresetPickerText("Robot_SelectList"),
+                UseVisualStyleBackColor = true
+            };
+            this.bSelectSendPreset.Click += this.bSelectSendPreset_Click;
+
+            this.tlpSend_SendLIst.Controls.Add(this.lSelectedSendPreset, 0, 0);
+            this.tlpSend_SendLIst.Controls.Add(this.lSelectedSendFolder, 0, 1);
+            this.tlpSend_SendLIst.Controls.Add(this.bSelectSendPreset, 2, 0);
+            this.tlpSend_SendLIst.Controls.Add(this.bSend_SendList, 3, 0);
+            this.tlpSend_SendLIst.PerformLayout();
+        }
+
+        private void InitSendPresetPicker()
         {
             try
             {
-                Socket_Operation.InitSendListComboBox(this.cbbSend_SendLIst);
+                Socket_SendInfo firstPreset = Socket_Cache.SendList.lstSend.FirstOrDefault();
+                this.selectedSendPresetId = firstPreset == null ? Guid.Empty : firstPreset.SID;
+                this.UpdateSelectedSendPresetDisplay();
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
 
-                if (this.cbbSend_SendLIst.Items.Count > 0)
-                { 
-                    this.cbbSend_SendLIst.SelectedIndex = 0;
+        private void UpdateSelectedSendPresetDisplay()
+        {
+            Socket_SendInfo selectedPreset = Socket_Cache.SendList.lstSend.FirstOrDefault(
+                item => item.SID == this.selectedSendPresetId);
+            bool hasPreset = selectedPreset != null;
+
+            if (hasPreset)
+            {
+                this.lSelectedSendPreset.Text = string.Format(
+                    this.SendPresetPickerText("Robot_SelectedNameFormat"),
+                    selectedPreset.SName ?? string.Empty);
+                this.lSelectedSendFolder.Text = string.Format(
+                    this.SendPresetPickerText("Robot_SelectedFolderFormat"),
+                    string.IsNullOrWhiteSpace(selectedPreset.SFolder)
+                        ? this.SendPresetPickerText("Picker_Ungrouped")
+                        : selectedPreset.SFolder);
+            }
+            else
+            {
+                this.lSelectedSendPreset.Text = this.SendPresetPickerText("Robot_NoPreset");
+                this.lSelectedSendFolder.Text = string.Empty;
+            }
+
+            this.bSelectSendPreset.Enabled = Socket_Cache.SendList.lstSend.Count > 0;
+            this.bSend_SendList.Enabled = hasPreset;
+        }
+
+        private void bSelectSendPreset_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                using (Socket_SendPresetPickerForm picker =
+                    new Socket_SendPresetPickerForm(this.selectedSendPresetId))
+                {
+                    if (picker.ShowDialog(this) == DialogResult.OK)
+                    {
+                        this.selectedSendPresetId = picker.SelectedSendPresetId;
+                        this.UpdateSelectedSendPresetDisplay();
+                    }
                 }
             }
             catch (Exception ex)
@@ -473,11 +619,9 @@ namespace WPELibrary
         {
             try
             {
-                if (this.cbbSend_SendLIst.SelectedItem != null)
+                if (this.selectedSendPresetId != Guid.Empty)
                 {
-                    Socket_Cache.SendList.SendListItem item = (Socket_Cache.SendList.SendListItem)this.cbbSend_SendLIst.SelectedItem;              
-                    Guid SID = item.SID;
-                    string sContent = SID.ToString().ToUpper();
+                    string sContent = this.selectedSendPresetId.ToString().ToUpper();
 
                     this.AddInstruction(Socket_Cache.Robot.InstructionType.SendSendList, sContent);
                 }                

@@ -3641,7 +3641,7 @@ namespace WPELibrary
             // 
             // tSocketList
             // 
-            this.tSocketList.Interval = 10;
+            this.tSocketList.Interval = 50;
             this.tSocketList.Tick += new System.EventHandler(this.tSocketList_Tick);
             // 
             // ofdExtraction

@@ -14,6 +14,41 @@ namespace WPELibrary.Lib.WebAPI
 {
     public class Socket_Web
     {
+        private static bool TryGetBasicCredentials(
+            string authorization,
+            out string username,
+            out string password)
+        {
+            username = string.Empty;
+            password = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(authorization) ||
+                !authorization.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            try
+            {
+                string encoded = authorization.Substring("Basic ".Length).Trim();
+                string decoded = Encoding.GetEncoding("iso-8859-1").GetString(
+                    Convert.FromBase64String(encoded));
+                int separator = decoded.IndexOf(':');
+                if (separator < 0)
+                {
+                    return false;
+                }
+
+                username = decoded.Substring(0, separator);
+                password = decoded.Substring(separator + 1);
+                return true;
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
+        }
+
         public void Configuration(IAppBuilder app)
         {
             try
@@ -24,16 +59,8 @@ namespace WPELibrary.Lib.WebAPI
                 {
                     var authHeader = context.Request.Headers["Authorization"];
 
-                    if (authHeader != null && authHeader.StartsWith("Basic"))
+                    if (TryGetBasicCredentials(authHeader, out string username, out string password))
                     {
-                        var encodedUsernamePassword = authHeader.Substring("Basic ".Length).Trim();
-
-                        var encoding = Encoding.GetEncoding("iso-8859-1");
-                        var usernamePassword = encoding.GetString(Convert.FromBase64String(encodedUsernamePassword));
-
-                        var username = usernamePassword.Split(':')[0];
-                        var password = usernamePassword.Split(':')[1];
-
                         if (Socket_Cache.ProxyAccount.IsValidAdmin(username, password))
                         {
                             var principal = new GenericPrincipal(new GenericIdentity(username), null);

@@ -3047,10 +3047,12 @@ namespace WPELibrary.Lib
                 try
                 {
                     string pwEncrypt = Socket_Operation.PassWord_Encrypt(PassWord);
+                    string legacyPwEncrypt = Socket_Operation.LegacyPassWord_EncryptForCompatibility(PassWord);
 
                     foreach (Proxy_AccountInfo pai in Socket_Cache.ProxyAccount.lstProxyAccount)
                     {
-                        if (pai.IsEnable && pai.UserName.Equals(UserName) && pai.PassWord.Equals(pwEncrypt))
+                        if (pai.IsEnable && pai.UserName.Equals(UserName) &&
+                            (pai.PassWord.Equals(pwEncrypt) || pai.PassWord.Equals(legacyPwEncrypt)))
                         {
                             if (pai.IsExpiry)
                             {
@@ -3949,7 +3951,7 @@ namespace WPELibrary.Lib
 
             #region//从数据库加载代理账号列表（异步）
 
-            public static async void LoadProxyAccountList_FromDB()
+            public static async Task LoadProxyAccountList_FromDB()
             {
                 await Task.Run(() =>
                 {
@@ -4972,7 +4974,7 @@ namespace WPELibrary.Lib
 
             #region//从数据库加载本地代理映射（异步）
 
-            public static async void LoadProxyMapLocal_FromDB()
+            public static async Task LoadProxyMapLocal_FromDB()
             {
                 await Task.Run(() =>
                 {
@@ -5003,7 +5005,7 @@ namespace WPELibrary.Lib
 
             #region//从数据库加载远程代理映射（异步）
 
-            public static async void LoadProxyMapRemote_FromDB()
+            public static async Task LoadProxyMapRemote_FromDB()
             {
                 await Task.Run(() =>
                 {
@@ -5848,6 +5850,7 @@ namespace WPELibrary.Lib
 
         public static class SocketQueue
         {            
+            public const int MaxQueueCount = 10000;
             public static int Send_CNT = 0;
             public static int SendTo_CNT = 0;
             public static int Recv_CNT = 0;
@@ -5857,8 +5860,10 @@ namespace WPELibrary.Lib
             public static int WSARecv_CNT = 0;
             public static int WSARecvFrom_CNT = 0;
             public static int FilterSocketList_CNT = 0;                       
+            public static long Dropped_CNT = 0;
 
             public static ConcurrentQueue<Socket_PacketInfo> qSocket_PacketInfo = new ConcurrentQueue<Socket_PacketInfo>();
+            private static readonly object QueueSync = new object();
 
             #region//封包入队列            
 
@@ -5886,7 +5891,16 @@ namespace WPELibrary.Lib
                             string sIPTo = ipParts[1];                            
 
                             Socket_PacketInfo spi = new Socket_PacketInfo(PacketTime, iSocket, ptPacketType, sIPFrom, sIPTo, bRawBuff, bBuffByte, bBuffByte.Length, pAction);
-                            qSocket_PacketInfo.Enqueue(spi);
+                            lock (QueueSync)
+                            {
+                                while (qSocket_PacketInfo.Count >= MaxQueueCount &&
+                                    qSocket_PacketInfo.TryDequeue(out Socket_PacketInfo discardedPacket))
+                                {
+                                    Interlocked.Increment(ref Dropped_CNT);
+                                }
+
+                                qSocket_PacketInfo.Enqueue(spi);
+                            }
                         }
                     }
                 }
@@ -5904,10 +5918,14 @@ namespace WPELibrary.Lib
             {
                 try
                 {
-                    while (!qSocket_PacketInfo.IsEmpty)
+                    lock (QueueSync)
                     {
-                        qSocket_PacketInfo.TryDequeue(out Socket_PacketInfo spc);
-                    }                      
+                        while (!qSocket_PacketInfo.IsEmpty)
+                        {
+                            qSocket_PacketInfo.TryDequeue(out Socket_PacketInfo spc);
+                        }
+                        Interlocked.Exchange(ref Dropped_CNT, 0);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -6014,38 +6032,51 @@ namespace WPELibrary.Lib
        
             #region//封包入列表
 
-            public static async Task SocketToList()
+            public static async Task SocketToList(int maxItems = 1)
             {
                 try
                 {
+                    List<Socket_PacketInfo> visiblePackets = new List<Socket_PacketInfo>();
                     await Task.Run(() =>
                     {
-                        if (SocketQueue.qSocket_PacketInfo.TryDequeue(out Socket_PacketInfo spi))
+                        int processed = 0;
+                        while (processed < Math.Max(1, maxItems) &&
+                            SocketQueue.qSocket_PacketInfo.TryDequeue(out Socket_PacketInfo spi))
                         {
+                            processed++;
                             bool bIsShow = Socket_Operation.IsShowSocketPacket_ByFilter(spi);
                             if (bIsShow)
                             {
                                 Span<byte> bufferSpan = spi.PacketBuffer.AsSpan();
                                 spi.PacketData = Socket_Operation.GetPacketData_Hex(bufferSpan, Socket_Cache.SocketPacket.PacketData_MaxLen);
-
-                                if (Socket_Cache.System.InvokeAction != null)
-                                {
-                                    Socket_Cache.System.InvokeAction(() =>
-                                    {
-                                        Socket_Cache.SocketList.lstRecPacket.Add(spi);
-                                    });
-                                }
-                                else
-                                {
-                                    Socket_Cache.SocketList.lstRecPacket.Add(spi);
-                                }
+                                visiblePackets.Add(spi);
                             }
                             else
                             {
                                 SocketQueue.FilterSocketList_CNT++;
                             }
                         }
-                    });                    
+                    });
+
+                    if (visiblePackets.Count > 0)
+                    {
+                        Action appendVisiblePackets = () =>
+                        {
+                            foreach (Socket_PacketInfo packet in visiblePackets)
+                            {
+                                Socket_Cache.SocketList.lstRecPacket.Add(packet);
+                            }
+                        };
+
+                        if (Socket_Cache.System.InvokeAction != null)
+                        {
+                            Socket_Cache.System.InvokeAction(appendVisiblePackets);
+                        }
+                        else
+                        {
+                            appendVisiblePackets();
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {

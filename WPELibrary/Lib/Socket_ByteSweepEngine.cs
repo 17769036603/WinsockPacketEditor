@@ -166,7 +166,7 @@ namespace WPELibrary.Lib
             {
                 for (int firstValueNumber = 1; firstValueNumber <= firstLength; firstValueNumber++)
                 {
-                    workingBuffer[firstPosition] = unchecked((byte)(firstOriginal + firstValueNumber));
+                    workingBuffer[firstPosition] = unchecked((byte)(firstOriginal + firstValueNumber - 1));
                     for (int secondValueNumber = 1; secondValueNumber <= secondLength; secondValueNumber++)
                     {
                         if (cancellationToken.IsCancellationRequested)
@@ -175,7 +175,7 @@ namespace WPELibrary.Lib
                             return result;
                         }
 
-                        workingBuffer[secondPosition] = unchecked((byte)(secondOriginal + secondValueNumber));
+                        workingBuffer[secondPosition] = unchecked((byte)(secondOriginal + secondValueNumber - 1));
                         bool success = false;
                         try
                         {
