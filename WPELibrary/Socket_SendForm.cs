@@ -19,6 +19,8 @@ namespace WPELibrary
         private long Send_Fail = 0;
         private int sendCounterUpdateScheduled;
         private CancellationTokenSource cts;
+        private ManualResetEventSlim byteSweepPauseGate;
+        private bool byteSweepPaused;
         private Guid byteSweepJobId = Guid.Empty;
         private bool byteSweepRuntimeExternalRunning;
         private RadioButton rbSendType_ByteSweep;
@@ -942,6 +944,7 @@ namespace WPELibrary
             this.byteSweepEditorPanel = new Socket_ByteSweepEditorPanel();
             this.byteSweepEditorPanel.SetPairOnlyMode(true);
             this.byteSweepEditorPanel.SendRequested += this.byteSweepEditorPanel_SendRequested;
+            this.byteSweepEditorPanel.PauseRequested += this.byteSweepEditorPanel_PauseRequested;
             this.byteSweepEditorPanel.StopRequested += this.byteSweepEditorPanel_StopRequested;
             this.byteSweepEditorPanel.SaveRequested += this.byteSweepEditorPanel_SaveRequested;
             this.byteSweepEditorPanel.Changed += this.byteSweepEditorPanel_Changed;
@@ -1139,9 +1142,22 @@ namespace WPELibrary
 
         private void byteSweepEditorPanel_SendRequested(object sender, EventArgs e)
         {
+            if (this.byteSweepPaused &&
+                this.byteSweepWasRunning &&
+                this.byteSweepStartedFromEditorPanel)
+            {
+                this.ResumeByteSweep();
+                return;
+            }
+
             this.CancelByteSweepPositionPick();
             this.ApplyByteSweepEditorToLegacy();
             this.StartSend(true, true);
+        }
+
+        private void byteSweepEditorPanel_PauseRequested(object sender, EventArgs e)
+        {
+            this.PauseByteSweep();
         }
 
         private void byteSweepEditorPanel_StopRequested(object sender, EventArgs e)
@@ -1156,6 +1172,54 @@ namespace WPELibrary
         {
             this.ApplyByteSweepEditorToLegacy();
             this.bSaveByteSweepPreset_Click(this.bSaveByteSweepPreset, EventArgs.Empty);
+        }
+
+        private void PauseByteSweep()
+        {
+            if (!this.byteSweepWasRunning ||
+                !this.byteSweepStartedFromEditorPanel ||
+                this.byteSweepPaused ||
+                this.byteSweepPauseGate == null)
+            {
+                return;
+            }
+
+            this.byteSweepPaused = true;
+            this.byteSweepPauseGate.Reset();
+            this.tlByteSweepProgress.Text = UiText("ByteSweep_Paused");
+            this.tlByteSweepProgress.Visible = true;
+            if (this.byteSweepEditorPanel != null)
+            {
+                this.byteSweepEditorPanel.SetOperationState(
+                    true,
+                    true,
+                    true,
+                    UiText("ByteSweep_Paused"));
+            }
+        }
+
+        private void ResumeByteSweep()
+        {
+            if (!this.byteSweepWasRunning ||
+                !this.byteSweepStartedFromEditorPanel ||
+                !this.byteSweepPaused ||
+                this.byteSweepPauseGate == null)
+            {
+                return;
+            }
+
+            this.byteSweepPaused = false;
+            this.byteSweepPauseGate.Set();
+            this.tlByteSweepProgress.Text = UiText("ByteSweep_Running");
+            this.tlByteSweepProgress.Visible = true;
+            if (this.byteSweepEditorPanel != null)
+            {
+                this.byteSweepEditorPanel.SetOperationState(
+                    true,
+                    false,
+                    true,
+                    UiText("ByteSweep_Running"));
+            }
         }
 
         private void ByteAnnotationController_Changed(object sender, EventArgs e)
@@ -1627,6 +1691,7 @@ namespace WPELibrary
             {
                 this.byteSweepEditorPanel.SetOperationState(
                     isRunning,
+                    this.byteSweepPaused,
                     sweepRunning && this.byteSweepStartedFromEditorPanel,
                     sweepRunning && this.byteSweepStartedFromEditorPanel
                         ? UiText("ByteSweep_Running")
@@ -1756,6 +1821,13 @@ namespace WPELibrary
                             this.byteSweepJobId = runtimeJobId;
                             this.byteSweepPlannedTotal = plannedTotal;
                             this.cts = sharedCancellation;
+                            this.byteSweepPauseGate = new ManualResetEventSlim(true);
+                            this.byteSweepPaused = false;
+                        }
+                        else
+                        {
+                            this.byteSweepPauseGate = null;
+                            this.byteSweepPaused = false;
                         }
 
                         Interlocked.Exchange(ref this.Send_CNT, 0);
@@ -1811,6 +1883,12 @@ namespace WPELibrary
                     this.cts.Dispose();
                     this.cts = null;
                 }
+                if (this.byteSweepPauseGate != null)
+                {
+                    this.byteSweepPauseGate.Dispose();
+                    this.byteSweepPauseGate = null;
+                }
+                this.byteSweepPaused = false;
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
         }
@@ -2046,6 +2124,7 @@ namespace WPELibrary
                         this.byteSweepEditorPanel.SetOperationState(
                             false,
                             false,
+                            false,
                             completionText);
                     }
                 }
@@ -2071,6 +2150,13 @@ namespace WPELibrary
                     this.cts.Dispose();
                     this.cts = null;
                 }
+                if (this.byteSweepPauseGate != null)
+                {
+                    this.byteSweepPauseGate.Set();
+                    this.byteSweepPauseGate.Dispose();
+                    this.byteSweepPauseGate = null;
+                }
+                this.byteSweepPaused = false;
             }
         }
 
@@ -2190,9 +2276,12 @@ namespace WPELibrary
         private bool ExecuteByteSweep(SendWorkItem workItem)
         {
             CancellationToken token = this.cts == null ? CancellationToken.None : this.cts.Token;
+            WaitHandle pauseHandle = this.byteSweepPauseGate == null
+                ? null
+                : this.byteSweepPauseGate.WaitHandle;
             if (workItem.PairCombination)
             {
-                Socket_ByteSweepResult pairResult = ExecuteByteSweepPairLoops(
+                Socket_ByteSweepResult pairResult = ExecuteByteSweepPairLoopsWithPause(
                     workItem.Buffer,
                     workItem.PairFirstPosition,
                     workItem.PairFirstLength,
@@ -2208,6 +2297,7 @@ namespace WPELibrary
                         workItem.IPTo,
                         buffer),
                     token,
+                    pauseHandle,
                     progress =>
                     {
                         Interlocked.Exchange(ref this.Send_CNT, progress.TotalSend);
@@ -2221,7 +2311,7 @@ namespace WPELibrary
                 return !pairResult.Cancelled;
             }
 
-            Socket_ByteSweepResult result = ExecuteByteSweepLoops(
+            Socket_ByteSweepResult result = ExecuteByteSweepLoopsWithPause(
                 workItem.Buffer,
                 workItem.SweepStart,
                 workItem.SweepLength,
@@ -2234,6 +2324,7 @@ namespace WPELibrary
                     workItem.IPTo,
                     buffer),
                 token,
+                pauseHandle,
                 progress =>
                 {
                     Interlocked.Exchange(ref this.Send_CNT, progress.TotalSend);
@@ -2267,6 +2358,35 @@ namespace WPELibrary
             CancellationToken token,
             Action<Socket_ByteSweepProgress> reportProgress)
         {
+            return ExecuteByteSweepPairLoopsWithPause(
+                buffer,
+                firstPosition,
+                firstLength,
+                firstInterval,
+                secondPosition,
+                secondLength,
+                secondInterval,
+                loopCount,
+                send,
+                token,
+                null,
+                reportProgress);
+        }
+
+        private static Socket_ByteSweepResult ExecuteByteSweepPairLoopsWithPause(
+            byte[] buffer,
+            int firstPosition,
+            int firstLength,
+            int firstInterval,
+            int secondPosition,
+            int secondLength,
+            int secondInterval,
+            int loopCount,
+            Func<byte[], bool> send,
+            CancellationToken token,
+            WaitHandle pauseHandle,
+            Action<Socket_ByteSweepProgress> reportProgress)
+        {
             Socket_ByteSweepResult combined = new Socket_ByteSweepResult();
             for (int loop = 0; loop < loopCount; loop++)
             {
@@ -2295,7 +2415,8 @@ namespace WPELibrary
                         progress.Success += completedSuccess;
                         progress.Failure += completedFailure;
                         reportProgress?.Invoke(progress);
-                    });
+                    },
+                    pauseHandle);
                 combined.TotalSend += current.TotalSend;
                 combined.Success += current.Success;
                 combined.Failure += current.Failure;
@@ -2316,6 +2437,29 @@ namespace WPELibrary
             int loopCount,
             Func<byte[], bool> send,
             CancellationToken token,
+            Action<Socket_ByteSweepProgress> reportProgress)
+        {
+            return ExecuteByteSweepLoopsWithPause(
+                buffer,
+                start,
+                length,
+                interval,
+                loopCount,
+                send,
+                token,
+                null,
+                reportProgress);
+        }
+
+        private static Socket_ByteSweepResult ExecuteByteSweepLoopsWithPause(
+            byte[] buffer,
+            int start,
+            int length,
+            int interval,
+            int loopCount,
+            Func<byte[], bool> send,
+            CancellationToken token,
+            WaitHandle pauseHandle,
             Action<Socket_ByteSweepProgress> reportProgress)
         {
             Socket_ByteSweepResult combined = new Socket_ByteSweepResult();
@@ -2343,7 +2487,8 @@ namespace WPELibrary
                         progress.Success += completedSuccess;
                         progress.Failure += completedFailure;
                         reportProgress?.Invoke(progress);
-                    });
+                    },
+                    pauseHandle);
 
                 combined.TotalSend += current.TotalSend;
                 combined.Success += current.Success;
@@ -2456,6 +2601,7 @@ namespace WPELibrary
                     {
                         this.byteSweepEditorPanel.SetOperationState(
                             true,
+                            this.byteSweepPaused,
                             this.byteSweepStartedFromEditorPanel,
                             text);
                     }
@@ -2534,6 +2680,7 @@ namespace WPELibrary
                     {
                         this.byteSweepEditorPanel.SetOperationState(
                             true,
+                            this.byteSweepPaused,
                             this.byteSweepStartedFromEditorPanel,
                             text);
                     }
@@ -2838,6 +2985,10 @@ namespace WPELibrary
                     if (this.cts != null)
                     {
                         this.cts.Cancel();
+                    }
+                    if (this.byteSweepPauseGate != null)
+                    {
+                        this.byteSweepPauseGate.Set();
                     }
                     
                     this.bgwSendPacket.CancelAsync();

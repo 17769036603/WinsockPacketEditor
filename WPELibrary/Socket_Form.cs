@@ -977,10 +977,12 @@ namespace WPELibrary
 
         private void UpdateAssistantButtonState()
         {
+            bool assistantRunning = this.activeAssistantRobot != null;
             foreach (KeyValuePair<Guid, Button> pair in this.assistantButtons)
             {
-                bool active = pair.Key == this.activeAssistantRobotId && this.activeAssistantRobot != null;
-                bool enabled = this.activeAssistantRobot == null || active;
+                bool active = pair.Key == this.activeAssistantRobotId && assistantRunning;
+                bool enabled = !assistantRunning || active;
+                pair.Value.Visible = !assistantRunning || active;
                 pair.Value.Enabled = enabled;
                 pair.Value.BackColor = active
                     ? Color.FromArgb(255, 223, 124)
@@ -1669,6 +1671,11 @@ namespace WPELibrary
 
         private void RefreshSendFolderTree()
         {
+            if (!this.TryMarshalSendFolderUiRefresh(this.RefreshSendFolderTree))
+            {
+                return;
+            }
+
             this.MigrateUngroupedSendLists();
             string selectedKey = this.selectedSendFolder;
             this.tvSendFolders.BeginUpdate();
@@ -1702,6 +1709,11 @@ namespace WPELibrary
 
         private void RefreshSendFolderView()
         {
+            if (!this.TryMarshalSendFolderUiRefresh(this.RefreshSendFolderView))
+            {
+                return;
+            }
+
             this.MigrateUngroupedSendLists();
             List<Socket_SendInfo> visibleItems = this.GetCurrentFolderSendLists();
             for (int index = 0; index < visibleItems.Count; index++)
@@ -1733,6 +1745,39 @@ namespace WPELibrary
             this.UpdateSendListContext(visibleItems);
             this.UpdateSendExecutionControls(visibleItems);
             this.dgvSendList.Invalidate();
+        }
+
+        private bool TryMarshalSendFolderUiRefresh(Action refreshAction)
+        {
+            if (this.IsDisposed || this.Disposing)
+            {
+                return false;
+            }
+
+            if (!this.InvokeRequired)
+            {
+                return true;
+            }
+
+            if (!this.IsHandleCreated)
+            {
+                return false;
+            }
+
+            try
+            {
+                this.BeginInvoke(refreshAction);
+            }
+            catch (ObjectDisposedException)
+            {
+                // 窗体已释放时不再刷新发送分组 UI。
+            }
+            catch (InvalidOperationException)
+            {
+                // 窗体关闭或句柄切换期间不再刷新发送分组 UI。
+            }
+
+            return false;
         }
 
         private void UpdateSendListSelectAllState(List<Socket_SendInfo> currentItems = null)
@@ -2256,6 +2301,7 @@ namespace WPELibrary
                 }
 
                 ws.ExitHook();
+                Socket_Operation.StopHookResultProcessing();
                 this.niWPE.Visible = false;
 
                 Socket_Operation.StopRemoteMGT(this.RunMode);

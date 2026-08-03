@@ -77,8 +77,10 @@ Assert-Contains $form "Socket_Cache.Robot.DoRobot(robot.RID, null)" `
     "An assistant button must start only its own assistant."
 Assert-Contains $form "this.activeAssistantRobot.StopRobot()" `
     "The active assistant button must stop its own assistant."
+Assert-Contains $form "pair.Value.Visible = !assistantRunning || active" `
+    "Other assistant buttons must be hidden while one assistant runs."
 Assert-Contains $form "pair.Value.Enabled = enabled" `
-    "Other assistant buttons must be disabled while one assistant runs."
+    "The active assistant button must remain enabled while one assistant runs."
 Assert-Contains $form "UI_AssistantEmpty" `
     "Empty assistant groups must show an explicit empty state."
 Assert-Contains $form "MoveAssistantToFolder_Click" `

@@ -683,6 +683,7 @@ try {
     $sweepEditorPickSecond = Get-PrivateField $sweepEditorPanel "pickSecond"
     $sweepEditorSave = Get-PrivateField $sweepEditorPanel "save"
     $sweepEditorStart = Get-PrivateField $sweepEditorPanel "send"
+    $sweepEditorPause = Get-PrivateField $sweepEditorPanel "pause"
     $sweepEditorStop = Get-PrivateField $sweepEditorPanel "stop"
     $annotationController = Get-PrivateField $sweepEditForm "byteAnnotationController"
     $annotationPanel = Get-PrivateField $annotationController "panel"
@@ -743,11 +744,13 @@ try {
     ) "The lower sweep actions must be ordered Start, Stop, then Save."
     Assert-True (
         -not [string]::IsNullOrWhiteSpace($sweepEditorStart.AccessibleName) -and
+        -not [string]::IsNullOrWhiteSpace($sweepEditorPause.AccessibleName) -and
         -not [string]::IsNullOrWhiteSpace($sweepEditorStop.AccessibleName) -and
         $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorStart) -eq 0 -and
-        $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorStop) -eq 1 -and
-        $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorSave) -eq 2
-    ) "The right sweep editor must provide its own accessible Start and Stop actions."
+        $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorPause) -eq 1 -and
+        $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorStop) -eq 2 -and
+        $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorSave) -eq 3
+    ) "The right sweep editor must provide its own accessible Start, Pause, and Stop actions."
     Assert-True (
         $sweepSidePanel.RowCount -eq 3 -and
         $sweepSidePanel.Controls.Count -eq 3 -and

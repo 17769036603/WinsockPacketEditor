@@ -44,6 +44,27 @@ namespace WPELibrary.Lib
             CancellationToken cancellationToken,
             Action<Socket_ByteSweepProgress> reportProgress)
         {
+            return Execute(
+                baseline,
+                start,
+                length,
+                interval,
+                send,
+                cancellationToken,
+                reportProgress,
+                null);
+        }
+
+        public static Socket_ByteSweepResult Execute(
+            byte[] baseline,
+            int start,
+            int length,
+            int interval,
+            Func<byte[], bool> send,
+            CancellationToken cancellationToken,
+            Action<Socket_ByteSweepProgress> reportProgress,
+            WaitHandle pauseHandle)
+        {
             if (baseline == null)
             {
                 throw new ArgumentNullException(nameof(baseline));
@@ -77,7 +98,7 @@ namespace WPELibrary.Lib
                 {
                     for (int valueNumber = 1; valueNumber <= 255; valueNumber++)
                     {
-                        if (cancellationToken.IsCancellationRequested)
+                        if (!WaitForResume(cancellationToken, pauseHandle))
                         {
                             result.Cancelled = true;
                             return result;
@@ -116,7 +137,7 @@ namespace WPELibrary.Lib
                         }
 
                         bool lastSend = position == end - 1 && valueNumber == 255;
-                        if (!lastSend && interval > 0 && cancellationToken.WaitHandle.WaitOne(interval))
+                        if (!lastSend && !WaitForInterval(interval, cancellationToken, pauseHandle))
                         {
                             result.Cancelled = true;
                             return result;
@@ -144,6 +165,33 @@ namespace WPELibrary.Lib
             CancellationToken cancellationToken,
             Action<Socket_ByteSweepProgress> reportProgress)
         {
+            return ExecutePairCombination(
+                baseline,
+                firstPosition,
+                firstLength,
+                firstInterval,
+                secondPosition,
+                secondLength,
+                secondInterval,
+                send,
+                cancellationToken,
+                reportProgress,
+                null);
+        }
+
+        public static Socket_ByteSweepResult ExecutePairCombination(
+            byte[] baseline,
+            int firstPosition,
+            int firstLength,
+            int firstInterval,
+            int secondPosition,
+            int secondLength,
+            int secondInterval,
+            Func<byte[], bool> send,
+            CancellationToken cancellationToken,
+            Action<Socket_ByteSweepProgress> reportProgress,
+            WaitHandle pauseHandle)
+        {
             if (baseline == null) throw new ArgumentNullException(nameof(baseline));
             if (send == null) throw new ArgumentNullException(nameof(send));
             if (firstPosition < 0 || firstPosition >= baseline.Length ||
@@ -169,7 +217,7 @@ namespace WPELibrary.Lib
                     workingBuffer[firstPosition] = unchecked((byte)(firstOriginal + firstValueNumber - 1));
                     for (int secondValueNumber = 1; secondValueNumber <= secondLength; secondValueNumber++)
                     {
-                        if (cancellationToken.IsCancellationRequested)
+                        if (!WaitForResume(cancellationToken, pauseHandle))
                         {
                             result.Cancelled = true;
                             return result;
@@ -211,8 +259,8 @@ namespace WPELibrary.Lib
                         }
 
                         bool lastSecond = secondValueNumber == secondLength;
-                        if (!lastSecond && secondInterval > 0 &&
-                            cancellationToken.WaitHandle.WaitOne(secondInterval))
+                        if (!lastSecond &&
+                            !WaitForInterval(secondInterval, cancellationToken, pauseHandle))
                         {
                             result.Cancelled = true;
                             return result;
@@ -220,8 +268,8 @@ namespace WPELibrary.Lib
                     }
 
                     bool lastFirst = firstValueNumber == firstLength;
-                    if (!lastFirst && firstInterval > 0 &&
-                        cancellationToken.WaitHandle.WaitOne(firstInterval))
+                    if (!lastFirst &&
+                        !WaitForInterval(firstInterval, cancellationToken, pauseHandle))
                     {
                         result.Cancelled = true;
                         return result;
@@ -235,6 +283,59 @@ namespace WPELibrary.Lib
             }
 
             return result;
+        }
+
+        private static bool WaitForResume(CancellationToken cancellationToken, WaitHandle pauseHandle)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            if (pauseHandle == null)
+            {
+                return true;
+            }
+
+            int signaled = WaitHandle.WaitAny(
+                new[] { cancellationToken.WaitHandle, pauseHandle });
+            return signaled == 1 && !cancellationToken.IsCancellationRequested;
+        }
+
+        private static bool WaitForInterval(
+            int interval,
+            CancellationToken cancellationToken,
+            WaitHandle pauseHandle)
+        {
+            if (interval <= 0)
+            {
+                return WaitForResume(cancellationToken, pauseHandle);
+            }
+
+            if (pauseHandle == null)
+            {
+                return !cancellationToken.WaitHandle.WaitOne(interval);
+            }
+
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(interval);
+            while (true)
+            {
+                if (!WaitForResume(cancellationToken, pauseHandle))
+                {
+                    return false;
+                }
+
+                int remaining = (int)Math.Ceiling((deadline - DateTime.UtcNow).TotalMilliseconds);
+                if (remaining <= 0)
+                {
+                    return true;
+                }
+
+                if (cancellationToken.WaitHandle.WaitOne(Math.Min(remaining, 50)))
+                {
+                    return false;
+                }
+            }
         }
 
         private static void Report(

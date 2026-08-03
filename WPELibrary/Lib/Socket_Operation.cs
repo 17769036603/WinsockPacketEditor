@@ -4,6 +4,7 @@ using Microsoft.Win32;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -40,6 +41,46 @@ namespace WPELibrary.Lib
         public static DataTable ProcessTable;
         public static DataTable dtSearchFrom = new DataTable();
         public static DataTable dtPacketFormat = new DataTable();
+
+        private sealed class HookResultWorkItem
+        {
+            public HookResultWorkItem(
+                int socket,
+                byte[] rawBuffer,
+                byte[] buffer,
+                Socket_Cache.SocketPacket.PacketType packetType,
+                Socket_Cache.Filter.FilterAction filterAction,
+                Socket_Cache.SocketPacket.SockAddr address,
+                DateTime packetTime)
+            {
+                this.Socket = socket;
+                this.RawBuffer = rawBuffer;
+                this.Buffer = buffer;
+                this.PacketType = packetType;
+                this.FilterAction = filterAction;
+                this.Address = address;
+                this.PacketTime = packetTime;
+            }
+
+            public int Socket { get; private set; }
+            public byte[] RawBuffer { get; private set; }
+            public byte[] Buffer { get; private set; }
+            public Socket_Cache.SocketPacket.PacketType PacketType { get; private set; }
+            public Socket_Cache.Filter.FilterAction FilterAction { get; private set; }
+            public Socket_Cache.SocketPacket.SockAddr Address { get; private set; }
+            public DateTime PacketTime { get; private set; }
+        }
+
+        // Hook callbacks must return quickly. A bounded single consumer keeps high-frequency
+        // traffic from creating one ThreadPool work item per packet.
+        private const int MaxHookResultQueueCount = 20000;
+        private static readonly ConcurrentQueue<HookResultWorkItem> hookResultQueue =
+            new ConcurrentQueue<HookResultWorkItem>();
+        private static readonly AutoResetEvent hookResultQueueSignal = new AutoResetEvent(false);
+        private static readonly object hookResultWorkerSync = new object();
+        private static Thread hookResultWorker;
+        private static bool hookResultWorkerStopping;
+        private static int hookResultQueueCount;
 
         #region//密码字典
 
@@ -2049,6 +2090,82 @@ namespace WPELibrary.Lib
 
         #region//处理 Hook 结果（异步）
 
+        private static void EnsureHookResultWorker()
+        {
+            lock (hookResultWorkerSync)
+            {
+                if (hookResultWorkerStopping ||
+                    (hookResultWorker != null && hookResultWorker.IsAlive))
+                {
+                    return;
+                }
+
+                hookResultWorker = new Thread(ProcessHookResults)
+                {
+                    IsBackground = true,
+                    Name = "WPE Hook Result Queue"
+                };
+                hookResultWorker.Start();
+            }
+        }
+
+        private static void ProcessHookResults()
+        {
+            while (!Volatile.Read(ref hookResultWorkerStopping))
+            {
+                HookResultWorkItem workItem;
+                if (!hookResultQueue.TryDequeue(out workItem))
+                {
+                    hookResultQueueSignal.WaitOne(100);
+                    continue;
+                }
+
+                Interlocked.Decrement(ref hookResultQueueCount);
+                try
+                {
+                    Socket_Cache.SocketQueue.SocketPacket_ToQueue(
+                        workItem.Socket,
+                        workItem.RawBuffer,
+                        workItem.Buffer,
+                        workItem.PacketType,
+                        workItem.Address,
+                        workItem.FilterAction,
+                        workItem.PacketTime);
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(ProcessHookResults), ex.Message);
+                }
+            }
+
+            // Shutdown is deliberately non-blocking for the target process; pending display
+            // work is discarded after the hooks have stopped.
+            while (hookResultQueue.TryDequeue(out HookResultWorkItem discarded))
+            {
+                Interlocked.Decrement(ref hookResultQueueCount);
+            }
+        }
+
+        public static void StopHookResultProcessing()
+        {
+            Thread worker;
+            lock (hookResultWorkerSync)
+            {
+                hookResultWorkerStopping = true;
+                worker = hookResultWorker;
+                while (hookResultQueue.TryDequeue(out HookResultWorkItem discarded))
+                {
+                    Interlocked.Decrement(ref hookResultQueueCount);
+                }
+            }
+
+            hookResultQueueSignal.Set();
+            if (worker != null && worker != Thread.CurrentThread)
+            {
+                worker.Join(1000);
+            }
+        }
+
         public static Task ProcessingHookResultAsync(
             int socket,
             byte[] bRawBuffer,
@@ -2065,17 +2182,28 @@ namespace WPELibrary.Lib
             if (filterAction != Socket_Cache.Filter.FilterAction.Intercept && res <= 0)
                 return Task.CompletedTask;
 
-            return Task.Run(() =>
+            lock (hookResultWorkerSync)
             {
-                try
-                {                   
-                    Socket_Cache.SocketQueue.SocketPacket_ToQueue(socket, bRawBuffer, bBuffer, ptType, sockaddr, filterAction, packetTime);
-                }
-                catch (Exception ex)
+                if (hookResultWorkerStopping ||
+                    Volatile.Read(ref hookResultQueueCount) >= MaxHookResultQueueCount)
                 {
-                    Socket_Operation.DoLog(nameof(ProcessingHookResultAsync), ex.Message);                    
+                    Interlocked.Increment(ref Socket_Cache.SocketQueue.Dropped_CNT);
+                    return Task.CompletedTask;
                 }
-            });
+
+                EnsureHookResultWorker();
+                hookResultQueue.Enqueue(new HookResultWorkItem(
+                    socket,
+                    bRawBuffer,
+                    bBuffer,
+                    ptType,
+                    filterAction,
+                    sockaddr,
+                    packetTime));
+                Interlocked.Increment(ref hookResultQueueCount);
+            }
+            hookResultQueueSignal.Set();
+            return Task.CompletedTask;
         }
 
         #endregion
@@ -4370,24 +4498,18 @@ namespace WPELibrary.Lib
 
         public static void DoLog(string sFuncName, string sLogContent)
         {
-            Task.Run(() =>
+            if (bDoLog)
             {
-                if (bDoLog)
-                {
-                    Socket_Cache.LogQueue.LogToQueue(Socket_Cache.System.LogType.Socket, sFuncName, sLogContent);
-                }
-            });                                
+                Socket_Cache.LogQueue.LogToQueue(Socket_Cache.System.LogType.Socket, sFuncName, sLogContent);
+            }
         }
 
         public static void DoLog_Proxy(string sFuncName, string sLogContent)
         {
-            Task.Run(() =>
+            if (bDoLog)
             {
-                if (bDoLog)
-                {
-                    Socket_Cache.LogQueue.LogToQueue(Socket_Cache.System.LogType.Proxy, sFuncName, sLogContent);
-                }
-            });            
+                Socket_Cache.LogQueue.LogToQueue(Socket_Cache.System.LogType.Proxy, sFuncName, sLogContent);
+            }
         }
 
         #endregion

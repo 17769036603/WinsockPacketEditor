@@ -26,6 +26,7 @@ namespace WPELibrary
         private readonly Button pickSecond;
         private readonly Button save;
         private readonly Button send;
+        private readonly Button pause;
         private readonly Button stop;
         private readonly Label status;
         private readonly Label title;
@@ -43,6 +44,7 @@ namespace WPELibrary
         private int positionPickTarget;
 
         public event EventHandler SendRequested;
+        public event EventHandler PauseRequested;
         public event EventHandler StopRequested;
         public event EventHandler SaveRequested;
         public event EventHandler Changed;
@@ -223,8 +225,10 @@ namespace WPELibrary
             actions.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             this.save = NewButton("bSweepEditorSave", ResourceText("UI_SaveSweepPreset"), 112);
             this.send = NewButton("bSweepEditorSend", ResourceText("ByteSweep_StartAction"), 72);
+            this.pause = NewButton("bSweepEditorPause", ResourceText("ByteSweep_PauseAction"), 72);
             this.stop = NewButton("bSweepEditorStop", ResourceText("ByteSweep_StopAction"), 72);
             this.send.AccessibleName = ResourceText("ByteSweep_StartAction");
+            this.pause.AccessibleName = ResourceText("ByteSweep_PauseAction");
             this.stop.AccessibleName = ResourceText("ByteSweep_StopAction");
             this.send.Font = new Font(this.send.Font, FontStyle.Bold);
             this.send.BackColor = Color.FromArgb(225, 238, 252);
@@ -233,28 +237,31 @@ namespace WPELibrary
             this.save.FlatStyle = FlatStyle.Standard;
             this.save.Click += delegate { Raise(SaveRequested); };
             this.send.Click += delegate { Raise(SendRequested); };
+            this.pause.Click += delegate { Raise(PauseRequested); };
             this.stop.Click += delegate { Raise(StopRequested); };
 
             TableLayoutPanel actionGrid = new TableLayoutPanel
             {
-                ColumnCount = 3,
+                ColumnCount = 4,
                 Dock = DockStyle.Fill,
                 Margin = new Padding(0),
                 Padding = new Padding(0),
                 RowCount = 1
             };
-            actionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333F));
-            actionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333F));
-            actionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.334F));
+            actionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+            actionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+            actionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+            actionGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
             actionGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            foreach (Button button in new[] { this.send, this.stop, this.save })
+            foreach (Button button in new[] { this.send, this.pause, this.stop, this.save })
             {
                 button.Dock = DockStyle.Fill;
                 button.Margin = new Padding(3, 4, 3, 3);
             }
             actionGrid.Controls.Add(this.send, 0, 0);
-            actionGrid.Controls.Add(this.stop, 1, 0);
-            actionGrid.Controls.Add(this.save, 2, 0);
+            actionGrid.Controls.Add(this.pause, 1, 0);
+            actionGrid.Controls.Add(this.stop, 2, 0);
+            actionGrid.Controls.Add(this.save, 3, 0);
             actions.Controls.Add(actionGrid);
 
             this.footer = new TableLayoutPanel
@@ -752,21 +759,39 @@ namespace WPELibrary
 
         public void SetRunning(bool running, string progressText)
         {
-            this.SetOperationState(running, running, progressText);
+            this.SetOperationState(running, false, running, progressText);
         }
 
         public void SetOperationState(bool busy, bool runningHere, string progressText)
+        {
+            this.SetOperationState(busy, false, runningHere, progressText);
+        }
+
+        public void SetOperationState(
+            bool busy,
+            bool paused,
+            bool runningHere,
+            string progressText)
         {
             this.busy = busy;
             if (busy)
             {
                 CancelPositionPick();
             }
-            this.send.Enabled = !busy;
+            this.send.Text = paused
+                ? ResourceText("ByteSweep_ResumeAction")
+                : ResourceText("ByteSweep_StartAction");
+            this.send.AccessibleName = this.send.Text;
+            this.pause.Text = ResourceText("ByteSweep_PauseAction");
+            this.pause.AccessibleName = this.pause.Text;
+            this.send.Enabled = !busy || (paused && runningHere);
+            this.pause.Enabled = busy && !paused && runningHere;
             this.save.Enabled = !busy;
             this.stop.Enabled = busy && runningHere;
             this.status.Text = string.IsNullOrWhiteSpace(progressText)
-                ? (runningHere
+                ? (paused
+                    ? ResourceText("ByteSweep_Paused")
+                    : runningHere
                     ? ResourceText("ByteSweep_Running")
                     : ResourceText("ByteSweep_Idle"))
                 : progressText;

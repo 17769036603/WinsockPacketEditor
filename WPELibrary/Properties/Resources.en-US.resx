@@ -242,7 +242,10 @@
   <data name="ByteSweep_Idle" xml:space="preserve"><value>Idle</value></data>
   <data name="ByteSweep_Running" xml:space="preserve"><value>Sweeping</value></data>
   <data name="ByteSweep_StartAction" xml:space="preserve"><value>Start sweep</value></data>
+  <data name="ByteSweep_PauseAction" xml:space="preserve"><value>Pause sweep</value></data>
+  <data name="ByteSweep_ResumeAction" xml:space="preserve"><value>Resume sweep</value></data>
   <data name="ByteSweep_StopAction" xml:space="preserve"><value>Stop sweep</value></data>
+  <data name="ByteSweep_Paused" xml:space="preserve"><value>Sweep paused</value></data>
   <data name="ByteSweep_SequentialHeader" xml:space="preserve"><value>Sequential byte sweep</value></data>
   <data name="ByteSweep_SaveSequentialPreset" xml:space="preserve"><value>Save sequential preset</value></data>
   <data name="ByteSweep_UpdateSequentialPreset" xml:space="preserve"><value>Update sequential preset</value></data>
@@ -319,4 +322,121 @@
   <data name="UI_SendModePair" xml:space="preserve"><value>Two-byte combination</value></data>
   <data name="UI_AdvancedEditorCollapse" xml:space="preserve"><value>Advanced editor (collapse)</value></data>
   <data name="UI_AdvancedEditorExpand" xml:space="preserve"><value>Advanced editor (expand)</value></data>
+  <data name="Vision_Tab" xml:space="preserve"><value>Vision</value></data>
+  <data name="Vision_TargetWindow" xml:space="preserve"><value>Target window</value></data>
+  <data name="Vision_RefreshWindows" xml:space="preserve"><value>Refresh windows</value></data>
+  <data name="Vision_X" xml:space="preserve"><value>Region X</value></data>
+  <data name="Vision_Y" xml:space="preserve"><value>Region Y</value></data>
+  <data name="Vision_Width" xml:space="preserve"><value>Region width</value></data>
+  <data name="Vision_Height" xml:space="preserve"><value>Region height</value></data>
+  <data name="Vision_Capture" xml:space="preserve"><value>Capture preview</value></data>
+  <data name="Vision_SaveScreenshot" xml:space="preserve"><value>Save screenshot</value></data>
+  <data name="Vision_SaveProfile" xml:space="preserve"><value>Save region</value></data>
+  <data name="Vision_SelectWindowHint" xml:space="preserve"><value>Select a visible target window.</value></data>
+  <data name="Vision_WindowSelected" xml:space="preserve"><value>Selected: {0}, client area {1}×{2}</value></data>
+  <data name="Vision_CaptureSuccess" xml:space="preserve"><value>Capture succeeded: region ({0},{1}) {2}×{3}</value></data>
+  <data name="Vision_CaptureFailed" xml:space="preserve"><value>Capture failed: {0}</value></data>
+  <data name="Vision_ProfileInvalid" xml:space="preserve"><value>Invalid vision region: {0}</value></data>
+  <data name="Vision_ProfileSaved" xml:space="preserve"><value>Target window and region saved.</value></data>
+  <data name="Vision_NoPreview" xml:space="preserve"><value>Capture a preview first.</value></data>
+  <data name="Vision_PngFilter" xml:space="preserve"><value>PNG images (*.png)|*.png|All files (*.*)|*.*</value></data>
+  <data name="Vision_DefaultFileName" xml:space="preserve"><value>vision-region.png</value></data>
+  <data name="Vision_ScreenshotSaved" xml:space="preserve"><value>Screenshot saved: {0}</value></data>
+  <data name="Vision_Template" xml:space="preserve"><value>Template</value></data>
+  <data name="Vision_LoadTemplate" xml:space="preserve"><value>Load template</value></data>
+  <data name="Vision_SaveTemplate" xml:space="preserve"><value>Save current as template</value></data>
+  <data name="Vision_Threshold" xml:space="preserve"><value>Threshold (%)</value></data>
+  <data name="Vision_Match" xml:space="preserve"><value>Find match</value></data>
+  <data name="Vision_NoTemplate" xml:space="preserve"><value>Load or save a template first.</value></data>
+  <data name="Vision_TemplateLoaded" xml:space="preserve"><value>Template loaded: {0}</value></data>
+  <data name="Vision_TemplateSaved" xml:space="preserve"><value>Template saved: {0}</value></data>
+  <data name="Vision_MatchFound" xml:space="preserve"><value>Match found at ({0},{1}), size {2}x{3}, similarity {4:P1}</value></data>
+  <data name="Vision_MatchNotFound" xml:space="preserve"><value>No match reached the threshold; best similarity {0:P1}.</value></data>
+  <data name="Vision_MatchCancelled" xml:space="preserve"><value>Match cancelled.</value></data>
+  <data name="Vision_TemplateLoadFailed" xml:space="preserve"><value>Template load failed: {0}</value></data>
+  <data name="Vision_TemplateFilter" xml:space="preserve"><value>Images (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp|All files (*.*)|*.*</value></data>
+  <data name="Vision_Ocr" xml:space="preserve"><value>OCR</value></data>
+  <data name="Vision_OcrScale" xml:space="preserve"><value>Scale</value></data>
+  <data name="Vision_OcrBinary" xml:space="preserve"><value>Binary</value></data>
+  <data name="Vision_OcrThreshold" xml:space="preserve"><value>Threshold</value></data>
+  <data name="Vision_OcrKeyword" xml:space="preserve"><value>Keyword</value></data>
+  <data name="Vision_OcrRecognize" xml:space="preserve"><value>Run OCR</value></data>
+  <data name="Vision_OcrHint" xml:space="preserve"><value>OCR uses the current screenshot only; missing Tesseract is reported clearly.</value></data>
+  <data name="Vision_OcrUnavailable" xml:space="preserve"><value>OCR unavailable: {0}</value></data>
+  <data name="Vision_OcrCancelled" xml:space="preserve"><value>OCR cancelled.</value></data>
+  <data name="Vision_OcrSuccess" xml:space="preserve"><value>Recognized text: {0}; confidence {1:P1}.</value></data>
+  <data name="Vision_OcrFailed" xml:space="preserve"><value>OCR failed: {0}</value></data>
+  <data name="Vision_OcrConditionMatched" xml:space="preserve"><value>Keyword matched.</value></data>
+  <data name="Vision_OcrConditionNotMatched" xml:space="preserve"><value>Keyword not matched: {0}</value></data>
+  <data name="Vision_Steps" xml:space="preserve"><value>Assistant steps</value></data>
+  <data name="Vision_AddOcrStep" xml:space="preserve"><value>Add text wait</value></data>
+  <data name="Vision_AddTemplateStep" xml:space="preserve"><value>Add template wait</value></data>
+  <data name="Vision_RemoveStep" xml:space="preserve"><value>Remove step</value></data>
+  <data name="Vision_NoKeyword" xml:space="preserve"><value>Enter an OCR keyword first.</value></data>
+  <data name="Vision_StepAdded" xml:space="preserve"><value>Vision step added; save the robot to persist it.</value></data>
+  <data name="Vision_StepRemoved" xml:space="preserve"><value>Vision step removed; save the robot to persist it.</value></data>
+  <data name="Vision_TemplateStepName" xml:space="preserve"><value>Wait for template</value></data>
+  <data name="Vision_Assistant" xml:space="preserve"><value>Vision assistant</value></data>
+  <data name="Vision_RunSteps" xml:space="preserve"><value>Run vision steps</value></data>
+  <data name="Vision_StopSteps" xml:space="preserve"><value>Stop vision steps</value></data>
+  <data name="Vision_AssistantHint" xml:space="preserve"><value>Add steps and run them against the target window; the state machine observes and logs only.</value></data>
+  <data name="Vision_AssistantNoSteps" xml:space="preserve"><value>Add at least one vision step first.</value></data>
+  <data name="Vision_AssistantRunning" xml:space="preserve"><value>Vision steps are running.</value></data>
+  <data name="Vision_AssistantStopping" xml:space="preserve"><value>Stopping vision steps.</value></data>
+  <data name="Vision_AssistantCancelled" xml:space="preserve"><value>Vision steps cancelled.</value></data>
+  <data name="Vision_AssistantSucceeded" xml:space="preserve"><value>Vision steps completed: {0}.</value></data>
+  <data name="Vision_AssistantFailed" xml:space="preserve"><value>Vision steps failed: {0}</value></data>
+  <data name="Vision_TemplateDisappearStepName" xml:space="preserve"><value>Wait for template to disappear</value></data>
+  <data name="Vision_TextAppears" xml:space="preserve"><value>Text appears</value></data>
+  <data name="Vision_TextDisappears" xml:space="preserve"><value>Text disappears</value></data>
+  <data name="Vision_NumberRange" xml:space="preserve"><value>Number in range</value></data>
+  <data name="Vision_TemplateAppears" xml:space="preserve"><value>Template appears</value></data>
+  <data name="Vision_TemplateDisappears" xml:space="preserve"><value>Template disappears</value></data>
+  <data name="Vision_SelectOcrCondition" xml:space="preserve"><value>Select a text or number condition.</value></data>
+  <data name="Vision_SelectTemplateCondition" xml:space="preserve"><value>Select a template appears/disappears condition.</value></data>
+  <data name="Vision_Minimum" xml:space="preserve"><value>Min</value></data>
+  <data name="Vision_Maximum" xml:space="preserve"><value>Max</value></data>
+  <data name="Vision_Confirmations" xml:space="preserve"><value>Confirmations</value></data>
+  <data name="Vision_PollMilliseconds" xml:space="preserve"><value>Poll (ms)</value></data>
+  <data name="Vision_TimeoutMilliseconds" xml:space="preserve"><value>Timeout (ms)</value></data>
+  <data name="Vision_Retries" xml:space="preserve"><value>Retries</value></data>
+  <data name="Vision_StopPolicy" xml:space="preserve"><value>Stop on failure</value></data>
+  <data name="Vision_SkipPolicy" xml:space="preserve"><value>Skip on failure</value></data>
+  <data name="Vision_CaptureSource" xml:space="preserve"><value>Source</value></data>
+  <data name="Vision_CaptureAuto" xml:space="preserve"><value>Auto</value></data>
+  <data name="Vision_CaptureScreen" xml:space="preserve"><value>Screen</value></data>
+  <data name="Vision_CaptureWindowRender" xml:space="preserve"><value>Window render</value></data>
+  <data name="Vision_CaptureInterval" xml:space="preserve"><value>Min interval</value></data>
+  <data name="Vision_SkipUnchanged" xml:space="preserve"><value>Skip unchanged</value></data>
+  <data name="Vision_NormalizedRegion" xml:space="preserve"><value>Scale with window</value></data>
+  <data name="Vision_HistoryLimit" xml:space="preserve"><value>History</value></data>
+  <data name="Vision_SaveFailureSnapshots" xml:space="preserve"><value>Save failure screenshots</value></data>
+  <data name="Vision_History" xml:space="preserve"><value>Capture history</value></data>
+  <data name="Vision_ClearHistory" xml:space="preserve"><value>Clear</value></data>
+  <data name="Vision_HistoryLoaded" xml:space="preserve"><value>Loaded history capture: {0}</value></data>
+  <data name="Vision_CaptureQuality" xml:space="preserve"><value>Source: {0}; brightness {1:0.0}; contrast {2:0.0}{3}</value></data>
+  <data name="Vision_AddTemplateVariant" xml:space="preserve"><value>Add template variant</value></data>
+  <data name="Vision_SelectTemplateStep" xml:space="preserve"><value>Select a template step and prepare a template first.</value></data>
+  <data name="Vision_TemplateVariantAdded" xml:space="preserve"><value>Template variant added; {0} total.</value></data>
+  <data name="Vision_NoSelection" xml:space="preserve"><value>No valid selection.</value></data>
+  <data name="Vision_SelectionApplied" xml:space="preserve"><value>Drag selection applied; it can be saved as a template.</value></data>
+  <data name="Vision_OcrContrast" xml:space="preserve"><value>Contrast</value></data>
+  <data name="Vision_OcrCancel" xml:space="preserve"><value>Cancel OCR</value></data>
+  <data name="Vision_OcrRunning" xml:space="preserve"><value>Recognizing...</value></data>
+  <data name="Vision_OcrPreview" xml:space="preserve"><value>Preview preprocessing</value></data>
+  <data name="Vision_RestorePreview" xml:space="preserve"><value>Restore template preview</value></data>
+  <data name="Vision_OcrPreviewReady" xml:space="preserve"><value>Current OCR preprocessing result is shown.</value></data>
+  <data name="Vision_RestorePreviewReady" xml:space="preserve"><value>Template preview restored.</value></data>
+  <data name="Vision_OcrAdaptive" xml:space="preserve"><value>Adaptive threshold</value></data>
+  <data name="Vision_OcrAdaptiveWindow" xml:space="preserve"><value>Window</value></data>
+  <data name="Vision_OcrAdaptiveOffset" xml:space="preserve"><value>Offset</value></data>
+  <data name="Vision_OcrInvert" xml:space="preserve"><value>Invert</value></data>
+  <data name="Vision_OcrDenoise" xml:space="preserve"><value>Denoise</value></data>
+  <data name="Vision_OcrSharpen" xml:space="preserve"><value>Sharpen</value></data>
+  <data name="Vision_OcrWhitelist" xml:space="preserve"><value>Whitelist</value></data>
+  <data name="Vision_TemplateNormalize" xml:space="preserve"><value>Normalize brightness</value></data>
+  <data name="Vision_TemplateScale" xml:space="preserve"><value>Allow scale</value></data>
+  <data name="Vision_TemplateTolerance" xml:space="preserve"><value>Tolerance %</value></data>
+  <data name="Vision_MatchCancel" xml:space="preserve"><value>Cancel match</value></data>
+  <data name="Vision_MatchRunning" xml:space="preserve"><value>Matching...</value></data>
 </root>

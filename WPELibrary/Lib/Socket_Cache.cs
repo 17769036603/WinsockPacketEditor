@@ -20,6 +20,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml.Linq;
 using Be.Windows.Forms;
+using WPELibrary.Lib.Vision;
 
 namespace WPELibrary.Lib
 {
@@ -8364,6 +8365,8 @@ namespace WPELibrary.Lib
             {
                 try
                 {
+                    // 支持重复初始化时从干净集合加载，避免同一条滤镜记录被反复追加。
+                    Socket_Cache.FilterList.FilterListClear();
                     DataTable dtFilter = Socket_Cache.DataBase.SelectTable_Filter();
 
                     foreach (DataRow dataRow in dtFilter.Rows) 
@@ -9031,6 +9034,12 @@ namespace WPELibrary.Lib
                     DataTable RInstruction_Copy = sri.RInstruction.Copy();
 
                     Socket_Cache.Robot.AddRobot(IsEnable, RID_New, RName_Copy, RInstruction_Copy, sri.RFolder);
+                    Socket_RobotInfo copiedRobot = Socket_Cache.RobotList.lstRobot
+                        .FirstOrDefault(item => item.RID == RID_New);
+                    if (copiedRobot != null && sri.VisionProfile != null)
+                    {
+                        copiedRobot.VisionProfile = sri.VisionProfile.Clone();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -9700,6 +9709,48 @@ namespace WPELibrary.Lib
                 }
             }
 
+            private static bool VisionColumnExists(DataRow row, string columnName)
+            {
+                return row != null && row.Table != null &&
+                    row.Table.Columns.Contains(columnName) &&
+                    row[columnName] != DBNull.Value;
+            }
+
+            private static int VisionInt(DataRow row, string columnName, int fallback)
+            {
+                return VisionColumnExists(row, columnName)
+                    ? Convert.ToInt32(row[columnName])
+                    : fallback;
+            }
+
+            private static long VisionLong(DataRow row, string columnName, long fallback)
+            {
+                return VisionColumnExists(row, columnName)
+                    ? Convert.ToInt64(row[columnName])
+                    : fallback;
+            }
+
+            private static double VisionDouble(DataRow row, string columnName, double fallback)
+            {
+                return VisionColumnExists(row, columnName)
+                    ? Convert.ToDouble(row[columnName], CultureInfo.InvariantCulture)
+                    : fallback;
+            }
+
+            private static bool VisionBool(DataRow row, string columnName, bool fallback)
+            {
+                return VisionColumnExists(row, columnName)
+                    ? Convert.ToBoolean(row[columnName])
+                    : fallback;
+            }
+
+            private static string VisionString(DataRow row, string columnName, string fallback)
+            {
+                return VisionColumnExists(row, columnName)
+                    ? row[columnName].ToString()
+                    : fallback;
+            }
+
             #endregion                        
 
             #region//机器人列表的列表操作
@@ -9827,8 +9878,9 @@ namespace WPELibrary.Lib
             {
                 try
                 {
+                    // 支持重复初始化时从干净集合加载，避免助手预设在内存中重复显示。
+                    Socket_Cache.RobotList.RobotListClear();
                     DataTable dtRobot = Socket_Cache.DataBase.SelectTable_Robot();
-                    Socket_Cache.RobotList.lstFolders.Clear();
                     DataTable dtFolders = Socket_Cache.DataBase.SelectTable_RobotFolder();
                     foreach (DataRow folderRow in dtFolders.Rows)
                     {
@@ -9865,6 +9917,74 @@ namespace WPELibrary.Lib
                         }
 
                         Socket_Cache.Robot.AddRobot(IsEnable, RID, RName, RInstruction, RFolder);
+
+                        Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot
+                            .FirstOrDefault(item => item.RID == RID);
+                        DataTable dtVisionProfile = Socket_Cache.DataBase.SelectTable_RobotVisionProfile(RID);
+                        if (robot != null && dtVisionProfile.Rows.Count > 0)
+                        {
+                            DataRow visionRow = dtVisionProfile.Rows[0];
+                            Socket_VisionProfile profile = new Socket_VisionProfile
+                            {
+                                WindowHandle = VisionLong(visionRow, "WindowHandle", 0L),
+                                ProcessId = VisionInt(visionRow, "ProcessId", 0),
+                                ProcessName = VisionString(visionRow, "ProcessName", string.Empty),
+                                ProcessPath = VisionString(visionRow, "ProcessPath", string.Empty),
+                                ProcessStartTimeUtcTicks = VisionLong(visionRow, "ProcessStartTimeUtcTicks", 0L),
+                                WindowTitle = VisionString(visionRow, "WindowTitle", string.Empty),
+                                Region = new VisionRegion
+                                {
+                                    X = VisionInt(visionRow, "RegionX", 0),
+                                    Y = VisionInt(visionRow, "RegionY", 0),
+                                    Width = VisionInt(visionRow, "RegionWidth", 0),
+                                    Height = VisionInt(visionRow, "RegionHeight", 0),
+                                    UseNormalizedCoordinates = VisionBool(visionRow, "RegionNormalized", false),
+                                    ReferenceWidth = VisionInt(visionRow, "RegionReferenceWidth", 0),
+                                    ReferenceHeight = VisionInt(visionRow, "RegionReferenceHeight", 0)
+                                },
+                                OcrOptions = new VisionOcrOptions
+                                {
+                                    ScaleFactor = VisionInt(visionRow, "OcrScale", 2),
+                                    ConvertToGrayscale = true,
+                                    UseBinaryThreshold = VisionBool(visionRow, "OcrBinary", false),
+                                    BinaryThreshold = (byte)Math.Max(0, Math.Min(255, VisionInt(visionRow, "OcrThreshold", 160))),
+                                    Contrast = VisionDouble(visionRow, "OcrContrast", 1D),
+                                    UseAdaptiveThreshold = VisionBool(visionRow, "OcrAdaptive", false),
+                                    AdaptiveThresholdWindowSize = VisionInt(visionRow, "OcrAdaptiveWindow", 15),
+                                    AdaptiveThresholdOffset = VisionInt(visionRow, "OcrAdaptiveOffset", 8),
+                                    Invert = VisionBool(visionRow, "OcrInvert", false),
+                                    UseDenoise = VisionBool(visionRow, "OcrDenoise", false),
+                                    UseSharpen = VisionBool(visionRow, "OcrSharpen", false),
+                                    CharacterWhitelist = VisionString(visionRow, "OcrWhitelist", string.Empty),
+                                    CharacterBlacklist = VisionString(visionRow, "OcrBlacklist", string.Empty),
+                                    Language = VisionString(visionRow, "OcrLanguage", "chi_sim+eng"),
+                                    ExecutablePath = VisionString(visionRow, "OcrExecutable", "tesseract.exe"),
+                                    TessdataPath = VisionString(visionRow, "OcrTessdataPath", string.Empty),
+                                    TimeoutMilliseconds = VisionInt(visionRow, "OcrTimeout", 5000),
+                                    PageSegmentationMode = VisionInt(visionRow, "OcrPsm", 6)
+                                },
+                                OcrCondition = new VisionTextCondition
+                                {
+                                    ExpectedText = VisionString(visionRow, "OcrKeyword", string.Empty),
+                                    MatchMode = (VisionTextMatchMode)VisionInt(visionRow, "OcrMatchMode", 0),
+                                    MinimumConfidence = VisionDouble(visionRow, "OcrMinimumConfidence", 0.5D),
+                                    MinimumNumber = VisionDouble(visionRow, "OcrMinimumNumber", double.MinValue),
+                                    MaximumNumber = VisionDouble(visionRow, "OcrMaximumNumber", double.MaxValue)
+                                },
+                                CaptureSettings = new VisionCaptureSettings
+                                {
+                                    SourceMode = (VisionCaptureSourceMode)VisionInt(visionRow, "CaptureSource", 0),
+                                    MinimumIntervalMilliseconds = VisionInt(visionRow, "CaptureInterval", 150),
+                                    SkipUnchangedFrames = VisionBool(visionRow, "CaptureSkipUnchanged", true),
+                                    HistoryLimit = VisionInt(visionRow, "CaptureHistoryLimit", 30),
+                                    SaveFailureSnapshots = VisionBool(visionRow, "CaptureSaveFailures", false),
+                                    FailureSnapshotDirectory = VisionString(visionRow, "CaptureFailureDirectory", string.Empty)
+                                }
+                            };
+                            robot.VisionProfile = profile;
+                        }
+
+                        LoadVisionAssistantSteps(RID, robot);
                     }
                     foreach (Socket_RobotInfo robot in Socket_Cache.RobotList.lstRobot)
                     {
@@ -9877,6 +9997,98 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+            }
+
+            private static void LoadVisionAssistantSteps(Guid rid, Socket_RobotInfo robot)
+            {
+                if (robot == null)
+                {
+                    return;
+                }
+
+                DataTable dtConditions = Socket_Cache.DataBase.SelectTable_RobotVisionCondition(rid);
+                foreach (DataRow row in dtConditions.Rows)
+                {
+                    try
+                    {
+                        int conditionTypeValue = VisionInt(row, "ConditionType", 0);
+                        if (!Enum.IsDefined(typeof(VisionConditionType), conditionTypeValue))
+                        {
+                            continue;
+                        }
+
+                        VisionConditionDefinition condition = new VisionConditionDefinition
+                        {
+                            Name = VisionString(row, "Name", string.Empty),
+                            Type = (VisionConditionType)conditionTypeValue,
+                            Region = new VisionRegion
+                            {
+                                X = VisionInt(row, "RegionX", 0),
+                                Y = VisionInt(row, "RegionY", 0),
+                                Width = VisionInt(row, "RegionWidth", 0),
+                                Height = VisionInt(row, "RegionHeight", 0),
+                                UseNormalizedCoordinates = VisionBool(row, "RegionNormalized", false),
+                                ReferenceWidth = VisionInt(row, "RegionReferenceWidth", 0),
+                                ReferenceHeight = VisionInt(row, "RegionReferenceHeight", 0)
+                            },
+                            TextCondition = new VisionTextCondition
+                            {
+                                ExpectedText = VisionString(row, "Keyword", string.Empty),
+                                MatchMode = (VisionTextMatchMode)VisionInt(row, "MatchMode", 0),
+                                MinimumNumber = VisionDouble(row, "MinimumNumber", double.MinValue),
+                                MaximumNumber = VisionDouble(row, "MaximumNumber", double.MaxValue),
+                                MinimumConfidence = VisionDouble(row, "MinimumConfidence", 0.5D)
+                            },
+                            MinimumSimilarity = VisionDouble(row, "MinimumSimilarity", 0.9D),
+                            NormalizeTemplateBrightness = VisionBool(row, "TemplateNormalize", true),
+                            AllowTemplateScaleVariation = VisionBool(row, "TemplateScaleVariation", false),
+                            TemplateMinimumScale = VisionDouble(row, "TemplateMinScale", 0.9D),
+                            TemplateMaximumScale = VisionDouble(row, "TemplateMaxScale", 1.1D),
+                            TemplateScaleStep = VisionDouble(row, "TemplateScaleStep", 0.05D),
+                            RequiredConfirmations = VisionInt(row, "RequiredConfirmations", 3),
+                            PollIntervalMilliseconds = VisionInt(row, "PollInterval", 250),
+                            TimeoutMilliseconds = VisionInt(row, "Timeout", 10000),
+                            MaxRetries = VisionInt(row, "MaxRetries", 0),
+                            FailurePolicy = (VisionFailurePolicy)VisionInt(row, "FailurePolicy", 0)
+                        };
+
+                        if (VisionColumnExists(row, "TemplatePng"))
+                        {
+                            byte[] templateBytes = row["TemplatePng"] as byte[];
+                            condition.Template = VisionResourceSerializer.FromPngBytes(templateBytes);
+                        }
+                        string variantText = VisionString(row, "TemplateVariants", string.Empty);
+                        if (!string.IsNullOrWhiteSpace(variantText))
+                        {
+                            foreach (string encoded in variantText.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+                            {
+                                try
+                                {
+                                    Bitmap variant = VisionResourceSerializer.FromPngBytes(Convert.FromBase64String(encoded));
+                                    if (variant != null)
+                                    {
+                                        condition.TemplateVariants.Add(variant);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                                }
+                            }
+                        }
+
+                        robot.VisionProfile.AssistantSteps.Add(new VisionAssistantStep
+                        {
+                            Name = condition.Name,
+                            Condition = condition,
+                            Action = null
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    }
                 }
             }
 
@@ -9998,6 +10210,12 @@ namespace WPELibrary.Lib
                             xeRobot.Add(xeInstruction);
                         }
 
+                        XElement xeVisionProfile = BuildVisionProfileXml(sri.VisionProfile);
+                        if (xeVisionProfile != null)
+                        {
+                            xeRobot.Add(xeVisionProfile);
+                        }
+
                         xeRoot.Add(xeRobot);
                     }
 
@@ -10009,6 +10227,129 @@ namespace WPELibrary.Lib
                 }
 
                 return null;
+            }
+
+            private static XElement BuildVisionProfileXml(Socket_VisionProfile profile)
+            {
+                if (profile == null || !profile.HasConfiguration)
+                {
+                    return null;
+                }
+
+                VisionOcrOptions ocrOptions = profile.OcrOptions ?? new VisionOcrOptions();
+                VisionTextCondition ocrCondition = profile.OcrCondition ?? new VisionTextCondition();
+                XElement vision = new XElement(
+                    "VisionProfile",
+                    new XElement("WindowHandle", profile.WindowHandle),
+                    new XElement("ProcessId", profile.ProcessId),
+                    new XElement("ProcessName", profile.ProcessName ?? string.Empty),
+                    new XElement("ProcessPath", profile.ProcessPath ?? string.Empty),
+                    new XElement("ProcessStartTimeUtcTicks", profile.ProcessStartTimeUtcTicks),
+                    new XElement("WindowTitle", profile.WindowTitle ?? string.Empty),
+                    new XElement("Region",
+                        new XElement("X", profile.Region == null ? 0 : profile.Region.X),
+                        new XElement("Y", profile.Region == null ? 0 : profile.Region.Y),
+                        new XElement("Width", profile.Region == null ? 0 : profile.Region.Width),
+                        new XElement("Height", profile.Region == null ? 0 : profile.Region.Height),
+                        new XElement("UseNormalizedCoordinates", profile.Region != null && profile.Region.UseNormalizedCoordinates),
+                        new XElement("ReferenceWidth", profile.Region == null ? 0 : profile.Region.ReferenceWidth),
+                        new XElement("ReferenceHeight", profile.Region == null ? 0 : profile.Region.ReferenceHeight)),
+                    new XElement("CaptureSettings",
+                        new XElement("SourceMode", profile.CaptureSettings == null ? 0 : (int)profile.CaptureSettings.SourceMode),
+                        new XElement("MinimumIntervalMilliseconds", profile.CaptureSettings == null ? 150 : profile.CaptureSettings.MinimumIntervalMilliseconds),
+                        new XElement("SkipUnchangedFrames", profile.CaptureSettings == null || profile.CaptureSettings.SkipUnchangedFrames),
+                        new XElement("HistoryLimit", profile.CaptureSettings == null ? 30 : profile.CaptureSettings.HistoryLimit),
+                        new XElement("SaveFailureSnapshots", profile.CaptureSettings != null && profile.CaptureSettings.SaveFailureSnapshots),
+                        new XElement("FailureSnapshotDirectory", profile.CaptureSettings == null ? string.Empty : profile.CaptureSettings.FailureSnapshotDirectory ?? string.Empty)),
+                    new XElement("OcrOptions",
+                        new XElement("ScaleFactor", ocrOptions.ScaleFactor),
+                        new XElement("ConvertToGrayscale", ocrOptions.ConvertToGrayscale),
+                        new XElement("UseBinaryThreshold", ocrOptions.UseBinaryThreshold),
+                        new XElement("BinaryThreshold", ocrOptions.BinaryThreshold),
+                        new XElement("Contrast", ocrOptions.Contrast.ToString(CultureInfo.InvariantCulture)),
+                        new XElement("UseAdaptiveThreshold", ocrOptions.UseAdaptiveThreshold),
+                        new XElement("AdaptiveThresholdWindowSize", ocrOptions.AdaptiveThresholdWindowSize),
+                        new XElement("AdaptiveThresholdOffset", ocrOptions.AdaptiveThresholdOffset),
+                        new XElement("Invert", ocrOptions.Invert),
+                        new XElement("UseDenoise", ocrOptions.UseDenoise),
+                        new XElement("UseSharpen", ocrOptions.UseSharpen),
+                        new XElement("CharacterWhitelist", ocrOptions.CharacterWhitelist ?? string.Empty),
+                        new XElement("CharacterBlacklist", ocrOptions.CharacterBlacklist ?? string.Empty),
+                        new XElement("Language", ocrOptions.Language ?? string.Empty),
+                        new XElement("ExecutablePath", ocrOptions.ExecutablePath ?? string.Empty),
+                        new XElement("TessdataPath", ocrOptions.TessdataPath ?? string.Empty),
+                        new XElement("TimeoutMilliseconds", ocrOptions.TimeoutMilliseconds),
+                        new XElement("PageSegmentationMode", ocrOptions.PageSegmentationMode)),
+                    new XElement("OcrCondition",
+                        new XElement("MatchMode", (int)ocrCondition.MatchMode),
+                        new XElement("ExpectedText", ocrCondition.ExpectedText ?? string.Empty),
+                        new XElement("MinimumConfidence", ocrCondition.MinimumConfidence.ToString(CultureInfo.InvariantCulture)),
+                        new XElement("MinimumNumber", ocrCondition.MinimumNumber.ToString(CultureInfo.InvariantCulture)),
+                        new XElement("MaximumNumber", ocrCondition.MaximumNumber.ToString(CultureInfo.InvariantCulture))));
+
+                if (profile.AssistantSteps != null && profile.AssistantSteps.Count > 0)
+                {
+                    XElement steps = new XElement("AssistantSteps");
+                    foreach (VisionAssistantStep step in profile.AssistantSteps)
+                    {
+                        if (step == null || step.Condition == null)
+                        {
+                            continue;
+                        }
+
+                        VisionConditionDefinition condition = step.Condition;
+                        VisionTextCondition textCondition = condition.TextCondition ?? new VisionTextCondition();
+                        XElement xeStep = new XElement(
+                            "Step",
+                            new XAttribute("Name", step.Name ?? string.Empty),
+                            new XElement("Condition",
+                                new XAttribute("Type", (int)condition.Type),
+                                new XAttribute("MinimumSimilarity", condition.MinimumSimilarity.ToString(CultureInfo.InvariantCulture)),
+                                new XAttribute("NormalizeTemplateBrightness", condition.NormalizeTemplateBrightness),
+                                new XAttribute("AllowTemplateScaleVariation", condition.AllowTemplateScaleVariation),
+                                new XAttribute("TemplateMinimumScale", condition.TemplateMinimumScale.ToString(CultureInfo.InvariantCulture)),
+                                new XAttribute("TemplateMaximumScale", condition.TemplateMaximumScale.ToString(CultureInfo.InvariantCulture)),
+                                new XAttribute("TemplateScaleStep", condition.TemplateScaleStep.ToString(CultureInfo.InvariantCulture)),
+                                new XAttribute("RequiredConfirmations", condition.RequiredConfirmations),
+                                new XAttribute("PollInterval", condition.PollIntervalMilliseconds),
+                                new XAttribute("Timeout", condition.TimeoutMilliseconds),
+                                new XAttribute("MaxRetries", condition.MaxRetries),
+                                new XAttribute("FailurePolicy", (int)condition.FailurePolicy),
+                                new XElement("Region",
+                                    new XElement("X", condition.Region == null ? 0 : condition.Region.X),
+                                    new XElement("Y", condition.Region == null ? 0 : condition.Region.Y),
+                                    new XElement("Width", condition.Region == null ? 0 : condition.Region.Width),
+                                    new XElement("Height", condition.Region == null ? 0 : condition.Region.Height),
+                                    new XElement("UseNormalizedCoordinates", condition.Region != null && condition.Region.UseNormalizedCoordinates),
+                                    new XElement("ReferenceWidth", condition.Region == null ? 0 : condition.Region.ReferenceWidth),
+                                    new XElement("ReferenceHeight", condition.Region == null ? 0 : condition.Region.ReferenceHeight)),
+                                new XElement("TextCondition",
+                                    new XAttribute("MatchMode", (int)textCondition.MatchMode),
+                                    new XAttribute("ExpectedText", textCondition.ExpectedText ?? string.Empty),
+                                    new XAttribute("MinimumConfidence", textCondition.MinimumConfidence.ToString(CultureInfo.InvariantCulture)),
+                                    new XAttribute("MinimumNumber", textCondition.MinimumNumber.ToString(CultureInfo.InvariantCulture)),
+                                    new XAttribute("MaximumNumber", textCondition.MaximumNumber.ToString(CultureInfo.InvariantCulture))),
+                                new XElement(
+                                    "TemplatePng",
+                                    Convert.ToBase64String(VisionResourceSerializer.ToPngBytes(condition.Template)))));
+                        if (condition.TemplateVariants != null && condition.TemplateVariants.Count > 0)
+                        {
+                            xeStep.Element("Condition").Add(
+                                new XElement(
+                                    "TemplateVariants",
+                                    string.Join(";", condition.TemplateVariants
+                                        .Where(variant => variant != null)
+                                        .Select(variant => Convert.ToBase64String(VisionResourceSerializer.ToPngBytes(variant))))));
+                        }
+                        steps.Add(xeStep);
+                    }
+                    if (steps.HasElements)
+                    {
+                        vision.Add(steps);
+                    }
+                }
+
+                return vision;
             }
 
             #endregion
@@ -10160,12 +10501,266 @@ namespace WPELibrary.Lib
                         }
 
                         Socket_Cache.Robot.AddRobot(IsEnable, RID, RName, RInstruction, RFolder);
+                        Socket_RobotInfo importedRobot = Socket_Cache.RobotList.lstRobot
+                            .FirstOrDefault(item => item.RID == RID);
+                        XElement xeVision = xeRobot.Element("VisionProfile");
+                        if (importedRobot != null && xeVision != null)
+                        {
+                            importedRobot.VisionProfile = ParseVisionProfile(xeVision);
+                        }
                     }
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
                 }
+            }
+
+            private static Socket_VisionProfile ParseVisionProfile(XElement xeVision)
+            {
+                Socket_VisionProfile profile = new Socket_VisionProfile();
+                if (xeVision == null)
+                {
+                    return profile;
+                }
+
+                XElement xeRegion = xeVision.Element("Region");
+                profile.WindowHandle = XmlLong(xeVision, "WindowHandle", 0L);
+                profile.ProcessId = XmlInt(xeVision, "ProcessId", 0);
+                profile.ProcessName = XmlString(xeVision, "ProcessName", string.Empty);
+                profile.ProcessPath = XmlString(xeVision, "ProcessPath", string.Empty);
+                profile.ProcessStartTimeUtcTicks = XmlLong(xeVision, "ProcessStartTimeUtcTicks", 0L);
+                profile.WindowTitle = XmlString(xeVision, "WindowTitle", string.Empty);
+                if (xeRegion != null)
+                {
+                    profile.Region = new VisionRegion
+                    {
+                        X = XmlInt(xeRegion, "X", 0),
+                        Y = XmlInt(xeRegion, "Y", 0),
+                        Width = XmlInt(xeRegion, "Width", 0),
+                        Height = XmlInt(xeRegion, "Height", 0),
+                        UseNormalizedCoordinates = XmlBool(xeRegion, "UseNormalizedCoordinates", false),
+                        ReferenceWidth = XmlInt(xeRegion, "ReferenceWidth", 0),
+                        ReferenceHeight = XmlInt(xeRegion, "ReferenceHeight", 0)
+                    };
+                }
+
+                XElement xeCaptureSettings = xeVision.Element("CaptureSettings");
+                if (xeCaptureSettings != null)
+                {
+                    profile.CaptureSettings = new VisionCaptureSettings
+                    {
+                        SourceMode = (VisionCaptureSourceMode)XmlInt(xeCaptureSettings, "SourceMode", 0),
+                        MinimumIntervalMilliseconds = XmlInt(xeCaptureSettings, "MinimumIntervalMilliseconds", 150),
+                        SkipUnchangedFrames = XmlBool(xeCaptureSettings, "SkipUnchangedFrames", true),
+                        HistoryLimit = XmlInt(xeCaptureSettings, "HistoryLimit", 30),
+                        SaveFailureSnapshots = XmlBool(xeCaptureSettings, "SaveFailureSnapshots", false),
+                        FailureSnapshotDirectory = XmlString(xeCaptureSettings, "FailureSnapshotDirectory", string.Empty)
+                    };
+                }
+
+                XElement xeOcrOptions = xeVision.Element("OcrOptions");
+                if (xeOcrOptions != null)
+                {
+                    profile.OcrOptions = new VisionOcrOptions
+                    {
+                        ScaleFactor = XmlInt(xeOcrOptions, "ScaleFactor", 2),
+                        ConvertToGrayscale = XmlBool(xeOcrOptions, "ConvertToGrayscale", true),
+                        UseBinaryThreshold = XmlBool(xeOcrOptions, "UseBinaryThreshold", false),
+                        BinaryThreshold = (byte)Math.Max(0, Math.Min(255, XmlInt(xeOcrOptions, "BinaryThreshold", 160))),
+                        Contrast = XmlDouble(xeOcrOptions, "Contrast", 1D),
+                        UseAdaptiveThreshold = XmlBool(xeOcrOptions, "UseAdaptiveThreshold", false),
+                        AdaptiveThresholdWindowSize = XmlInt(xeOcrOptions, "AdaptiveThresholdWindowSize", 15),
+                        AdaptiveThresholdOffset = XmlInt(xeOcrOptions, "AdaptiveThresholdOffset", 8),
+                        Invert = XmlBool(xeOcrOptions, "Invert", false),
+                        UseDenoise = XmlBool(xeOcrOptions, "UseDenoise", false),
+                        UseSharpen = XmlBool(xeOcrOptions, "UseSharpen", false),
+                        CharacterWhitelist = XmlString(xeOcrOptions, "CharacterWhitelist", string.Empty),
+                        CharacterBlacklist = XmlString(xeOcrOptions, "CharacterBlacklist", string.Empty),
+                        Language = XmlString(xeOcrOptions, "Language", "chi_sim+eng"),
+                        ExecutablePath = XmlString(xeOcrOptions, "ExecutablePath", "tesseract.exe"),
+                        TessdataPath = XmlString(xeOcrOptions, "TessdataPath", string.Empty),
+                        TimeoutMilliseconds = XmlInt(xeOcrOptions, "TimeoutMilliseconds", 5000),
+                        PageSegmentationMode = XmlInt(xeOcrOptions, "PageSegmentationMode", 6)
+                    };
+                }
+
+                XElement xeOcrCondition = xeVision.Element("OcrCondition");
+                if (xeOcrCondition != null)
+                {
+                    profile.OcrCondition = new VisionTextCondition
+                    {
+                        MatchMode = (VisionTextMatchMode)XmlInt(xeOcrCondition, "MatchMode", 0),
+                        ExpectedText = XmlString(xeOcrCondition, "ExpectedText", string.Empty),
+                        MinimumConfidence = XmlDouble(xeOcrCondition, "MinimumConfidence", 0.5D),
+                        MinimumNumber = XmlDouble(xeOcrCondition, "MinimumNumber", double.MinValue),
+                        MaximumNumber = XmlDouble(xeOcrCondition, "MaximumNumber", double.MaxValue)
+                    };
+                }
+
+                XElement xeSteps = xeVision.Element("AssistantSteps");
+                if (xeSteps != null)
+                {
+                    foreach (XElement xeStep in xeSteps.Elements("Step"))
+                    {
+                        XElement xeCondition = xeStep.Element("Condition");
+                        if (xeCondition == null)
+                        {
+                            continue;
+                        }
+
+                        int typeValue = XmlAttributeInt(xeCondition, "Type", 0);
+                        if (!Enum.IsDefined(typeof(VisionConditionType), typeValue))
+                        {
+                            continue;
+                        }
+
+                        XElement xeConditionRegion = xeCondition.Element("Region");
+                        XElement xeTextCondition = xeCondition.Element("TextCondition");
+                        VisionConditionDefinition condition = new VisionConditionDefinition
+                        {
+                            Type = (VisionConditionType)typeValue,
+                            NormalizeTemplateBrightness = XmlAttributeBool(xeCondition, "NormalizeTemplateBrightness", true),
+                            AllowTemplateScaleVariation = XmlAttributeBool(xeCondition, "AllowTemplateScaleVariation", false),
+                            TemplateMinimumScale = XmlAttributeDouble(xeCondition, "TemplateMinimumScale", 0.9D),
+                            TemplateMaximumScale = XmlAttributeDouble(xeCondition, "TemplateMaximumScale", 1.1D),
+                            TemplateScaleStep = XmlAttributeDouble(xeCondition, "TemplateScaleStep", 0.05D),
+                            Region = new VisionRegion
+                            {
+                                X = xeConditionRegion == null ? 0 : XmlInt(xeConditionRegion, "X", 0),
+                                Y = xeConditionRegion == null ? 0 : XmlInt(xeConditionRegion, "Y", 0),
+                                Width = xeConditionRegion == null ? 0 : XmlInt(xeConditionRegion, "Width", 0),
+                                Height = xeConditionRegion == null ? 0 : XmlInt(xeConditionRegion, "Height", 0),
+                                UseNormalizedCoordinates = xeConditionRegion != null && XmlBool(xeConditionRegion, "UseNormalizedCoordinates", false),
+                                ReferenceWidth = xeConditionRegion == null ? 0 : XmlInt(xeConditionRegion, "ReferenceWidth", 0),
+                                ReferenceHeight = xeConditionRegion == null ? 0 : XmlInt(xeConditionRegion, "ReferenceHeight", 0)
+                            },
+                            TextCondition = new VisionTextCondition
+                            {
+                                MatchMode = (VisionTextMatchMode)XmlAttributeInt(xeTextCondition, "MatchMode", 0),
+                                ExpectedText = XmlAttributeString(xeTextCondition, "ExpectedText", string.Empty),
+                                MinimumConfidence = XmlAttributeDouble(xeTextCondition, "MinimumConfidence", 0.5D),
+                                MinimumNumber = XmlAttributeDouble(xeTextCondition, "MinimumNumber", double.MinValue),
+                                MaximumNumber = XmlAttributeDouble(xeTextCondition, "MaximumNumber", double.MaxValue)
+                            },
+                            MinimumSimilarity = XmlAttributeDouble(xeCondition, "MinimumSimilarity", 0.9D),
+                            RequiredConfirmations = XmlAttributeInt(xeCondition, "RequiredConfirmations", 3),
+                            PollIntervalMilliseconds = XmlAttributeInt(xeCondition, "PollInterval", 250),
+                            TimeoutMilliseconds = XmlAttributeInt(xeCondition, "Timeout", 10000),
+                            MaxRetries = XmlAttributeInt(xeCondition, "MaxRetries", 0),
+                            FailurePolicy = (VisionFailurePolicy)XmlAttributeInt(xeCondition, "FailurePolicy", 0)
+                        };
+                        string templateText = XmlString(xeCondition, "TemplatePng", string.Empty);
+                        if (!string.IsNullOrWhiteSpace(templateText))
+                        {
+                            try
+                            {
+                                condition.Template = VisionResourceSerializer.FromPngBytes(
+                                    Convert.FromBase64String(templateText));
+                            }
+                            catch (Exception ex)
+                            {
+                                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                            }
+                        }
+                        string variantsText = XmlString(xeCondition, "TemplateVariants", string.Empty);
+                        if (!string.IsNullOrWhiteSpace(variantsText))
+                        {
+                            foreach (string encoded in variantsText.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+                            {
+                                try
+                                {
+                                    Bitmap variant = VisionResourceSerializer.FromPngBytes(Convert.FromBase64String(encoded));
+                                    if (variant != null)
+                                    {
+                                        condition.TemplateVariants.Add(variant);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                                }
+                            }
+                        }
+
+                        profile.AssistantSteps.Add(new VisionAssistantStep
+                        {
+                            Name = XmlAttributeString(xeStep, "Name", string.Empty),
+                            Condition = condition,
+                            Action = null
+                        });
+                    }
+                }
+
+                return profile;
+            }
+
+            private static string XmlString(XElement parent, string name, string fallback)
+            {
+                XElement element = parent == null ? null : parent.Element(name);
+                return element == null ? fallback : element.Value;
+            }
+
+            private static int XmlInt(XElement parent, string name, int fallback)
+            {
+                int value;
+                return int.TryParse(XmlString(parent, name, string.Empty), out value) ? value : fallback;
+            }
+
+            private static long XmlLong(XElement parent, string name, long fallback)
+            {
+                long value;
+                return long.TryParse(XmlString(parent, name, string.Empty), out value) ? value : fallback;
+            }
+
+            private static double XmlDouble(XElement parent, string name, double fallback)
+            {
+                double value;
+                return double.TryParse(
+                    XmlString(parent, name, string.Empty),
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out value)
+                    ? value
+                    : fallback;
+            }
+
+            private static bool XmlBool(XElement parent, string name, bool fallback)
+            {
+                bool value;
+                return bool.TryParse(XmlString(parent, name, string.Empty), out value) ? value : fallback;
+            }
+
+            private static string XmlAttributeString(XElement element, string name, string fallback)
+            {
+                XAttribute attribute = element == null ? null : element.Attribute(name);
+                return attribute == null ? fallback : attribute.Value;
+            }
+
+            private static int XmlAttributeInt(XElement element, string name, int fallback)
+            {
+                int value;
+                return int.TryParse(XmlAttributeString(element, name, string.Empty), out value) ? value : fallback;
+            }
+
+            private static double XmlAttributeDouble(XElement element, string name, double fallback)
+            {
+                double value;
+                return double.TryParse(
+                    XmlAttributeString(element, name, string.Empty),
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out value)
+                    ? value
+                    : fallback;
+            }
+
+            private static bool XmlAttributeBool(XElement element, string name, bool fallback)
+            {
+                bool value;
+                return bool.TryParse(XmlAttributeString(element, name, string.Empty), out value)
+                    ? value
+                    : fallback;
             }
 
             #endregion
@@ -11001,22 +11596,33 @@ namespace WPELibrary.Lib
             public static bool AddFolder(string folderName)
             {
                 string normalizedName = (folderName ?? string.Empty).Trim();
-                if (string.IsNullOrEmpty(normalizedName) ||
-                    lstFolders.Any(item => string.Equals(item, normalizedName, StringComparison.OrdinalIgnoreCase)))
+                if (string.IsNullOrEmpty(normalizedName))
                 {
                     return false;
                 }
 
+                bool added = false;
+                Action add = () =>
+                {
+                    if (lstFolders.Any(item => string.Equals(item, normalizedName, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        return;
+                    }
+
+                    lstFolders.Add(normalizedName);
+                    added = true;
+                };
+
                 if (Socket_Cache.System.InvokeAction != null)
                 {
-                    Socket_Cache.System.InvokeAction(() => lstFolders.Add(normalizedName));
+                    Socket_Cache.System.InvokeAction(add);
                 }
                 else
                 {
-                    lstFolders.Add(normalizedName);
+                    add();
                 }
 
-                return true;
+                return added;
             }
 
             public static void RenameFolder(string oldName, string newName)
@@ -11271,6 +11877,8 @@ namespace WPELibrary.Lib
             {
                 try
                 {
+                    // 支持重复初始化时从干净集合加载，避免发送预设被重复追加。
+                    Socket_Cache.SendList.SendListClear();
                     DataTable dtFolders = Socket_Cache.DataBase.SelectTable_SendFolder();
                     foreach (DataRow folderRow in dtFolders.Rows)
                     {
@@ -11820,6 +12428,8 @@ namespace WPELibrary.Lib
             {
                 try
                 {
+                    // 支持重复初始化时从干净集合加载，避免递进预设被重复追加。
+                    Socket_Cache.ByteSweepList.Clear();
                     DataTable folders = Socket_Cache.DataBase.SelectTable_ByteSweepFolder();
                     foreach (DataRow row in folders.Rows)
                     {
@@ -13464,6 +14074,83 @@ namespace WPELibrary.Lib
                         sql += "SortOrder INTEGER NOT NULL";
                         sql += ");";
 
+                        sql += "CREATE TABLE IF NOT EXISTS RobotVisionProfile (";
+                        sql += "GUID TEXT NOT NULL PRIMARY KEY,";
+                        sql += "WindowHandle INTEGER DEFAULT 0,";
+                        sql += "ProcessId INTEGER DEFAULT 0,";
+                        sql += "ProcessName TEXT,";
+                        sql += "ProcessPath TEXT,";
+                        sql += "ProcessStartTimeUtcTicks INTEGER DEFAULT 0,";
+                        sql += "WindowTitle TEXT,";
+                        sql += "RegionX INTEGER DEFAULT 0,";
+                        sql += "RegionY INTEGER DEFAULT 0,";
+                        sql += "RegionWidth INTEGER DEFAULT 0,";
+                        sql += "RegionHeight INTEGER DEFAULT 0,";
+                        sql += "RegionNormalized BOOLEAN DEFAULT 0,";
+                        sql += "RegionReferenceWidth INTEGER DEFAULT 0,";
+                        sql += "RegionReferenceHeight INTEGER DEFAULT 0,";
+                        sql += "CaptureSource INTEGER DEFAULT 0,";
+                        sql += "CaptureInterval INTEGER DEFAULT 150,";
+                        sql += "CaptureSkipUnchanged BOOLEAN DEFAULT 1,";
+                        sql += "CaptureHistoryLimit INTEGER DEFAULT 30,";
+                        sql += "CaptureSaveFailures BOOLEAN DEFAULT 0,";
+                        sql += "CaptureFailureDirectory TEXT,";
+                        sql += "OcrScale INTEGER DEFAULT 2,";
+                        sql += "OcrBinary BOOLEAN DEFAULT 0,";
+                        sql += "OcrThreshold INTEGER DEFAULT 160,";
+                        sql += "OcrContrast REAL DEFAULT 1,";
+                        sql += "OcrAdaptive BOOLEAN DEFAULT 0,";
+                        sql += "OcrAdaptiveWindow INTEGER DEFAULT 15,";
+                        sql += "OcrAdaptiveOffset INTEGER DEFAULT 8,";
+                        sql += "OcrInvert BOOLEAN DEFAULT 0,";
+                        sql += "OcrDenoise BOOLEAN DEFAULT 0,";
+                        sql += "OcrSharpen BOOLEAN DEFAULT 0,";
+                        sql += "OcrWhitelist TEXT,";
+                        sql += "OcrBlacklist TEXT,";
+                        sql += "OcrLanguage TEXT,";
+                        sql += "OcrExecutable TEXT,";
+                        sql += "OcrTessdataPath TEXT,";
+                        sql += "OcrTimeout INTEGER DEFAULT 5000,";
+                        sql += "OcrPsm INTEGER DEFAULT 6,";
+                        sql += "OcrKeyword TEXT,";
+                        sql += "OcrMatchMode INTEGER DEFAULT 0,";
+                        sql += "OcrMinimumConfidence REAL DEFAULT 0.5,";
+                        sql += "OcrMinimumNumber REAL DEFAULT 0,";
+                        sql += "OcrMaximumNumber REAL DEFAULT 0,";
+                        sql += "FOREIGN KEY (GUID) REFERENCES Robot(GUID)";
+                        sql += ");";
+
+                        sql += "CREATE TABLE IF NOT EXISTS RobotVisionCondition (";
+                        sql += "GUID TEXT NOT NULL PRIMARY KEY,";
+                        sql += "RobotGUID TEXT NOT NULL,";
+                        sql += "StepIndex INTEGER NOT NULL,";
+                        sql += "Name TEXT,";
+                        sql += "ConditionType INTEGER NOT NULL,";
+                        sql += "RegionX INTEGER DEFAULT 0,";
+                        sql += "RegionY INTEGER DEFAULT 0,";
+                        sql += "RegionWidth INTEGER DEFAULT 0,";
+                        sql += "RegionHeight INTEGER DEFAULT 0,";
+                        sql += "Keyword TEXT,";
+                        sql += "MatchMode INTEGER DEFAULT 0,";
+                        sql += "MinimumNumber REAL DEFAULT 0,";
+                        sql += "MaximumNumber REAL DEFAULT 0,";
+                        sql += "MinimumConfidence REAL DEFAULT 0.5,";
+                        sql += "MinimumSimilarity REAL DEFAULT 0.9,";
+                        sql += "TemplateNormalize BOOLEAN DEFAULT 1,";
+                        sql += "TemplateScaleVariation BOOLEAN DEFAULT 0,";
+                        sql += "TemplateMinScale REAL DEFAULT 0.9,";
+                        sql += "TemplateMaxScale REAL DEFAULT 1.1,";
+                        sql += "TemplateScaleStep REAL DEFAULT 0.05,";
+                        sql += "RequiredConfirmations INTEGER DEFAULT 3,";
+                        sql += "PollInterval INTEGER DEFAULT 250,";
+                        sql += "Timeout INTEGER DEFAULT 10000,";
+                        sql += "MaxRetries INTEGER DEFAULT 0,";
+                        sql += "FailurePolicy INTEGER DEFAULT 0,";
+                        sql += "TemplatePng BLOB,";
+                        sql += "TemplateVariants TEXT,";
+                        sql += "FOREIGN KEY (RobotGUID) REFERENCES Robot(GUID)";
+                        sql += ");";
+
                         using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
                         {
                             conn.Open();
@@ -13481,6 +14168,86 @@ namespace WPELibrary.Lib
                             catch (SQLiteException)
                             {
                                 // 已存在时无需处理。
+                            }
+
+                            string[] visionColumns =
+                            {
+                                "OcrScale INTEGER DEFAULT 2",
+                                "OcrBinary BOOLEAN DEFAULT 0",
+                                "OcrThreshold INTEGER DEFAULT 160",
+                                "OcrContrast REAL DEFAULT 1",
+                                "OcrAdaptive BOOLEAN DEFAULT 0",
+                                "OcrAdaptiveWindow INTEGER DEFAULT 15",
+                                "OcrAdaptiveOffset INTEGER DEFAULT 8",
+                                "OcrInvert BOOLEAN DEFAULT 0",
+                                "OcrDenoise BOOLEAN DEFAULT 0",
+                                "OcrSharpen BOOLEAN DEFAULT 0",
+                                "OcrWhitelist TEXT",
+                                "OcrBlacklist TEXT",
+                                "OcrLanguage TEXT",
+                                "OcrExecutable TEXT",
+                                "OcrTessdataPath TEXT",
+                                "OcrTimeout INTEGER DEFAULT 5000",
+                                "OcrPsm INTEGER DEFAULT 6",
+                                "OcrKeyword TEXT",
+                                "OcrMatchMode INTEGER DEFAULT 0",
+                                "OcrMinimumConfidence REAL DEFAULT 0.5",
+                                "OcrMinimumNumber REAL DEFAULT 0",
+                                "OcrMaximumNumber REAL DEFAULT 0"
+                                ,"ProcessPath TEXT"
+                                ,"ProcessStartTimeUtcTicks INTEGER DEFAULT 0"
+                                ,"RegionNormalized BOOLEAN DEFAULT 0"
+                                ,"RegionReferenceWidth INTEGER DEFAULT 0"
+                                ,"RegionReferenceHeight INTEGER DEFAULT 0"
+                                ,"CaptureSource INTEGER DEFAULT 0"
+                                ,"CaptureInterval INTEGER DEFAULT 150"
+                                ,"CaptureSkipUnchanged BOOLEAN DEFAULT 1"
+                                ,"CaptureHistoryLimit INTEGER DEFAULT 30"
+                                ,"CaptureSaveFailures BOOLEAN DEFAULT 0"
+                                ,"CaptureFailureDirectory TEXT"
+                            };
+                            foreach (string visionColumn in visionColumns)
+                            {
+                                try
+                                {
+                                    using (SQLiteCommand alterVision = new SQLiteCommand(
+                                        "ALTER TABLE RobotVisionProfile ADD COLUMN " + visionColumn + ";",
+                                        conn))
+                                    {
+                                        alterVision.ExecuteNonQuery();
+                                    }
+                                }
+                                catch (SQLiteException)
+                                {
+                                    // Existing databases may already contain this column.
+                                }
+                            }
+                            string[] conditionColumns =
+                            {
+                                "RegionNormalized BOOLEAN DEFAULT 0",
+                                "RegionReferenceWidth INTEGER DEFAULT 0",
+                                "RegionReferenceHeight INTEGER DEFAULT 0",
+                                "TemplateNormalize BOOLEAN DEFAULT 1",
+                                "TemplateScaleVariation BOOLEAN DEFAULT 0",
+                                "TemplateMinScale REAL DEFAULT 0.9",
+                                "TemplateMaxScale REAL DEFAULT 1.1",
+                                "TemplateScaleStep REAL DEFAULT 0.05",
+                                "TemplateVariants TEXT"
+                            };
+                            foreach (string conditionColumn in conditionColumns)
+                            {
+                                try
+                                {
+                                    using (SQLiteCommand alterCondition = new SQLiteCommand(
+                                        "ALTER TABLE RobotVisionCondition ADD COLUMN " + conditionColumn + ";",
+                                        conn))
+                                    {
+                                        alterCondition.ExecuteNonQuery();
+                                    }
+                                }
+                                catch (SQLiteException)
+                                {
+                                }
                             }
                         }
                     }
@@ -13565,6 +14332,52 @@ namespace WPELibrary.Lib
                 return dtReturn;
             }
 
+            public static DataTable SelectTable_RobotVisionProfile(Guid guid)
+            {
+                DataTable dtReturn = new DataTable();
+
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand(
+                        "SELECT * FROM RobotVisionProfile WHERE GUID = @GUID;", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@GUID", guid.ToString().ToUpper());
+                        SQLiteDataAdapter adapter = new SQLiteDataAdapter(cmd);
+                        adapter.Fill(dtReturn);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+
+                return dtReturn;
+            }
+
+            public static DataTable SelectTable_RobotVisionCondition(Guid guid)
+            {
+                DataTable dtReturn = new DataTable();
+
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand(
+                        "SELECT * FROM RobotVisionCondition WHERE RobotGUID = @RobotGUID ORDER BY StepIndex ASC;", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@RobotGUID", guid.ToString().ToUpper());
+                        SQLiteDataAdapter adapter = new SQLiteDataAdapter(cmd);
+                        adapter.Fill(dtReturn);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+
+                return dtReturn;
+            }
+
             public static void DeleteTable_Robot()
             {
                 try
@@ -13572,6 +14385,8 @@ namespace WPELibrary.Lib
                     using (SQLiteConnection conn = new SQLiteConnection(conStr))
                     {
                         string sql = "DELETE FROM RobotInstruction;";
+                        sql += "DELETE FROM RobotVisionCondition;";
+                        sql += "DELETE FROM RobotVisionProfile;";
                         sql += "DELETE FROM Robot;";
 
                         using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
@@ -13675,11 +14490,165 @@ namespace WPELibrary.Lib
                                 cmd.ExecuteNonQuery();
                             }
                         }
+
+                        if (sri.VisionProfile != null && sri.VisionProfile.HasConfiguration)
+                        {
+                            sql = "INSERT OR REPLACE INTO RobotVisionProfile (";
+                            sql += "GUID, WindowHandle, ProcessId, ProcessName, ProcessPath, ProcessStartTimeUtcTicks, WindowTitle,";
+                            sql += "RegionX, RegionY, RegionWidth, RegionHeight, RegionNormalized, RegionReferenceWidth, RegionReferenceHeight,";
+                            sql += "CaptureSource, CaptureInterval, CaptureSkipUnchanged, CaptureHistoryLimit, CaptureSaveFailures, CaptureFailureDirectory,";
+                            sql += "OcrScale, OcrBinary, OcrThreshold, OcrContrast, OcrAdaptive, OcrAdaptiveWindow, OcrAdaptiveOffset,";
+                            sql += "OcrInvert, OcrDenoise, OcrSharpen, OcrWhitelist, OcrBlacklist, OcrLanguage,";
+                            sql += "OcrExecutable, OcrTessdataPath, OcrTimeout, OcrPsm, OcrKeyword,";
+                            sql += "OcrMatchMode, OcrMinimumConfidence, OcrMinimumNumber, OcrMaximumNumber";
+                            sql += ") VALUES (";
+                            sql += "@GUID, @WindowHandle, @ProcessId, @ProcessName, @ProcessPath, @ProcessStartTimeUtcTicks, @WindowTitle,";
+                            sql += "@RegionX, @RegionY, @RegionWidth, @RegionHeight, @RegionNormalized, @RegionReferenceWidth, @RegionReferenceHeight,";
+                            sql += "@CaptureSource, @CaptureInterval, @CaptureSkipUnchanged, @CaptureHistoryLimit, @CaptureSaveFailures, @CaptureFailureDirectory,";
+                            sql += "@OcrScale, @OcrBinary, @OcrThreshold, @OcrContrast, @OcrAdaptive, @OcrAdaptiveWindow, @OcrAdaptiveOffset,";
+                            sql += "@OcrInvert, @OcrDenoise, @OcrSharpen, @OcrWhitelist, @OcrBlacklist, @OcrLanguage,";
+                            sql += "@OcrExecutable, @OcrTessdataPath, @OcrTimeout, @OcrPsm, @OcrKeyword,";
+                            sql += "@OcrMatchMode, @OcrMinimumConfidence, @OcrMinimumNumber, @OcrMaximumNumber";
+                            sql += ");";
+
+                            using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
+                            {
+                                Socket_VisionProfile profile = sri.VisionProfile;
+                                VisionOcrOptions ocrOptions = profile.OcrOptions ?? new VisionOcrOptions();
+                                VisionTextCondition ocrCondition = profile.OcrCondition ?? new VisionTextCondition();
+                                cmd.Parameters.AddWithValue("@GUID", sri.RID.ToString().ToUpper());
+                                cmd.Parameters.AddWithValue("@WindowHandle", profile.WindowHandle);
+                                cmd.Parameters.AddWithValue("@ProcessId", profile.ProcessId);
+                                cmd.Parameters.AddWithValue("@ProcessName", profile.ProcessName ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@ProcessPath", profile.ProcessPath ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@ProcessStartTimeUtcTicks", profile.ProcessStartTimeUtcTicks);
+                                cmd.Parameters.AddWithValue("@WindowTitle", profile.WindowTitle ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@RegionX", profile.Region.X);
+                                cmd.Parameters.AddWithValue("@RegionY", profile.Region.Y);
+                                cmd.Parameters.AddWithValue("@RegionWidth", profile.Region.Width);
+                                cmd.Parameters.AddWithValue("@RegionHeight", profile.Region.Height);
+                                cmd.Parameters.AddWithValue("@RegionNormalized", profile.Region.UseNormalizedCoordinates);
+                                cmd.Parameters.AddWithValue("@RegionReferenceWidth", profile.Region.ReferenceWidth);
+                                cmd.Parameters.AddWithValue("@RegionReferenceHeight", profile.Region.ReferenceHeight);
+                                VisionCaptureSettings captureSettings = profile.CaptureSettings ?? new VisionCaptureSettings();
+                                cmd.Parameters.AddWithValue("@CaptureSource", (int)captureSettings.SourceMode);
+                                cmd.Parameters.AddWithValue("@CaptureInterval", captureSettings.MinimumIntervalMilliseconds);
+                                cmd.Parameters.AddWithValue("@CaptureSkipUnchanged", captureSettings.SkipUnchangedFrames);
+                                cmd.Parameters.AddWithValue("@CaptureHistoryLimit", captureSettings.HistoryLimit);
+                                cmd.Parameters.AddWithValue("@CaptureSaveFailures", captureSettings.SaveFailureSnapshots);
+                                cmd.Parameters.AddWithValue("@CaptureFailureDirectory", captureSettings.FailureSnapshotDirectory ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrScale", ocrOptions.ScaleFactor);
+                                cmd.Parameters.AddWithValue("@OcrBinary", ocrOptions.UseBinaryThreshold);
+                                cmd.Parameters.AddWithValue("@OcrThreshold", ocrOptions.BinaryThreshold);
+                                cmd.Parameters.AddWithValue("@OcrContrast", ocrOptions.Contrast);
+                                cmd.Parameters.AddWithValue("@OcrAdaptive", ocrOptions.UseAdaptiveThreshold);
+                                cmd.Parameters.AddWithValue("@OcrAdaptiveWindow", ocrOptions.AdaptiveThresholdWindowSize);
+                                cmd.Parameters.AddWithValue("@OcrAdaptiveOffset", ocrOptions.AdaptiveThresholdOffset);
+                                cmd.Parameters.AddWithValue("@OcrInvert", ocrOptions.Invert);
+                                cmd.Parameters.AddWithValue("@OcrDenoise", ocrOptions.UseDenoise);
+                                cmd.Parameters.AddWithValue("@OcrSharpen", ocrOptions.UseSharpen);
+                                cmd.Parameters.AddWithValue("@OcrWhitelist", ocrOptions.CharacterWhitelist ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrBlacklist", ocrOptions.CharacterBlacklist ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrLanguage", ocrOptions.Language ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrExecutable", ocrOptions.ExecutablePath ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrTessdataPath", ocrOptions.TessdataPath ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrTimeout", ocrOptions.TimeoutMilliseconds);
+                                cmd.Parameters.AddWithValue("@OcrPsm", ocrOptions.PageSegmentationMode);
+                                cmd.Parameters.AddWithValue("@OcrKeyword", ocrCondition.ExpectedText ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrMatchMode", (int)ocrCondition.MatchMode);
+                                cmd.Parameters.AddWithValue("@OcrMinimumConfidence", ocrCondition.MinimumConfidence);
+                                cmd.Parameters.AddWithValue("@OcrMinimumNumber", ocrCondition.MinimumNumber);
+                                cmd.Parameters.AddWithValue("@OcrMaximumNumber", ocrCondition.MaximumNumber);
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+
+                        InsertTable_RobotVisionConditions(conn, sri);
                     }
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+            }
+
+            private static void InsertTable_RobotVisionConditions(
+                SQLiteConnection conn,
+                Socket_RobotInfo sri)
+            {
+                if (sri == null || sri.VisionProfile == null ||
+                    sri.VisionProfile.AssistantSteps == null)
+                {
+                    return;
+                }
+
+                int stepIndex = 0;
+                foreach (VisionAssistantStep step in sri.VisionProfile.AssistantSteps)
+                {
+                    if (step == null || step.Condition == null)
+                    {
+                        continue;
+                    }
+
+                    VisionConditionDefinition condition = step.Condition;
+                    byte[] templatePng = VisionResourceSerializer.ToPngBytes(condition.Template);
+                    string templateVariants = string.Empty;
+                    if (condition.TemplateVariants != null)
+                    {
+                        templateVariants = string.Join(";", condition.TemplateVariants
+                            .Where(variant => variant != null)
+                            .Select(variant => Convert.ToBase64String(VisionResourceSerializer.ToPngBytes(variant))));
+                    }
+                    string sql = "INSERT INTO RobotVisionCondition (";
+                    sql += "GUID, RobotGUID, StepIndex, Name, ConditionType,";
+                    sql += "RegionX, RegionY, RegionWidth, RegionHeight, RegionNormalized, RegionReferenceWidth, RegionReferenceHeight, Keyword, MatchMode,";
+                    sql += "MinimumNumber, MaximumNumber, MinimumConfidence, MinimumSimilarity,";
+                    sql += "TemplateNormalize, TemplateScaleVariation, TemplateMinScale, TemplateMaxScale, TemplateScaleStep,";
+                    sql += "RequiredConfirmations, PollInterval, Timeout, MaxRetries, FailurePolicy, TemplatePng, TemplateVariants";
+                    sql += ") VALUES (";
+                    sql += "@GUID, @RobotGUID, @StepIndex, @Name, @ConditionType,";
+                    sql += "@RegionX, @RegionY, @RegionWidth, @RegionHeight, @RegionNormalized, @RegionReferenceWidth, @RegionReferenceHeight, @Keyword, @MatchMode,";
+                    sql += "@MinimumNumber, @MaximumNumber, @MinimumConfidence, @MinimumSimilarity,";
+                    sql += "@TemplateNormalize, @TemplateScaleVariation, @TemplateMinScale, @TemplateMaxScale, @TemplateScaleStep,";
+                    sql += "@RequiredConfirmations, @PollInterval, @Timeout, @MaxRetries, @FailurePolicy, @TemplatePng, @TemplateVariants";
+                    sql += ");";
+
+                    using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
+                    {
+                        VisionTextCondition textCondition = condition.TextCondition ?? new VisionTextCondition();
+                        VisionRegion region = condition.Region ?? new VisionRegion();
+                        cmd.Parameters.AddWithValue("@GUID", Guid.NewGuid().ToString().ToUpper());
+                        cmd.Parameters.AddWithValue("@RobotGUID", sri.RID.ToString().ToUpper());
+                        cmd.Parameters.AddWithValue("@StepIndex", stepIndex++);
+                        cmd.Parameters.AddWithValue("@Name", step.Name ?? string.Empty);
+                        cmd.Parameters.AddWithValue("@ConditionType", (int)condition.Type);
+                        cmd.Parameters.AddWithValue("@RegionX", region.X);
+                        cmd.Parameters.AddWithValue("@RegionY", region.Y);
+                        cmd.Parameters.AddWithValue("@RegionWidth", region.Width);
+                        cmd.Parameters.AddWithValue("@RegionHeight", region.Height);
+                        cmd.Parameters.AddWithValue("@RegionNormalized", region.UseNormalizedCoordinates);
+                        cmd.Parameters.AddWithValue("@RegionReferenceWidth", region.ReferenceWidth);
+                        cmd.Parameters.AddWithValue("@RegionReferenceHeight", region.ReferenceHeight);
+                        cmd.Parameters.AddWithValue("@Keyword", textCondition.ExpectedText ?? string.Empty);
+                        cmd.Parameters.AddWithValue("@MatchMode", (int)textCondition.MatchMode);
+                        cmd.Parameters.AddWithValue("@MinimumNumber", textCondition.MinimumNumber);
+                        cmd.Parameters.AddWithValue("@MaximumNumber", textCondition.MaximumNumber);
+                        cmd.Parameters.AddWithValue("@MinimumConfidence", textCondition.MinimumConfidence);
+                        cmd.Parameters.AddWithValue("@MinimumSimilarity", condition.MinimumSimilarity);
+                        cmd.Parameters.AddWithValue("@TemplateNormalize", condition.NormalizeTemplateBrightness);
+                        cmd.Parameters.AddWithValue("@TemplateScaleVariation", condition.AllowTemplateScaleVariation);
+                        cmd.Parameters.AddWithValue("@TemplateMinScale", condition.TemplateMinimumScale);
+                        cmd.Parameters.AddWithValue("@TemplateMaxScale", condition.TemplateMaximumScale);
+                        cmd.Parameters.AddWithValue("@TemplateScaleStep", condition.TemplateScaleStep);
+                        cmd.Parameters.AddWithValue("@RequiredConfirmations", condition.RequiredConfirmations);
+                        cmd.Parameters.AddWithValue("@PollInterval", condition.PollIntervalMilliseconds);
+                        cmd.Parameters.AddWithValue("@Timeout", condition.TimeoutMilliseconds);
+                        cmd.Parameters.AddWithValue("@MaxRetries", condition.MaxRetries);
+                        cmd.Parameters.AddWithValue("@FailurePolicy", (int)condition.FailurePolicy);
+                        cmd.Parameters.AddWithValue("@TemplatePng", templatePng);
+                        cmd.Parameters.AddWithValue("@TemplateVariants", templateVariants);
+                        cmd.ExecuteNonQuery();
+                    }
                 }
             }
 

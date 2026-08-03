@@ -157,6 +157,24 @@ Assert-Contains $queue "lock (QueueSync)" `
 Assert-Contains $queue "public static async Task SocketToList(int maxItems = 1)" `
     "Capture list draining must support bounded batch consumption."
 
+$operation = Read-SourceFile "WPELibrary\Lib\Socket_Operation.cs"
+Assert-Contains $operation "private const int MaxHookResultQueueCount = 20000;" `
+    "Hook result processing must have a hard upper bound before packet work is accepted."
+Assert-Contains $operation "private static void ProcessHookResults()" `
+    "Hook result processing must use a dedicated consumer instead of one task per packet."
+Assert-Contains $socketForm "Socket_Operation.StopHookResultProcessing();" `
+    "Hook result processing must be stopped during form shutdown."
+$hookResultMethod = [regex]::Match(
+    $operation,
+    '(?s)public static Task ProcessingHookResultAsync\(.*?\n        }').Value
+Assert-NotContains $hookResultMethod "Task.Run" `
+    "Hook callbacks must not create one ThreadPool task per packet."
+$logMethod = [regex]::Match(
+    $operation,
+    '(?s)public static void DoLog\(.*?\n        }').Value
+Assert-NotContains $logMethod "Task.Run" `
+    "Logging must not create one ThreadPool task per message."
+
 $mainHook = Read-SourceFile "WPELibrary\Socket_Form.cs"
 Assert-Contains $mainHook "UI_HookStatusStarting" `
     "The main workspace must expose an explicit hook-starting state."
@@ -330,7 +348,10 @@ Assert-Contains $englishResources "Clear capture (&amp;C)" `
     "The English clear action must describe its current-capture scope."
 foreach ($resourceKey in @(
     "ByteSweep_StartAction",
+    "ByteSweep_PauseAction",
+    "ByteSweep_ResumeAction",
     "ByteSweep_StopAction",
+    "ByteSweep_Paused",
     "ByteSweep_SequentialHeader",
     "ByteSweep_PairMode",
     "ByteSweep_CombinationEstimate",
@@ -384,6 +405,39 @@ Assert-NotContains $loadSystemList "Task.Run(" `
     "Startup list loading must complete before shutdown persistence can run."
 Assert-Contains $loadSystemList "Socket_Cache.SendList.LoadSendList_FromDB();" `
     "Startup list loading must synchronously populate send presets."
+
+$loaders = @(
+    @{
+        Name = "filter"
+        Marker = "public static void LoadFilterList_FromDB()"
+        Clear = "Socket_Cache.FilterList.FilterListClear();"
+    },
+    @{
+        Name = "send"
+        Marker = "public static void LoadSendList_FromDB()"
+        Clear = "Socket_Cache.SendList.SendListClear();"
+    },
+    @{
+        Name = "byte-sweep"
+        Marker = "public static void LoadByteSweepList_FromDB()"
+        Clear = "Socket_Cache.ByteSweepList.Clear();"
+    },
+    @{
+        Name = "robot"
+        Marker = "public static void LoadRobotList_FromDB()"
+        Clear = "Socket_Cache.RobotList.RobotListClear();"
+    }
+)
+foreach ($loader in $loaders) {
+    $loaderBody = [regex]::Match(
+        $cache,
+        '(?s)' + [regex]::Escape($loader.Marker) + '.*?#endregion').Value
+    if ([string]::IsNullOrWhiteSpace($loaderBody)) {
+        throw "Could not locate $($loader.Name) database loader."
+    }
+    Assert-Contains $loaderBody $loader.Clear `
+        "$($loader.Name) database loader must clear the in-memory list before loading."
+}
 Assert-Contains $cache "ReplaceByteSweepList(folders, presets)" `
     "Byte-sweep persistence must use the transactional replacement path."
 Assert-Contains $cache "conn.BeginTransaction()" `
