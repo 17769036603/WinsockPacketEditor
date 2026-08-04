@@ -1,4 +1,5 @@
 using System;
+using System.Drawing;
 
 namespace WPELibrary.Lib.Vision
 {
@@ -20,6 +21,16 @@ namespace WPELibrary.Lib.Vision
 
         public string FailureSnapshotDirectory { get; set; }
 
+        /// <summary>
+        /// When enabled, the target client area must have the exact configured size.
+        /// Existing profiles keep this disabled for backwards compatibility.
+        /// </summary>
+        public bool RequireExactClientSize { get; set; }
+
+        public int RequiredClientWidth { get; set; }
+
+        public int RequiredClientHeight { get; set; }
+
         public VisionCaptureSettings()
         {
             this.SourceMode = VisionCaptureSourceMode.Auto;
@@ -30,6 +41,9 @@ namespace WPELibrary.Lib.Vision
             this.BlankContrastThreshold = 2D;
             this.SaveFailureSnapshots = false;
             this.FailureSnapshotDirectory = string.Empty;
+            this.RequireExactClientSize = false;
+            this.RequiredClientWidth = 0;
+            this.RequiredClientHeight = 0;
         }
 
         public void Validate()
@@ -58,6 +72,28 @@ namespace WPELibrary.Lib.Vision
             {
                 throw new ArgumentOutOfRangeException("FailureSnapshotDirectory");
             }
+            if (this.RequireExactClientSize &&
+                (this.RequiredClientWidth <= 0 || this.RequiredClientHeight <= 0))
+            {
+                throw new ArgumentOutOfRangeException("RequiredClientSize");
+            }
+        }
+
+        public bool IsClientSizeMatch(Size clientSize)
+        {
+            return !this.RequireExactClientSize ||
+                (clientSize.Width == this.RequiredClientWidth &&
+                 clientSize.Height == this.RequiredClientHeight);
+        }
+
+        public string DescribeClientSizeMismatch(Size clientSize)
+        {
+            return string.Format(
+                "目标窗口客户区必须为 {0}×{1}，当前为 {2}×{3}。请恢复雷电模拟器分辨率后再运行助手。",
+                this.RequiredClientWidth,
+                this.RequiredClientHeight,
+                clientSize.Width,
+                clientSize.Height);
         }
 
         public VisionCaptureSettings Clone()
@@ -71,7 +107,10 @@ namespace WPELibrary.Lib.Vision
                 BlankBrightnessThreshold = this.BlankBrightnessThreshold,
                 BlankContrastThreshold = this.BlankContrastThreshold,
                 SaveFailureSnapshots = this.SaveFailureSnapshots,
-                FailureSnapshotDirectory = this.FailureSnapshotDirectory
+                FailureSnapshotDirectory = this.FailureSnapshotDirectory,
+                RequireExactClientSize = this.RequireExactClientSize,
+                RequiredClientWidth = this.RequiredClientWidth,
+                RequiredClientHeight = this.RequiredClientHeight
             };
         }
     }

@@ -40,6 +40,16 @@ namespace WPELibrary.Lib.Vision
 
         public int PageSegmentationMode { get; set; }
 
+        public VisionOcrEngine Engine { get; set; }
+
+        public string OnnxModelDirectory { get; set; }
+
+        public double OnnxDetectionThreshold { get; set; }
+
+        public double OnnxRecognitionThreshold { get; set; }
+
+        public int OnnxMaxImageSide { get; set; }
+
         public VisionOcrOptions()
         {
             this.ScaleFactor = 2;
@@ -60,6 +70,11 @@ namespace WPELibrary.Lib.Vision
             this.TessdataPath = string.Empty;
             this.TimeoutMilliseconds = 5000;
             this.PageSegmentationMode = 6;
+            this.Engine = VisionOcrEngine.Auto;
+            this.OnnxModelDirectory = "models\\ocr";
+            this.OnnxDetectionThreshold = 0.3D;
+            this.OnnxRecognitionThreshold = 0.5D;
+            this.OnnxMaxImageSide = 960;
         }
 
         public void Validate()
@@ -102,6 +117,22 @@ namespace WPELibrary.Lib.Vision
             {
                 throw new ArgumentOutOfRangeException("PageSegmentationMode");
             }
+            if (!Enum.IsDefined(typeof(VisionOcrEngine), this.Engine))
+            {
+                throw new ArgumentOutOfRangeException("Engine");
+            }
+            if (this.OnnxDetectionThreshold < 0D || this.OnnxDetectionThreshold > 1D)
+            {
+                throw new ArgumentOutOfRangeException("OnnxDetectionThreshold");
+            }
+            if (this.OnnxRecognitionThreshold < 0D || this.OnnxRecognitionThreshold > 1D)
+            {
+                throw new ArgumentOutOfRangeException("OnnxRecognitionThreshold");
+            }
+            if (this.OnnxMaxImageSide < 128 || this.OnnxMaxImageSide > 4096)
+            {
+                throw new ArgumentOutOfRangeException("OnnxMaxImageSide");
+            }
         }
 
         public VisionOcrOptions Clone()
@@ -125,7 +156,12 @@ namespace WPELibrary.Lib.Vision
                 ExecutablePath = this.ExecutablePath,
                 TessdataPath = this.TessdataPath,
                 TimeoutMilliseconds = this.TimeoutMilliseconds,
-                PageSegmentationMode = this.PageSegmentationMode
+                PageSegmentationMode = this.PageSegmentationMode,
+                Engine = this.Engine,
+                OnnxModelDirectory = this.OnnxModelDirectory,
+                OnnxDetectionThreshold = this.OnnxDetectionThreshold,
+                OnnxRecognitionThreshold = this.OnnxRecognitionThreshold,
+                OnnxMaxImageSide = this.OnnxMaxImageSide
             };
         }
     }

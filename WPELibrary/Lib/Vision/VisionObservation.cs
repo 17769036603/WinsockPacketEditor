@@ -6,7 +6,11 @@ namespace WPELibrary.Lib.Vision
 
         public VisionMatchResult TemplateResult { get; set; }
 
+        public VisionColorMatchResult ColorResult { get; set; }
+
         public string Error { get; set; }
+
+        public bool IsTerminalFailure { get; set; }
 
         public string CaptureSource { get; set; }
 
@@ -31,6 +35,7 @@ namespace WPELibrary.Lib.Vision
         public VisionObservation()
         {
             this.Error = string.Empty;
+            this.IsTerminalFailure = false;
             this.CaptureSource = string.Empty;
             this.CaptureWarning = string.Empty;
             this.DiagnosticSnapshotPath = string.Empty;
@@ -46,9 +51,23 @@ namespace WPELibrary.Lib.Vision
             return new VisionObservation { TemplateResult = result };
         }
 
+        public static VisionObservation FromColor(VisionColorMatchResult result)
+        {
+            return new VisionObservation { ColorResult = result };
+        }
+
         public static VisionObservation Failed(string error)
         {
             return new VisionObservation { Error = error ?? string.Empty };
+        }
+
+        public static VisionObservation TerminalFailure(string error)
+        {
+            return new VisionObservation
+            {
+                Error = error ?? string.Empty,
+                IsTerminalFailure = true
+            };
         }
     }
 }

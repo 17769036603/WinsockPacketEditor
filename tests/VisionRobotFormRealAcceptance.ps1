@@ -235,7 +235,7 @@ try {
         "The Robot form log must contain OCR evidence from the successful run."
     Write-Host "ROBOT_FORM_APPEARS: capture=True; ocr=True; template=True; run=True"
 
-    $stepsCombo.SelectedIndex = 0
+    $stepsCombo.SelectedIndex = 1
     Invoke-PrivateEvent $robotForm "bRemoveVisionStep_Click"
     Assert-True ($profile.AssistantSteps.Count -eq 0) `
         "The Robot form must remove the completed vision step."
@@ -244,7 +244,7 @@ try {
     $confirmations.Value = 2
     $pollInterval.Value = 80
     $timeout.Value = 8000
-    Invoke-PrivateEvent $robotForm "bAddVisionOcrStep_Click"
+    Invoke-PrivateEvent $robotForm "bConfirmVisionAction_Click"
     Assert-True ($profile.AssistantSteps.Count -eq 1 -and
         $profile.AssistantSteps[0].Condition.Type -eq [WPELibrary.Lib.Vision.VisionConditionType]::TextDisappears) `
         "The Robot form must add a text-disappeared step through its editor."
@@ -259,14 +259,14 @@ try {
         "The Robot form must retain logs for a text-disappeared run."
     Write-Host "ROBOT_FORM_DISAPPEARS: editor=True; run=True"
 
-    $stepsCombo.SelectedIndex = 0
+    $stepsCombo.SelectedIndex = 1
     Invoke-PrivateEvent $robotForm "bRemoveVisionStep_Click"
     $conditionType.SelectedIndex = 0
     $keyword.Text = "text-that-does-not-exist"
     $confirmations.Value = 1
     $pollInterval.Value = 80
     $timeout.Value = 20000
-    Invoke-PrivateEvent $robotForm "bAddVisionOcrStep_Click"
+    Invoke-PrivateEvent $robotForm "bConfirmVisionAction_Click"
     [System.IO.File]::WriteAllText($targetCommandFile, "show")
     Start-Sleep -Milliseconds 300
     Pump-Ui

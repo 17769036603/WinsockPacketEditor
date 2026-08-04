@@ -129,6 +129,27 @@ Assert-True ($run.CompletedSteps -eq 1 -and $action.Executions -eq 1) `
 Assert-True ($provider.Calls -eq 5) `
     "A false observation must reset consecutive confirmation counting."
 
+$verificationProvider = [VisionStateMachineRegression.QueueProvider]::new()
+$verificationProvider.Add($completed)
+$verificationProvider.Add($waiting)
+$verificationProvider.Add($completed)
+$verificationProvider.Add($completed)
+$verificationProvider.Add($completed)
+$verificationAction = [VisionStateMachineRegression.CountingAction]::new()
+$verificationStep = [WPELibrary.Lib.Vision.VisionAssistantStep]::new()
+$verificationStep.Name = "verify-after-action"
+$verificationStep.Condition = New-TextCondition -Confirmations 1
+$verificationStep.Action = $verificationAction
+$verificationStep.VerificationEnabled = $true
+$verificationStep.Verification = New-TextCondition -Confirmations 3
+$verificationSteps = New-Object 'System.Collections.Generic.List[WPELibrary.Lib.Vision.VisionAssistantStep]'
+$verificationSteps.Add($verificationStep)
+$verificationRun = [WPELibrary.Lib.Vision.VisionAssistantStateMachine]::new($verificationProvider).Run(
+    $verificationSteps,
+    [System.Threading.CancellationToken]::None)
+Assert-True ($verificationRun.Succeeded -and $verificationAction.Executions -eq 1) `
+    "Action verification must complete after the action and execute the action only once."
+
 $skipProvider = [VisionStateMachineRegression.QueueProvider]::new()
 $skipStep = [WPELibrary.Lib.Vision.VisionAssistantStep]::new()
 $skipStep.Name = "skip-on-timeout"

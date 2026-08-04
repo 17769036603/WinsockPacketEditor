@@ -6,6 +6,9 @@ namespace WPELibrary.Lib.Vision
 {
     public sealed class VisionConditionDefinition
     {
+        private const int MaxTemplatePixels = 1000000;
+        private const int MaxTemplateVariants = 24;
+        private const long MaxRegionPixels = 16000000L;
         public string Name { get; set; }
 
         public VisionConditionType Type { get; set; }
@@ -13,6 +16,8 @@ namespace WPELibrary.Lib.Vision
         public VisionRegion Region { get; set; }
 
         public VisionTextCondition TextCondition { get; set; }
+
+        public VisionColorCondition ColorCondition { get; set; }
 
         public Bitmap Template { get; set; }
 
@@ -46,16 +51,17 @@ namespace WPELibrary.Lib.Vision
             this.Type = VisionConditionType.TextAppears;
             this.Region = new VisionRegion();
             this.TextCondition = new VisionTextCondition();
+            this.ColorCondition = new VisionColorCondition();
             this.MinimumSimilarity = 0.9D;
             this.NormalizeTemplateBrightness = true;
             this.AllowTemplateScaleVariation = false;
             this.TemplateMinimumScale = 0.9D;
             this.TemplateMaximumScale = 1.1D;
             this.TemplateScaleStep = 0.05D;
-            this.RequiredConfirmations = 3;
-            this.PollIntervalMilliseconds = 250;
-            this.TimeoutMilliseconds = 10000;
-            this.MaxRetries = 0;
+            this.RequiredConfirmations = 2;
+            this.PollIntervalMilliseconds = 150;
+            this.TimeoutMilliseconds = 8000;
+            this.MaxRetries = 1;
             this.FailurePolicy = VisionFailurePolicy.Stop;
             this.TemplateVariants = new List<Bitmap>();
         }
@@ -65,6 +71,12 @@ namespace WPELibrary.Lib.Vision
             if (this.Region == null || !this.Region.IsValid)
             {
                 throw new ArgumentException("A valid vision condition region is required.", "Region");
+            }
+            if ((long)this.Region.Width * this.Region.Height > MaxRegionPixels)
+            {
+                throw new ArgumentException(
+                    "The vision condition region is too large; reduce it before recognition.",
+                    "Region");
             }
             if (this.RequiredConfirmations < 1 || this.RequiredConfirmations > 10)
             {
@@ -102,6 +114,20 @@ namespace WPELibrary.Lib.Vision
             {
                 throw new ArgumentException("A template is required for an image condition.", "Template");
             }
+            if (this.TemplateVariants != null && this.TemplateVariants.Count > MaxTemplateVariants)
+            {
+                throw new ArgumentException(
+                    "Too many template variants are configured; reduce the variant count.",
+                    "TemplateVariants");
+            }
+            ValidateTemplateSize(this.Template, "Template");
+            if (this.TemplateVariants != null)
+            {
+                for (int index = 0; index < this.TemplateVariants.Count; index++)
+                {
+                    ValidateTemplateSize(this.TemplateVariants[index], "TemplateVariants");
+                }
+            }
             if ((this.Type == VisionConditionType.TextAppears ||
                  this.Type == VisionConditionType.TextDisappears ||
                  this.Type == VisionConditionType.NumberInRange) &&
@@ -116,10 +142,59 @@ namespace WPELibrary.Lib.Vision
             }
             if ((this.Type == VisionConditionType.TextAppears ||
                  this.Type == VisionConditionType.TextDisappears) &&
-                string.IsNullOrWhiteSpace(this.TextCondition.ExpectedText))
+                 string.IsNullOrWhiteSpace(this.TextCondition.ExpectedText))
             {
                 throw new ArgumentException("An OCR keyword is required for a text condition.", "TextCondition");
             }
+            if ((this.Type == VisionConditionType.ColorAppears ||
+                 this.Type == VisionConditionType.ColorDisappears) &&
+                this.ColorCondition == null)
+            {
+                throw new ArgumentException("A color condition is required for a color condition.", "ColorCondition");
+            }
+            if (this.Type == VisionConditionType.ColorAppears ||
+                this.Type == VisionConditionType.ColorDisappears)
+            {
+                this.ColorCondition.Validate();
+            }
+        }
+
+        private static void ValidateTemplateSize(Bitmap template, string parameterName)
+        {
+            if (template != null && (long)template.Width * template.Height > MaxTemplatePixels)
+            {
+                throw new ArgumentException(
+                    "A template is too large; reduce its pixel area before recognition.",
+                    parameterName);
+            }
+        }
+
+        public bool FitsWithin(Size clientSize, out string error)
+        {
+            error = string.Empty;
+            try
+            {
+                this.Validate();
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+
+            if (!this.Region.FitsWithin(clientSize))
+            {
+                error = string.Format(
+                    "The region ({0},{1},{2}x{3}) is outside the client area ({4}x{5}).",
+                    this.Region.X,
+                    this.Region.Y,
+                    this.Region.Width,
+                    this.Region.Height,
+                    clientSize.Width,
+                    clientSize.Height);
+                return false;
+            }
+            return true;
         }
 
         public VisionConditionDefinition Clone()
@@ -130,6 +205,7 @@ namespace WPELibrary.Lib.Vision
                 Type = this.Type,
                 Region = this.Region == null ? new VisionRegion() : this.Region.Clone(),
                 TextCondition = this.TextCondition == null ? null : this.TextCondition.Clone(),
+                ColorCondition = this.ColorCondition == null ? null : this.ColorCondition.Clone(),
                 Template = this.Template == null ? null : new Bitmap(this.Template),
                 MinimumSimilarity = this.MinimumSimilarity,
                 NormalizeTemplateBrightness = this.NormalizeTemplateBrightness,

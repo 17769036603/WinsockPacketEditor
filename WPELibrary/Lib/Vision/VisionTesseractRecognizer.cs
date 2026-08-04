@@ -10,7 +10,7 @@ using System.Threading;
 
 namespace WPELibrary.Lib.Vision
 {
-    public sealed class VisionTesseractRecognizer : IVisionTextRecognizer
+    public sealed class VisionTesseractRecognizer : IVisionTextRecognizer, IDisposable
     {
         private readonly string executablePath;
         private readonly System.Threading.SemaphoreSlim ocrWorkerGate =
@@ -20,6 +20,7 @@ namespace WPELibrary.Lib.Vision
             new Dictionary<string, VisionOcrResult>(StringComparer.Ordinal);
         private readonly Queue<string> resultCacheOrder = new Queue<string>();
         private const int ResultCacheLimit = 32;
+        private int disposed;
 
         public VisionTesseractRecognizer(string executablePath)
         {
@@ -48,12 +49,18 @@ namespace WPELibrary.Lib.Vision
             }
 
             options.Validate();
+            if (Volatile.Read(ref this.disposed) != 0)
+            {
+                return VisionOcrResult.Unavailable("The Tesseract recognizer has been disposed.");
+            }
+            VisionOcrOptions effectiveOptions = OptimizeForLargeScreenshot(source, options);
+            effectiveOptions.Validate();
             if (cancellationToken.IsCancellationRequested)
             {
                 return VisionOcrResult.CancelledResult();
             }
 
-            string cacheKey = BuildCacheKey(source, options);
+            string cacheKey = BuildCacheKey(source, effectiveOptions);
             VisionOcrResult cached = TryGetCachedResult(cacheKey);
             if (cached != null)
             {
@@ -62,7 +69,7 @@ namespace WPELibrary.Lib.Vision
 
             try
             {
-                if (!this.ocrWorkerGate.Wait(options.TimeoutMilliseconds + 1000, cancellationToken))
+                if (!this.ocrWorkerGate.Wait(effectiveOptions.TimeoutMilliseconds + 1000, cancellationToken))
                 {
                     return VisionOcrResult.Failed("OCR worker is busy.", string.Empty, 0D, -1);
                 }
@@ -70,6 +77,10 @@ namespace WPELibrary.Lib.Vision
             catch (OperationCanceledException)
             {
                 return VisionOcrResult.CancelledResult();
+            }
+            catch (ObjectDisposedException)
+            {
+                return VisionOcrResult.Unavailable("The Tesseract recognizer has been disposed.");
             }
 
             try
@@ -81,9 +92,9 @@ namespace WPELibrary.Lib.Vision
                 }
 
                 string resolvedExecutable = ResolveExecutable(
-                    string.IsNullOrWhiteSpace(options.ExecutablePath)
+                    string.IsNullOrWhiteSpace(effectiveOptions.ExecutablePath)
                         ? this.executablePath
-                        : options.ExecutablePath);
+                        : effectiveOptions.ExecutablePath);
                 if (string.IsNullOrEmpty(resolvedExecutable))
                 {
                     return VisionOcrResult.Unavailable(
@@ -91,7 +102,7 @@ namespace WPELibrary.Lib.Vision
                 }
 
                 VisionOcrResult result;
-                using (Bitmap prepared = VisionImagePreprocessor.Preprocess(source, options, cancellationToken))
+                using (Bitmap prepared = VisionImagePreprocessor.Preprocess(source, effectiveOptions, cancellationToken))
                 {
                     if (prepared == null || cancellationToken.IsCancellationRequested)
                     {
@@ -100,7 +111,7 @@ namespace WPELibrary.Lib.Vision
 
                     try
                     {
-                        result = RunTesseract(resolvedExecutable, prepared, options, cancellationToken);
+                        result = RunTesseract(resolvedExecutable, prepared, effectiveOptions, cancellationToken);
                     }
                     catch (Exception ex)
                     {
@@ -119,6 +130,25 @@ namespace WPELibrary.Lib.Vision
             }
         }
 
+        private static VisionOcrOptions OptimizeForLargeScreenshot(
+            Bitmap source,
+            VisionOcrOptions options)
+        {
+            if ((source.Width < 1280 && source.Height < 720) ||
+                options.ScaleFactor != 2 ||
+                options.PageSegmentationMode != 6)
+            {
+                return options;
+            }
+
+            // The default 2x nearest-neighbour enlargement damages small Chinese UI glyphs
+            // on already high-resolution game captures. Use the sparse-text layout at 1x.
+            VisionOcrOptions optimized = options.Clone();
+            optimized.ScaleFactor = 1;
+            optimized.PageSegmentationMode = 12;
+            return optimized;
+        }
+
         private static VisionOcrResult RunTesseract(
             string executable,
             Bitmap prepared,
@@ -134,6 +164,8 @@ namespace WPELibrary.Lib.Vision
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
                 WorkingDirectory = Path.GetDirectoryName(executable) ?? Environment.CurrentDirectory
             };
 
@@ -153,19 +185,71 @@ namespace WPELibrary.Lib.Vision
 
                 System.Threading.Tasks.Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
                 System.Threading.Tasks.Task<string> errorTask = process.StandardError.ReadToEndAsync();
-                process.StandardInput.BaseStream.Write(pngBytes, 0, pngBytes.Length);
-                process.StandardInput.Close();
                 DateTime deadline = DateTime.UtcNow.AddMilliseconds(options.TimeoutMilliseconds);
+                System.Threading.Tasks.Task writeTask = process.StandardInput.BaseStream.WriteAsync(
+                    pngBytes,
+                    0,
+                    pngBytes.Length,
+                    cancellationToken);
+                while (!writeTask.IsCompleted)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        CloseStandardInput(process);
+                        TryKill(process);
+                        DrainProcessOutput(process, outputTask, errorTask);
+                        ObserveTask(writeTask);
+                        return VisionOcrResult.CancelledResult();
+                    }
+                    if (DateTime.UtcNow >= deadline)
+                    {
+                        CloseStandardInput(process);
+                        TryKill(process);
+                        DrainProcessOutput(process, outputTask, errorTask);
+                        ObserveTask(writeTask);
+                        return VisionOcrResult.Failed(
+                            "Tesseract timed out while writing the image.",
+                            string.Empty,
+                            0D,
+                            -1);
+                    }
+                    Thread.Sleep(50);
+                }
+                try
+                {
+                    writeTask.GetAwaiter().GetResult();
+                }
+                catch (OperationCanceledException)
+                {
+                    CloseStandardInput(process);
+                    TryKill(process);
+                    DrainProcessOutput(process, outputTask, errorTask);
+                    return VisionOcrResult.CancelledResult();
+                }
+                catch (Exception ex)
+                {
+                    CloseStandardInput(process);
+                    TryKill(process);
+                    DrainProcessOutput(process, outputTask, errorTask);
+                    return VisionOcrResult.Failed(
+                        "Unable to write the image to Tesseract: " + ex.Message,
+                        string.Empty,
+                        0D,
+                        -1);
+                }
+                process.StandardInput.Close();
                 while (!process.HasExited)
                 {
                     if (cancellationToken.IsCancellationRequested)
                     {
                         TryKill(process);
+                        DrainProcessOutput(process, outputTask, errorTask);
                         return VisionOcrResult.CancelledResult();
                     }
                     if (DateTime.UtcNow >= deadline)
                     {
                         TryKill(process);
+                        DrainProcessOutput(process, outputTask, errorTask);
                         return VisionOcrResult.Failed(
                             "Tesseract timed out.",
                             string.Empty,
@@ -178,7 +262,7 @@ namespace WPELibrary.Lib.Vision
 
                 string output = outputTask.GetAwaiter().GetResult();
                 string error = errorTask.GetAwaiter().GetResult();
-                VisionTsvData tsv = ParseTsv(output);
+                VisionTsvData tsv = ParseTsv(output, options.ScaleFactor);
                 if (process.ExitCode != 0)
                 {
                     return VisionOcrResult.Failed(
@@ -198,7 +282,7 @@ namespace WPELibrary.Lib.Vision
                         process.ExitCode);
                 }
 
-                return VisionOcrResult.Succeeded(tsv.Text, tsv.Confidence);
+                return VisionOcrResult.Succeeded(tsv.Text, tsv.Confidence, tsv.TextBoxes);
             }
         }
 
@@ -259,18 +343,7 @@ namespace WPELibrary.Lib.Vision
 
         private static string BuildCacheKey(Bitmap source, VisionOcrOptions options)
         {
-            uint fingerprint = 2166136261U;
-            int stepX = Math.Max(1, source.Width / 32);
-            int stepY = Math.Max(1, source.Height / 32);
-            for (int y = 0; y < source.Height; y += stepY)
-            {
-                for (int x = 0; x < source.Width; x += stepX)
-                {
-                    Color color = source.GetPixel(x, y);
-                    fingerprint ^= unchecked((uint)color.ToArgb());
-                    fingerprint *= 16777619U;
-                }
-            }
+            uint fingerprint = VisionBitmapFingerprint.Compute(source);
             return string.Format(
                 CultureInfo.InvariantCulture,
                 "{0}x{1}:{2:X8}:{3}:{4}:{5}:{6}:{7}:{8}:{9}:{10}:{11}:{12}:{13}:{14}:{15}:{16}:{17}:{18}:{19}:{20}",
@@ -299,7 +372,31 @@ namespace WPELibrary.Lib.Vision
 
         private static string QuoteArgument(string value)
         {
-            return "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
+            string text = value ?? string.Empty;
+            StringBuilder quoted = new StringBuilder(text.Length + 2);
+            quoted.Append('"');
+            int backslashes = 0;
+            foreach (char character in text)
+            {
+                if (character == '\\')
+                {
+                    backslashes++;
+                    continue;
+                }
+                if (character == '"')
+                {
+                    quoted.Append('\\', backslashes * 2 + 1);
+                    quoted.Append('"');
+                    backslashes = 0;
+                    continue;
+                }
+                quoted.Append('\\', backslashes);
+                quoted.Append(character);
+                backslashes = 0;
+            }
+            quoted.Append('\\', backslashes * 2);
+            quoted.Append('"');
+            return quoted.ToString();
         }
 
         private static string ResolveExecutable(string configuredPath)
@@ -377,10 +474,106 @@ namespace WPELibrary.Lib.Vision
             }
         }
 
-        private static VisionTsvData ParseTsv(string output)
+        private static void DrainProcessOutput(
+            Process process,
+            System.Threading.Tasks.Task<string> outputTask,
+            System.Threading.Tasks.Task<string> errorTask)
+        {
+            try
+            {
+                if (process != null && !process.HasExited)
+                {
+                    process.WaitForExit(1000);
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                if (outputTask != null)
+                {
+                    ObserveTask(outputTask);
+                }
+            }
+            catch
+            {
+            }
+            try
+            {
+                if (errorTask != null)
+                {
+                    ObserveTask(errorTask);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref this.disposed, 1) != 0)
+            {
+                return;
+            }
+            lock (this.resultCacheSync)
+            {
+                this.resultCache.Clear();
+                this.resultCacheOrder.Clear();
+            }
+        }
+
+        private static void CloseStandardInput(Process process)
+        {
+            try
+            {
+                if (process != null && process.StandardInput != null)
+                {
+                    process.StandardInput.Close();
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static void ObserveTask(System.Threading.Tasks.Task task)
+        {
+            if (task == null)
+            {
+                return;
+            }
+            if (!task.IsCompleted)
+            {
+                task.ContinueWith(
+                    completedTask => ObserveCompletedTask(completedTask),
+                    CancellationToken.None,
+                    System.Threading.Tasks.TaskContinuationOptions.ExecuteSynchronously,
+                    System.Threading.Tasks.TaskScheduler.Default);
+                return;
+            }
+
+            ObserveCompletedTask(task);
+        }
+
+        private static void ObserveCompletedTask(System.Threading.Tasks.Task task)
+        {
+            try
+            {
+                task.GetAwaiter().GetResult();
+            }
+            catch
+            {
+            }
+        }
+
+        private static VisionTsvData ParseTsv(string output, int scaleFactor)
         {
             StringBuilder text = new StringBuilder();
             List<double> confidenceValues = new List<double>();
+            List<VisionOcrTextBox> textBoxes = new List<VisionOcrTextBox>();
             string[] lines = (output ?? string.Empty).Split(
                 new[] { "\r\n", "\n" },
                 StringSplitOptions.RemoveEmptyEntries);
@@ -393,6 +586,28 @@ namespace WPELibrary.Lib.Vision
                 }
 
                 string token = fields[11].Trim();
+                double left;
+                double top;
+                double width;
+                double height;
+                double confidence;
+                if (!double.TryParse(fields[6], NumberStyles.Float, CultureInfo.InvariantCulture, out left) ||
+                    !double.TryParse(fields[7], NumberStyles.Float, CultureInfo.InvariantCulture, out top) ||
+                    !double.TryParse(fields[8], NumberStyles.Float, CultureInfo.InvariantCulture, out width) ||
+                    !double.TryParse(fields[9], NumberStyles.Float, CultureInfo.InvariantCulture, out height))
+                {
+                    continue;
+                }
+                if (!double.TryParse(fields[10], NumberStyles.Float, CultureInfo.InvariantCulture, out confidence))
+                {
+                    confidence = -1D;
+                }
+                double scale = Math.Max(1, scaleFactor);
+                Rectangle bounds = new Rectangle(
+                    (int)Math.Round(left / scale),
+                    (int)Math.Round(top / scale),
+                    Math.Max(1, (int)Math.Round(width / scale)),
+                    Math.Max(1, (int)Math.Round(height / scale)));
                 if (!string.IsNullOrEmpty(token))
                 {
                     if (text.Length > 0)
@@ -400,14 +615,13 @@ namespace WPELibrary.Lib.Vision
                         text.Append(' ');
                     }
                     text.Append(token);
+                    textBoxes.Add(new VisionOcrTextBox(
+                        token,
+                        bounds,
+                        confidence < 0D ? 0D : confidence / 100D));
                 }
 
-                double confidence;
-                if (double.TryParse(
-                    fields[10],
-                    NumberStyles.Float,
-                    CultureInfo.InvariantCulture,
-                    out confidence) && confidence >= 0D)
+                if (confidence >= 0D)
                 {
                     confidenceValues.Add(confidence / 100D);
                 }
@@ -424,20 +638,23 @@ namespace WPELibrary.Lib.Vision
                 average = total / confidenceValues.Count;
             }
 
-            return new VisionTsvData(text.ToString(), average);
+            return new VisionTsvData(text.ToString(), average, textBoxes);
         }
 
         private sealed class VisionTsvData
         {
-            public VisionTsvData(string text, double confidence)
+            public VisionTsvData(string text, double confidence, IList<VisionOcrTextBox> textBoxes)
             {
                 this.Text = text;
                 this.Confidence = confidence;
+                this.TextBoxes = textBoxes;
             }
 
             public string Text { get; private set; }
 
             public double Confidence { get; private set; }
+
+            public IList<VisionOcrTextBox> TextBoxes { get; private set; }
         }
     }
 }

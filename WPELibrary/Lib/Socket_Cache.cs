@@ -6587,6 +6587,13 @@ namespace WPELibrary.Lib
             public static long FilterExecute_CNT = 0;            
             public static int FilterSize_MaxLen = 500;
             public static Socket_Cache.Filter.Execute FilterExecute = Socket_Cache.Filter.Execute.Sequence;
+            private const int MaxDeferredExecutions = 128;
+            private static readonly SemaphoreSlim DeferredExecutionSlots =
+                new SemaphoreSlim(MaxDeferredExecutions, MaxDeferredExecutions);
+            private static readonly object DeferredExecutionSync = new object();
+            private static CancellationTokenSource deferredExecutionCancellation =
+                new CancellationTokenSource();
+            private static int deferredExecutionStopping;
             public static readonly Color FilterActionForeColor_Replace = Color.Black;
             public static readonly Color FilterActionBackColor_Replace = Color.Goldenrod;
             public static readonly Color FilterActionForeColor_Intercept = Color.White;
@@ -6631,6 +6638,91 @@ namespace WPELibrary.Lib
                 Head,
                 Position,
             }            
+
+            internal static bool QueueDeferredExecution(Action action, string actionName)
+            {
+                return QueueDeferredExecution(
+                    cancellationToken => action(),
+                    actionName);
+            }
+
+            internal static bool QueueDeferredExecution(
+                Action<CancellationToken> action,
+                string actionName)
+            {
+                if (action == null)
+                {
+                    return false;
+                }
+
+                CancellationToken cancellationToken;
+                lock (DeferredExecutionSync)
+                {
+                    if (Volatile.Read(ref deferredExecutionStopping) != 0 ||
+                        !DeferredExecutionSlots.Wait(0))
+                    {
+                        Socket_Operation.DoLog(
+                            nameof(QueueDeferredExecution),
+                            string.Format(
+                                "Deferred filter action queue is unavailable or full; skipped {0}.",
+                                actionName ?? "action"));
+                        return false;
+                    }
+                    cancellationToken = deferredExecutionCancellation.Token;
+                }
+
+                try
+                {
+                    Task.Run(() =>
+                    {
+                        try
+                        {
+                            action(cancellationToken);
+                        }
+                        catch (Exception ex)
+                        {
+                            Socket_Operation.DoLog(
+                                nameof(QueueDeferredExecution),
+                                string.Format(
+                                    "Deferred filter action {0} failed: {1}",
+                                    actionName ?? "action",
+                                    ex.Message));
+                        }
+                        finally
+                        {
+                            DeferredExecutionSlots.Release();
+                        }
+                    });
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    DeferredExecutionSlots.Release();
+                    Socket_Operation.DoLog(nameof(QueueDeferredExecution), ex.Message);
+                    return false;
+                }
+            }
+
+            internal static void StartDeferredExecution()
+            {
+                lock (DeferredExecutionSync)
+                {
+                    if (deferredExecutionCancellation.IsCancellationRequested)
+                    {
+                        deferredExecutionCancellation = new CancellationTokenSource();
+                    }
+                    Volatile.Write(ref deferredExecutionStopping, 0);
+                }
+            }
+
+            internal static void StopDeferredExecution()
+            {
+                lock (DeferredExecutionSync)
+                {
+                    Volatile.Write(ref deferredExecutionStopping, 1);
+                    deferredExecutionCancellation.Cancel();
+                }
+            }
 
             public struct FilterFunction
             {
@@ -8273,17 +8365,59 @@ namespace WPELibrary.Lib
                                 {
                                     case Socket_Cache.Filter.FilterExecuteType.Send:
 
-                                        Socket_Cache.Send.DoSend(sfi.SID);
+                                        Guid sendId = sfi.SID;
+                                        Socket_Cache.Filter.QueueDeferredExecution(
+                                            cancellationToken =>
+                                            {
+                                                if (cancellationToken.IsCancellationRequested)
+                                                {
+                                                    return;
+                                                }
+                                                Socket_Send send = Socket_Cache.Send.DoSend(sendId);
+                                                if (send != null)
+                                                {
+                                                    while (!send.WaitForCompletion(100))
+                                                    {
+                                                        if (cancellationToken.IsCancellationRequested)
+                                                        {
+                                                            send.StopSend();
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "send");
 
                                         break;
                                     case Socket_Cache.Filter.FilterExecuteType.Robot:
 
                                         var parameters = new Dictionary<string, object>
-                                        {                                            
+                                        {
                                             { "FilterSocket", iSocket }
                                         };
 
-                                        Socket_Cache.Robot.DoRobot(sfi.RID, parameters);
+                                        Guid robotId = sfi.RID;
+                                        Socket_Cache.Filter.QueueDeferredExecution(
+                                            cancellationToken =>
+                                            {
+                                                if (cancellationToken.IsCancellationRequested)
+                                                {
+                                                    return;
+                                                }
+                                                Socket_Robot robot = Socket_Cache.Robot.DoRobot(robotId, parameters);
+                                                if (robot != null)
+                                                {
+                                                    while (!robot.WaitForCompletion(100))
+                                                    {
+                                                        if (cancellationToken.IsCancellationRequested)
+                                                        {
+                                                            robot.StopRobot();
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "robot");
                                         break;
                                 }
                             }
@@ -8897,6 +9031,8 @@ namespace WPELibrary.Lib
 
         public static class Robot
         {
+            public const string VisionInstructionContentPrefix = "VisionStep|";
+
             #region//结构定义
 
             public enum KeyBoardType
@@ -8934,6 +9070,7 @@ namespace WPELibrary.Lib
                 Mouse = 5,
                 SendSocketList = 6,
                 SetSystemSocket = 7,
+                VisionWait = 8,
             }
 
             #endregion
@@ -9117,6 +9254,10 @@ namespace WPELibrary.Lib
                         case Socket_Cache.Robot.InstructionType.Mouse:
                             sReturn = MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_107);
                             break;
+
+                        case Socket_Cache.Robot.InstructionType.VisionWait:
+                            sReturn = MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_239);
+                            break;
                     }
                 }
                 catch (Exception ex)
@@ -9169,6 +9310,10 @@ namespace WPELibrary.Lib
 
                         case Socket_Cache.Robot.InstructionType.Mouse:
                             cReturn = Color.LightSkyBlue;
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.VisionWait:
+                            cReturn = Color.MediumPurple;
                             break;
                     }
                 }
@@ -9342,6 +9487,27 @@ namespace WPELibrary.Lib
                                 }                                
                             }
 
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.VisionWait:
+                            string visionName = string.Empty;
+                            if (!string.IsNullOrEmpty(sContent) &&
+                                sContent.StartsWith(
+                                    Socket_Cache.Robot.VisionInstructionContentPrefix,
+                                    StringComparison.Ordinal))
+                            {
+                                string payload = sContent.Substring(
+                                    Socket_Cache.Robot.VisionInstructionContentPrefix.Length);
+                                int separator = payload.IndexOf('|');
+                                visionName = separator >= 0
+                                    ? payload.Substring(separator + 1)
+                                    : payload;
+                            }
+                            sReturn = string.Format(
+                                MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_240),
+                                string.IsNullOrWhiteSpace(visionName)
+                                    ? MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_239)
+                                    : visionName);
                             break;
                     }
                 }
@@ -9751,6 +9917,39 @@ namespace WPELibrary.Lib
                     : fallback;
             }
 
+            private static T VisionEnum<T>(DataRow row, string columnName, T fallback)
+                where T : struct
+            {
+                int value = VisionInt(row, columnName, Convert.ToInt32(fallback));
+                return Enum.IsDefined(typeof(T), value)
+                    ? (T)Enum.ToObject(typeof(T), value)
+                    : fallback;
+            }
+
+            private static void DisposeVisionConditionResources(VisionConditionDefinition condition)
+            {
+                if (condition == null)
+                {
+                    return;
+                }
+                if (condition.Template != null)
+                {
+                    condition.Template.Dispose();
+                    condition.Template = null;
+                }
+                if (condition.TemplateVariants != null)
+                {
+                    foreach (Bitmap variant in condition.TemplateVariants)
+                    {
+                        if (variant != null)
+                        {
+                            variant.Dispose();
+                        }
+                    }
+                    condition.TemplateVariants.Clear();
+                }
+            }
+
             #endregion                        
 
             #region//机器人列表的列表操作
@@ -9961,24 +10160,32 @@ namespace WPELibrary.Lib
                                     ExecutablePath = VisionString(visionRow, "OcrExecutable", "tesseract.exe"),
                                     TessdataPath = VisionString(visionRow, "OcrTessdataPath", string.Empty),
                                     TimeoutMilliseconds = VisionInt(visionRow, "OcrTimeout", 5000),
-                                    PageSegmentationMode = VisionInt(visionRow, "OcrPsm", 6)
+                                    PageSegmentationMode = VisionInt(visionRow, "OcrPsm", 6),
+                                    Engine = VisionEnum(visionRow, "OcrEngine", VisionOcrEngine.Auto),
+                                    OnnxModelDirectory = VisionString(visionRow, "OcrModelDirectory", "models\\ocr"),
+                                    OnnxDetectionThreshold = VisionDouble(visionRow, "OcrDetectionThreshold", 0.3D),
+                                    OnnxRecognitionThreshold = VisionDouble(visionRow, "OcrRecognitionThreshold", 0.5D),
+                                    OnnxMaxImageSide = VisionInt(visionRow, "OcrMaxImageSide", 960)
                                 },
                                 OcrCondition = new VisionTextCondition
                                 {
                                     ExpectedText = VisionString(visionRow, "OcrKeyword", string.Empty),
-                                    MatchMode = (VisionTextMatchMode)VisionInt(visionRow, "OcrMatchMode", 0),
+                                    MatchMode = VisionEnum(visionRow, "OcrMatchMode", VisionTextMatchMode.Contains),
                                     MinimumConfidence = VisionDouble(visionRow, "OcrMinimumConfidence", 0.5D),
-                                    MinimumNumber = VisionDouble(visionRow, "OcrMinimumNumber", double.MinValue),
-                                    MaximumNumber = VisionDouble(visionRow, "OcrMaximumNumber", double.MaxValue)
-                                },
-                                CaptureSettings = new VisionCaptureSettings
+                                     MinimumNumber = VisionDouble(visionRow, "OcrMinimumNumber", double.MinValue),
+                                     MaximumNumber = VisionDouble(visionRow, "OcrMaximumNumber", double.MaxValue)
+                                 },
+                                  CaptureSettings = new VisionCaptureSettings
                                 {
-                                    SourceMode = (VisionCaptureSourceMode)VisionInt(visionRow, "CaptureSource", 0),
+                                    SourceMode = VisionEnum(visionRow, "CaptureSource", VisionCaptureSourceMode.Auto),
                                     MinimumIntervalMilliseconds = VisionInt(visionRow, "CaptureInterval", 150),
                                     SkipUnchangedFrames = VisionBool(visionRow, "CaptureSkipUnchanged", true),
                                     HistoryLimit = VisionInt(visionRow, "CaptureHistoryLimit", 30),
                                     SaveFailureSnapshots = VisionBool(visionRow, "CaptureSaveFailures", false),
-                                    FailureSnapshotDirectory = VisionString(visionRow, "CaptureFailureDirectory", string.Empty)
+                                    FailureSnapshotDirectory = VisionString(visionRow, "CaptureFailureDirectory", string.Empty),
+                                    RequireExactClientSize = VisionBool(visionRow, "CaptureRequireExactClientSize", false),
+                                    RequiredClientWidth = VisionInt(visionRow, "CaptureRequiredClientWidth", 0),
+                                    RequiredClientHeight = VisionInt(visionRow, "CaptureRequiredClientHeight", 0)
                                 }
                             };
                             robot.VisionProfile = profile;
@@ -10010,6 +10217,8 @@ namespace WPELibrary.Lib
                 DataTable dtConditions = Socket_Cache.DataBase.SelectTable_RobotVisionCondition(rid);
                 foreach (DataRow row in dtConditions.Rows)
                 {
+                    VisionConditionDefinition condition = null;
+                    VisionConditionDefinition verification = null;
                     try
                     {
                         int conditionTypeValue = VisionInt(row, "ConditionType", 0);
@@ -10018,7 +10227,7 @@ namespace WPELibrary.Lib
                             continue;
                         }
 
-                        VisionConditionDefinition condition = new VisionConditionDefinition
+                        condition = new VisionConditionDefinition
                         {
                             Name = VisionString(row, "Name", string.Empty),
                             Type = (VisionConditionType)conditionTypeValue,
@@ -10032,26 +10241,96 @@ namespace WPELibrary.Lib
                                 ReferenceWidth = VisionInt(row, "RegionReferenceWidth", 0),
                                 ReferenceHeight = VisionInt(row, "RegionReferenceHeight", 0)
                             },
-                            TextCondition = new VisionTextCondition
-                            {
-                                ExpectedText = VisionString(row, "Keyword", string.Empty),
-                                MatchMode = (VisionTextMatchMode)VisionInt(row, "MatchMode", 0),
-                                MinimumNumber = VisionDouble(row, "MinimumNumber", double.MinValue),
-                                MaximumNumber = VisionDouble(row, "MaximumNumber", double.MaxValue),
-                                MinimumConfidence = VisionDouble(row, "MinimumConfidence", 0.5D)
-                            },
-                            MinimumSimilarity = VisionDouble(row, "MinimumSimilarity", 0.9D),
+                             TextCondition = new VisionTextCondition
+                             {
+                                 ExpectedText = VisionString(row, "Keyword", string.Empty),
+                                 MatchMode = VisionEnum(row, "MatchMode", VisionTextMatchMode.Contains),
+                                 MinimumNumber = VisionDouble(row, "MinimumNumber", double.MinValue),
+                                 MaximumNumber = VisionDouble(row, "MaximumNumber", double.MaxValue),
+                                 MinimumConfidence = VisionDouble(row, "MinimumConfidence", 0.5D)
+                             },
+                             ColorCondition = new VisionColorCondition
+                             {
+                                 Red = (byte)Math.Max(0, Math.Min(255, VisionInt(row, "ColorR", 255))),
+                                 Green = (byte)Math.Max(0, Math.Min(255, VisionInt(row, "ColorG", 255))),
+                                 Blue = (byte)Math.Max(0, Math.Min(255, VisionInt(row, "ColorB", 255))),
+                                 Tolerance = VisionInt(row, "ColorTolerance", 16),
+                                 MinimumPixelCount = VisionInt(row, "ColorMinimumPixels", 10),
+                                 MinimumMatchRatio = VisionDouble(row, "ColorMinimumRatio", 0D)
+                             },
+                             MinimumSimilarity = VisionDouble(row, "MinimumSimilarity", 0.9D),
                             NormalizeTemplateBrightness = VisionBool(row, "TemplateNormalize", true),
                             AllowTemplateScaleVariation = VisionBool(row, "TemplateScaleVariation", false),
                             TemplateMinimumScale = VisionDouble(row, "TemplateMinScale", 0.9D),
                             TemplateMaximumScale = VisionDouble(row, "TemplateMaxScale", 1.1D),
                             TemplateScaleStep = VisionDouble(row, "TemplateScaleStep", 0.05D),
-                            RequiredConfirmations = VisionInt(row, "RequiredConfirmations", 3),
-                            PollIntervalMilliseconds = VisionInt(row, "PollInterval", 250),
-                            TimeoutMilliseconds = VisionInt(row, "Timeout", 10000),
-                            MaxRetries = VisionInt(row, "MaxRetries", 0),
-                            FailurePolicy = (VisionFailurePolicy)VisionInt(row, "FailurePolicy", 0)
+                            RequiredConfirmations = VisionInt(row, "RequiredConfirmations", 2),
+                            PollIntervalMilliseconds = VisionInt(row, "PollInterval", 150),
+                            TimeoutMilliseconds = VisionInt(row, "Timeout", 8000),
+                            MaxRetries = VisionInt(row, "MaxRetries", 1),
+                            FailurePolicy = VisionEnum(row, "FailurePolicy", VisionFailurePolicy.Stop)
                         };
+                        VisionActionDefinition actionDefinition = new VisionActionDefinition
+                        {
+                            Type = VisionEnum(row, "ActionType", VisionActionType.None),
+                            ScrollDirection = VisionEnum(row, "ScrollDirection", VisionScrollDirection.Down),
+                            ScrollAmount = VisionInt(row, "ScrollAmount", 3),
+                            DelayMilliseconds = VisionInt(row, "ActionDelay", 300)
+                        };
+                        if (VisionBool(row, "VerificationEnabled", false))
+                        {
+                            int verificationTypeValue = VisionInt(row, "VerificationType", 0);
+                            if (!Enum.IsDefined(typeof(VisionConditionType), verificationTypeValue))
+                            {
+                                throw new InvalidDataException("The stored vision verification type is invalid.");
+                            }
+                            VisionConditionType verificationType = (VisionConditionType)verificationTypeValue;
+                            if (verificationType != VisionConditionType.TextAppears &&
+                                verificationType != VisionConditionType.TemplateAppears)
+                            {
+                                throw new InvalidDataException("The stored vision verification type is invalid.");
+                            }
+                            verification = new VisionConditionDefinition
+                            {
+                                Type = verificationType,
+                                Region = condition.Region == null ? new VisionRegion() : condition.Region.Clone(),
+                                RequiredConfirmations = condition.RequiredConfirmations,
+                                PollIntervalMilliseconds = condition.PollIntervalMilliseconds,
+                                TimeoutMilliseconds = condition.TimeoutMilliseconds,
+                                MaxRetries = condition.MaxRetries,
+                                FailurePolicy = condition.FailurePolicy,
+                                MinimumSimilarity = condition.MinimumSimilarity,
+                                NormalizeTemplateBrightness = condition.NormalizeTemplateBrightness,
+                                AllowTemplateScaleVariation = condition.AllowTemplateScaleVariation,
+                                TemplateMinimumScale = condition.TemplateMinimumScale,
+                                TemplateMaximumScale = condition.TemplateMaximumScale,
+                                TemplateScaleStep = condition.TemplateScaleStep,
+                                TextCondition = new VisionTextCondition
+                                {
+                                    ExpectedText = VisionString(row, "VerificationKeyword", string.Empty),
+                                    MatchMode = VisionTextMatchMode.Contains,
+                                    MinimumConfidence = 0D
+                                }
+                            };
+                            if (VisionColumnExists(row, "VerificationTemplatePng"))
+                            {
+                                verification.Template = VisionResourceSerializer.FromPngBytes(
+                                    row["VerificationTemplatePng"] as byte[]);
+                            }
+                            if (VisionBool(row, "VerificationSeparateRegion", false))
+                            {
+                                verification.Region = new VisionRegion
+                                {
+                                    X = VisionInt(row, "VerificationRegionX", verification.Region.X),
+                                    Y = VisionInt(row, "VerificationRegionY", verification.Region.Y),
+                                    Width = VisionInt(row, "VerificationRegionWidth", verification.Region.Width),
+                                    Height = VisionInt(row, "VerificationRegionHeight", verification.Region.Height),
+                                    UseNormalizedCoordinates = VisionBool(row, "VerificationRegionNormalized", false),
+                                    ReferenceWidth = VisionInt(row, "VerificationRegionReferenceWidth", 0),
+                                    ReferenceHeight = VisionInt(row, "VerificationRegionReferenceHeight", 0)
+                                };
+                            }
+                        }
 
                         if (VisionColumnExists(row, "TemplatePng"))
                         {
@@ -10078,15 +10357,29 @@ namespace WPELibrary.Lib
                             }
                         }
 
-                        robot.VisionProfile.AssistantSteps.Add(new VisionAssistantStep
+                        VisionAssistantStep loadedStep = new VisionAssistantStep
                         {
                             Name = condition.Name,
                             Condition = condition,
-                            Action = null
-                        });
+                            Action = null,
+                            ActionDefinition = actionDefinition,
+                            VerificationEnabled = verification != null,
+                            Verification = verification,
+                            VerificationUsesSeparateRegion = verification != null &&
+                                VisionBool(row, "VerificationSeparateRegion", false)
+                        };
+                        condition.Validate();
+                        actionDefinition.Validate();
+                        if (verification != null)
+                        {
+                            verification.Validate();
+                        }
+                        robot.VisionProfile.AssistantSteps.Add(loadedStep);
                     }
                     catch (Exception ex)
                     {
+                        DisposeVisionConditionResources(condition);
+                        DisposeVisionConditionResources(verification);
                         Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
                     }
                 }
@@ -10260,7 +10553,10 @@ namespace WPELibrary.Lib
                         new XElement("SkipUnchangedFrames", profile.CaptureSettings == null || profile.CaptureSettings.SkipUnchangedFrames),
                         new XElement("HistoryLimit", profile.CaptureSettings == null ? 30 : profile.CaptureSettings.HistoryLimit),
                         new XElement("SaveFailureSnapshots", profile.CaptureSettings != null && profile.CaptureSettings.SaveFailureSnapshots),
-                        new XElement("FailureSnapshotDirectory", profile.CaptureSettings == null ? string.Empty : profile.CaptureSettings.FailureSnapshotDirectory ?? string.Empty)),
+                        new XElement("FailureSnapshotDirectory", profile.CaptureSettings == null ? string.Empty : profile.CaptureSettings.FailureSnapshotDirectory ?? string.Empty),
+                        new XElement("RequireExactClientSize", profile.CaptureSettings != null && profile.CaptureSettings.RequireExactClientSize),
+                        new XElement("RequiredClientWidth", profile.CaptureSettings == null ? 0 : profile.CaptureSettings.RequiredClientWidth),
+                        new XElement("RequiredClientHeight", profile.CaptureSettings == null ? 0 : profile.CaptureSettings.RequiredClientHeight)),
                     new XElement("OcrOptions",
                         new XElement("ScaleFactor", ocrOptions.ScaleFactor),
                         new XElement("ConvertToGrayscale", ocrOptions.ConvertToGrayscale),
@@ -10279,8 +10575,13 @@ namespace WPELibrary.Lib
                         new XElement("ExecutablePath", ocrOptions.ExecutablePath ?? string.Empty),
                         new XElement("TessdataPath", ocrOptions.TessdataPath ?? string.Empty),
                         new XElement("TimeoutMilliseconds", ocrOptions.TimeoutMilliseconds),
-                        new XElement("PageSegmentationMode", ocrOptions.PageSegmentationMode)),
-                    new XElement("OcrCondition",
+                        new XElement("PageSegmentationMode", ocrOptions.PageSegmentationMode),
+                        new XElement("Engine", (int)ocrOptions.Engine),
+                        new XElement("OnnxModelDirectory", ocrOptions.OnnxModelDirectory ?? string.Empty),
+                        new XElement("OnnxDetectionThreshold", ocrOptions.OnnxDetectionThreshold.ToString(CultureInfo.InvariantCulture)),
+                        new XElement("OnnxRecognitionThreshold", ocrOptions.OnnxRecognitionThreshold.ToString(CultureInfo.InvariantCulture)),
+                        new XElement("OnnxMaxImageSide", ocrOptions.OnnxMaxImageSide)),
+                        new XElement("OcrCondition",
                         new XElement("MatchMode", (int)ocrCondition.MatchMode),
                         new XElement("ExpectedText", ocrCondition.ExpectedText ?? string.Empty),
                         new XElement("MinimumConfidence", ocrCondition.MinimumConfidence.ToString(CultureInfo.InvariantCulture)),
@@ -10299,6 +10600,9 @@ namespace WPELibrary.Lib
 
                         VisionConditionDefinition condition = step.Condition;
                         VisionTextCondition textCondition = condition.TextCondition ?? new VisionTextCondition();
+                        VisionRegion verificationRegion = step.Verification == null || step.Verification.Region == null
+                            ? condition.Region
+                            : step.Verification.Region;
                         XElement xeStep = new XElement(
                             "Step",
                             new XAttribute("Name", step.Name ?? string.Empty),
@@ -10315,6 +10619,14 @@ namespace WPELibrary.Lib
                                 new XAttribute("Timeout", condition.TimeoutMilliseconds),
                                 new XAttribute("MaxRetries", condition.MaxRetries),
                                 new XAttribute("FailurePolicy", (int)condition.FailurePolicy),
+                                new XAttribute("ActionType", step.ActionDefinition == null ? 0 : (int)step.ActionDefinition.Type),
+                                new XAttribute("ScrollDirection", step.ActionDefinition == null ? 1 : (int)step.ActionDefinition.ScrollDirection),
+                                new XAttribute("ScrollAmount", step.ActionDefinition == null ? 3 : step.ActionDefinition.ScrollAmount),
+                                new XAttribute("ActionDelay", step.ActionDefinition == null ? 300 : step.ActionDefinition.DelayMilliseconds),
+                                new XAttribute("VerificationEnabled", step.VerificationEnabled),
+                                new XAttribute("VerificationType", step.Verification == null ? 0 : (int)step.Verification.Type),
+                                new XAttribute("VerificationKeyword", step.Verification == null || step.Verification.TextCondition == null ? string.Empty : step.Verification.TextCondition.ExpectedText ?? string.Empty),
+                                new XAttribute("VerificationSeparateRegion", step.VerificationUsesSeparateRegion),
                                 new XElement("Region",
                                     new XElement("X", condition.Region == null ? 0 : condition.Region.X),
                                     new XElement("Y", condition.Region == null ? 0 : condition.Region.Y),
@@ -10323,15 +10635,35 @@ namespace WPELibrary.Lib
                                     new XElement("UseNormalizedCoordinates", condition.Region != null && condition.Region.UseNormalizedCoordinates),
                                     new XElement("ReferenceWidth", condition.Region == null ? 0 : condition.Region.ReferenceWidth),
                                     new XElement("ReferenceHeight", condition.Region == null ? 0 : condition.Region.ReferenceHeight)),
-                                new XElement("TextCondition",
-                                    new XAttribute("MatchMode", (int)textCondition.MatchMode),
-                                    new XAttribute("ExpectedText", textCondition.ExpectedText ?? string.Empty),
-                                    new XAttribute("MinimumConfidence", textCondition.MinimumConfidence.ToString(CultureInfo.InvariantCulture)),
-                                    new XAttribute("MinimumNumber", textCondition.MinimumNumber.ToString(CultureInfo.InvariantCulture)),
-                                    new XAttribute("MaximumNumber", textCondition.MaximumNumber.ToString(CultureInfo.InvariantCulture))),
-                                new XElement(
+                                 new XElement("TextCondition",
+                                     new XAttribute("MatchMode", (int)textCondition.MatchMode),
+                                     new XAttribute("ExpectedText", textCondition.ExpectedText ?? string.Empty),
+                                     new XAttribute("MinimumConfidence", textCondition.MinimumConfidence.ToString(CultureInfo.InvariantCulture)),
+                                     new XAttribute("MinimumNumber", textCondition.MinimumNumber.ToString(CultureInfo.InvariantCulture)),
+                                     new XAttribute("MaximumNumber", textCondition.MaximumNumber.ToString(CultureInfo.InvariantCulture))),
+                                 new XElement("ColorCondition",
+                                     new XAttribute("Red", condition.ColorCondition == null ? 255 : condition.ColorCondition.Red),
+                                     new XAttribute("Green", condition.ColorCondition == null ? 255 : condition.ColorCondition.Green),
+                                     new XAttribute("Blue", condition.ColorCondition == null ? 255 : condition.ColorCondition.Blue),
+                                     new XAttribute("Tolerance", condition.ColorCondition == null ? 16 : condition.ColorCondition.Tolerance),
+                                     new XAttribute("MinimumPixelCount", condition.ColorCondition == null ? 10 : condition.ColorCondition.MinimumPixelCount),
+                                     new XAttribute("MinimumMatchRatio", (condition.ColorCondition == null ? 0D : condition.ColorCondition.MinimumMatchRatio).ToString(CultureInfo.InvariantCulture))),
+                                 new XElement(
                                     "TemplatePng",
-                                    Convert.ToBase64String(VisionResourceSerializer.ToPngBytes(condition.Template)))));
+                                    Convert.ToBase64String(VisionResourceSerializer.ToPngBytes(condition.Template))),
+                                new XElement(
+                                    "VerificationTemplatePng",
+                                    Convert.ToBase64String(VisionResourceSerializer.ToPngBytes(
+                                        step.Verification == null ? null : step.Verification.Template))),
+                                new XElement(
+                                    "VerificationRegion",
+                                    new XElement("X", verificationRegion == null ? 0 : verificationRegion.X),
+                                    new XElement("Y", verificationRegion == null ? 0 : verificationRegion.Y),
+                                    new XElement("Width", verificationRegion == null ? 0 : verificationRegion.Width),
+                                    new XElement("Height", verificationRegion == null ? 0 : verificationRegion.Height),
+                                    new XElement("UseNormalizedCoordinates", verificationRegion != null && verificationRegion.UseNormalizedCoordinates),
+                                    new XElement("ReferenceWidth", verificationRegion == null ? 0 : verificationRegion.ReferenceWidth),
+                                    new XElement("ReferenceHeight", verificationRegion == null ? 0 : verificationRegion.ReferenceHeight))));
                         if (condition.TemplateVariants != null && condition.TemplateVariants.Count > 0)
                         {
                             xeStep.Element("Condition").Add(
@@ -10550,12 +10882,15 @@ namespace WPELibrary.Lib
                 {
                     profile.CaptureSettings = new VisionCaptureSettings
                     {
-                        SourceMode = (VisionCaptureSourceMode)XmlInt(xeCaptureSettings, "SourceMode", 0),
+                        SourceMode = XmlEnum(xeCaptureSettings, "SourceMode", VisionCaptureSourceMode.Auto),
                         MinimumIntervalMilliseconds = XmlInt(xeCaptureSettings, "MinimumIntervalMilliseconds", 150),
                         SkipUnchangedFrames = XmlBool(xeCaptureSettings, "SkipUnchangedFrames", true),
                         HistoryLimit = XmlInt(xeCaptureSettings, "HistoryLimit", 30),
                         SaveFailureSnapshots = XmlBool(xeCaptureSettings, "SaveFailureSnapshots", false),
-                        FailureSnapshotDirectory = XmlString(xeCaptureSettings, "FailureSnapshotDirectory", string.Empty)
+                        FailureSnapshotDirectory = XmlString(xeCaptureSettings, "FailureSnapshotDirectory", string.Empty),
+                        RequireExactClientSize = XmlBool(xeCaptureSettings, "RequireExactClientSize", false),
+                        RequiredClientWidth = XmlInt(xeCaptureSettings, "RequiredClientWidth", 0),
+                        RequiredClientHeight = XmlInt(xeCaptureSettings, "RequiredClientHeight", 0)
                     };
                 }
 
@@ -10581,7 +10916,12 @@ namespace WPELibrary.Lib
                         ExecutablePath = XmlString(xeOcrOptions, "ExecutablePath", "tesseract.exe"),
                         TessdataPath = XmlString(xeOcrOptions, "TessdataPath", string.Empty),
                         TimeoutMilliseconds = XmlInt(xeOcrOptions, "TimeoutMilliseconds", 5000),
-                        PageSegmentationMode = XmlInt(xeOcrOptions, "PageSegmentationMode", 6)
+                        PageSegmentationMode = XmlInt(xeOcrOptions, "PageSegmentationMode", 6),
+                        Engine = XmlEnum(xeOcrOptions, "Engine", VisionOcrEngine.Auto),
+                        OnnxModelDirectory = XmlString(xeOcrOptions, "OnnxModelDirectory", "models\\ocr"),
+                        OnnxDetectionThreshold = XmlDouble(xeOcrOptions, "OnnxDetectionThreshold", 0.3D),
+                        OnnxRecognitionThreshold = XmlDouble(xeOcrOptions, "OnnxRecognitionThreshold", 0.5D),
+                        OnnxMaxImageSide = XmlInt(xeOcrOptions, "OnnxMaxImageSide", 960)
                     };
                 }
 
@@ -10590,7 +10930,7 @@ namespace WPELibrary.Lib
                 {
                     profile.OcrCondition = new VisionTextCondition
                     {
-                        MatchMode = (VisionTextMatchMode)XmlInt(xeOcrCondition, "MatchMode", 0),
+                        MatchMode = XmlEnum(xeOcrCondition, "MatchMode", VisionTextMatchMode.Contains),
                         ExpectedText = XmlString(xeOcrCondition, "ExpectedText", string.Empty),
                         MinimumConfidence = XmlDouble(xeOcrCondition, "MinimumConfidence", 0.5D),
                         MinimumNumber = XmlDouble(xeOcrCondition, "MinimumNumber", double.MinValue),
@@ -10617,6 +10957,7 @@ namespace WPELibrary.Lib
 
                         XElement xeConditionRegion = xeCondition.Element("Region");
                         XElement xeTextCondition = xeCondition.Element("TextCondition");
+                        XElement xeColorCondition = xeCondition.Element("ColorCondition");
                         VisionConditionDefinition condition = new VisionConditionDefinition
                         {
                             Type = (VisionConditionType)typeValue,
@@ -10637,18 +10978,34 @@ namespace WPELibrary.Lib
                             },
                             TextCondition = new VisionTextCondition
                             {
-                                MatchMode = (VisionTextMatchMode)XmlAttributeInt(xeTextCondition, "MatchMode", 0),
+                                MatchMode = XmlAttributeEnum(xeTextCondition, "MatchMode", VisionTextMatchMode.Contains),
                                 ExpectedText = XmlAttributeString(xeTextCondition, "ExpectedText", string.Empty),
                                 MinimumConfidence = XmlAttributeDouble(xeTextCondition, "MinimumConfidence", 0.5D),
                                 MinimumNumber = XmlAttributeDouble(xeTextCondition, "MinimumNumber", double.MinValue),
-                                MaximumNumber = XmlAttributeDouble(xeTextCondition, "MaximumNumber", double.MaxValue)
-                            },
-                            MinimumSimilarity = XmlAttributeDouble(xeCondition, "MinimumSimilarity", 0.9D),
-                            RequiredConfirmations = XmlAttributeInt(xeCondition, "RequiredConfirmations", 3),
-                            PollIntervalMilliseconds = XmlAttributeInt(xeCondition, "PollInterval", 250),
-                            TimeoutMilliseconds = XmlAttributeInt(xeCondition, "Timeout", 10000),
-                            MaxRetries = XmlAttributeInt(xeCondition, "MaxRetries", 0),
-                            FailurePolicy = (VisionFailurePolicy)XmlAttributeInt(xeCondition, "FailurePolicy", 0)
+                                 MaximumNumber = XmlAttributeDouble(xeTextCondition, "MaximumNumber", double.MaxValue)
+                             },
+                             ColorCondition = new VisionColorCondition
+                             {
+                                 Red = (byte)Math.Max(0, Math.Min(255, XmlAttributeInt(xeColorCondition, "Red", 255))),
+                                 Green = (byte)Math.Max(0, Math.Min(255, XmlAttributeInt(xeColorCondition, "Green", 255))),
+                                 Blue = (byte)Math.Max(0, Math.Min(255, XmlAttributeInt(xeColorCondition, "Blue", 255))),
+                                 Tolerance = XmlAttributeInt(xeColorCondition, "Tolerance", 16),
+                                 MinimumPixelCount = XmlAttributeInt(xeColorCondition, "MinimumPixelCount", 10),
+                                 MinimumMatchRatio = XmlAttributeDouble(xeColorCondition, "MinimumMatchRatio", 0D)
+                             },
+                             MinimumSimilarity = XmlAttributeDouble(xeCondition, "MinimumSimilarity", 0.9D),
+                            RequiredConfirmations = XmlAttributeInt(xeCondition, "RequiredConfirmations", 2),
+                            PollIntervalMilliseconds = XmlAttributeInt(xeCondition, "PollInterval", 150),
+                            TimeoutMilliseconds = XmlAttributeInt(xeCondition, "Timeout", 8000),
+                            MaxRetries = XmlAttributeInt(xeCondition, "MaxRetries", 1),
+                                FailurePolicy = XmlAttributeEnum(xeCondition, "FailurePolicy", VisionFailurePolicy.Stop)
+                        };
+                        VisionActionDefinition actionDefinition = new VisionActionDefinition
+                        {
+                            Type = XmlAttributeEnum(xeCondition, "ActionType", VisionActionType.None),
+                            ScrollDirection = XmlAttributeEnum(xeCondition, "ScrollDirection", VisionScrollDirection.Down),
+                            ScrollAmount = XmlAttributeInt(xeCondition, "ScrollAmount", 3),
+                            DelayMilliseconds = XmlAttributeInt(xeCondition, "ActionDelay", 300)
                         };
                         string templateText = XmlString(xeCondition, "TemplatePng", string.Empty);
                         if (!string.IsNullOrWhiteSpace(templateText))
@@ -10683,11 +11040,84 @@ namespace WPELibrary.Lib
                             }
                         }
 
+                        VisionConditionDefinition verification = null;
+                        if (XmlAttributeBool(xeCondition, "VerificationEnabled", false))
+                        {
+                            int verificationType = XmlAttributeInt(xeCondition, "VerificationType", 0);
+                            if (verificationType != (int)VisionConditionType.TextAppears &&
+                                verificationType != (int)VisionConditionType.TemplateAppears)
+                            {
+                                Socket_Operation.DoLog(
+                                    MethodBase.GetCurrentMethod().Name,
+                                    "Ignored an invalid vision verification type.");
+                            }
+                            else
+                            {
+                                verification = new VisionConditionDefinition
+                                {
+                                    Type = (VisionConditionType)verificationType,
+                                Region = condition.Region == null ? new VisionRegion() : condition.Region.Clone(),
+                                RequiredConfirmations = condition.RequiredConfirmations,
+                                PollIntervalMilliseconds = condition.PollIntervalMilliseconds,
+                                TimeoutMilliseconds = condition.TimeoutMilliseconds,
+                                MaxRetries = condition.MaxRetries,
+                                FailurePolicy = condition.FailurePolicy,
+                                MinimumSimilarity = condition.MinimumSimilarity,
+                                NormalizeTemplateBrightness = condition.NormalizeTemplateBrightness,
+                                AllowTemplateScaleVariation = condition.AllowTemplateScaleVariation,
+                                TemplateMinimumScale = condition.TemplateMinimumScale,
+                                TemplateMaximumScale = condition.TemplateMaximumScale,
+                                TemplateScaleStep = condition.TemplateScaleStep,
+                                TextCondition = new VisionTextCondition
+                                {
+                                    ExpectedText = XmlAttributeString(xeCondition, "VerificationKeyword", string.Empty),
+                                    MatchMode = VisionTextMatchMode.Contains,
+                                    MinimumConfidence = 0D
+                                }
+                                };
+                                string verificationTemplate = XmlString(xeCondition, "VerificationTemplatePng", string.Empty);
+                                if (!string.IsNullOrWhiteSpace(verificationTemplate))
+                                {
+                                    try
+                                    {
+                                        verification.Template = VisionResourceSerializer.FromPngBytes(
+                                            Convert.FromBase64String(verificationTemplate));
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                                    }
+                                }
+                                if (XmlAttributeBool(xeCondition, "VerificationSeparateRegion", false))
+                                {
+                                    XElement verificationRegion = xeCondition.Element("VerificationRegion");
+                                    if (verificationRegion != null)
+                                    {
+                                        verification.Region = new VisionRegion
+                                        {
+                                            X = XmlInt(verificationRegion, "X", verification.Region.X),
+                                            Y = XmlInt(verificationRegion, "Y", verification.Region.Y),
+                                            Width = XmlInt(verificationRegion, "Width", verification.Region.Width),
+                                            Height = XmlInt(verificationRegion, "Height", verification.Region.Height),
+                                            UseNormalizedCoordinates = XmlBool(verificationRegion, "UseNormalizedCoordinates", false),
+                                            ReferenceWidth = XmlInt(verificationRegion, "ReferenceWidth", 0),
+                                            ReferenceHeight = XmlInt(verificationRegion, "ReferenceHeight", 0)
+                                        };
+                                    }
+                                }
+                            }
+                        }
+
                         profile.AssistantSteps.Add(new VisionAssistantStep
                         {
                             Name = XmlAttributeString(xeStep, "Name", string.Empty),
                             Condition = condition,
-                            Action = null
+                            Action = null,
+                            ActionDefinition = actionDefinition,
+                            VerificationEnabled = verification != null,
+                            Verification = verification,
+                            VerificationUsesSeparateRegion = verification != null &&
+                                XmlAttributeBool(xeCondition, "VerificationSeparateRegion", false)
                         });
                     }
                 }
@@ -10741,6 +11171,24 @@ namespace WPELibrary.Lib
             {
                 int value;
                 return int.TryParse(XmlAttributeString(element, name, string.Empty), out value) ? value : fallback;
+            }
+
+            private static T XmlEnum<T>(XElement parent, string name, T fallback)
+                where T : struct
+            {
+                int value = XmlInt(parent, name, Convert.ToInt32(fallback));
+                return Enum.IsDefined(typeof(T), value)
+                    ? (T)Enum.ToObject(typeof(T), value)
+                    : fallback;
+            }
+
+            private static T XmlAttributeEnum<T>(XElement element, string name, T fallback)
+                where T : struct
+            {
+                int value = XmlAttributeInt(element, name, Convert.ToInt32(fallback));
+                return Enum.IsDefined(typeof(T), value)
+                    ? (T)Enum.ToObject(typeof(T), value)
+                    : fallback;
             }
 
             private static double XmlAttributeDouble(XElement element, string name, double fallback)
@@ -14095,6 +14543,9 @@ namespace WPELibrary.Lib
                         sql += "CaptureHistoryLimit INTEGER DEFAULT 30,";
                         sql += "CaptureSaveFailures BOOLEAN DEFAULT 0,";
                         sql += "CaptureFailureDirectory TEXT,";
+                        sql += "CaptureRequireExactClientSize BOOLEAN DEFAULT 0,";
+                        sql += "CaptureRequiredClientWidth INTEGER DEFAULT 0,";
+                        sql += "CaptureRequiredClientHeight INTEGER DEFAULT 0,";
                         sql += "OcrScale INTEGER DEFAULT 2,";
                         sql += "OcrBinary BOOLEAN DEFAULT 0,";
                         sql += "OcrThreshold INTEGER DEFAULT 160,";
@@ -14112,6 +14563,11 @@ namespace WPELibrary.Lib
                         sql += "OcrTessdataPath TEXT,";
                         sql += "OcrTimeout INTEGER DEFAULT 5000,";
                         sql += "OcrPsm INTEGER DEFAULT 6,";
+                        sql += "OcrEngine INTEGER DEFAULT 0,";
+                        sql += "OcrModelDirectory TEXT,";
+                        sql += "OcrDetectionThreshold REAL DEFAULT 0.3,";
+                        sql += "OcrRecognitionThreshold REAL DEFAULT 0.5,";
+                        sql += "OcrMaxImageSide INTEGER DEFAULT 960,";
                         sql += "OcrKeyword TEXT,";
                         sql += "OcrMatchMode INTEGER DEFAULT 0,";
                         sql += "OcrMinimumConfidence REAL DEFAULT 0.5,";
@@ -14135,17 +14591,39 @@ namespace WPELibrary.Lib
                         sql += "MinimumNumber REAL DEFAULT 0,";
                         sql += "MaximumNumber REAL DEFAULT 0,";
                         sql += "MinimumConfidence REAL DEFAULT 0.5,";
+                        sql += "ColorR INTEGER DEFAULT 255,";
+                        sql += "ColorG INTEGER DEFAULT 255,";
+                        sql += "ColorB INTEGER DEFAULT 255,";
+                        sql += "ColorTolerance INTEGER DEFAULT 16,";
+                        sql += "ColorMinimumPixels INTEGER DEFAULT 10,";
+                        sql += "ColorMinimumRatio REAL DEFAULT 0,";
                         sql += "MinimumSimilarity REAL DEFAULT 0.9,";
                         sql += "TemplateNormalize BOOLEAN DEFAULT 1,";
                         sql += "TemplateScaleVariation BOOLEAN DEFAULT 0,";
                         sql += "TemplateMinScale REAL DEFAULT 0.9,";
                         sql += "TemplateMaxScale REAL DEFAULT 1.1,";
                         sql += "TemplateScaleStep REAL DEFAULT 0.05,";
-                        sql += "RequiredConfirmations INTEGER DEFAULT 3,";
-                        sql += "PollInterval INTEGER DEFAULT 250,";
-                        sql += "Timeout INTEGER DEFAULT 10000,";
-                        sql += "MaxRetries INTEGER DEFAULT 0,";
+                        sql += "RequiredConfirmations INTEGER DEFAULT 2,";
+                        sql += "PollInterval INTEGER DEFAULT 150,";
+                        sql += "Timeout INTEGER DEFAULT 8000,";
+                        sql += "MaxRetries INTEGER DEFAULT 1,";
                         sql += "FailurePolicy INTEGER DEFAULT 0,";
+                        sql += "ActionType INTEGER DEFAULT 0,";
+                        sql += "ScrollDirection INTEGER DEFAULT 1,";
+                        sql += "ScrollAmount INTEGER DEFAULT 3,";
+                        sql += "ActionDelay INTEGER DEFAULT 300,";
+                        sql += "VerificationEnabled BOOLEAN DEFAULT 0,";
+                        sql += "VerificationType INTEGER DEFAULT 0,";
+                        sql += "VerificationKeyword TEXT,";
+                        sql += "VerificationTemplatePng BLOB,";
+                        sql += "VerificationSeparateRegion BOOLEAN DEFAULT 0,";
+                        sql += "VerificationRegionX INTEGER DEFAULT 0,";
+                        sql += "VerificationRegionY INTEGER DEFAULT 0,";
+                        sql += "VerificationRegionWidth INTEGER DEFAULT 0,";
+                        sql += "VerificationRegionHeight INTEGER DEFAULT 0,";
+                        sql += "VerificationRegionNormalized BOOLEAN DEFAULT 0,";
+                        sql += "VerificationRegionReferenceWidth INTEGER DEFAULT 0,";
+                        sql += "VerificationRegionReferenceHeight INTEGER DEFAULT 0,";
                         sql += "TemplatePng BLOB,";
                         sql += "TemplateVariants TEXT,";
                         sql += "FOREIGN KEY (RobotGUID) REFERENCES Robot(GUID)";
@@ -14189,22 +14667,30 @@ namespace WPELibrary.Lib
                                 "OcrTessdataPath TEXT",
                                 "OcrTimeout INTEGER DEFAULT 5000",
                                 "OcrPsm INTEGER DEFAULT 6",
+                                "OcrEngine INTEGER DEFAULT 0",
+                                "OcrModelDirectory TEXT",
+                                "OcrDetectionThreshold REAL DEFAULT 0.3",
+                                "OcrRecognitionThreshold REAL DEFAULT 0.5",
+                                "OcrMaxImageSide INTEGER DEFAULT 960",
                                 "OcrKeyword TEXT",
                                 "OcrMatchMode INTEGER DEFAULT 0",
                                 "OcrMinimumConfidence REAL DEFAULT 0.5",
-                                "OcrMinimumNumber REAL DEFAULT 0",
-                                "OcrMaximumNumber REAL DEFAULT 0"
-                                ,"ProcessPath TEXT"
-                                ,"ProcessStartTimeUtcTicks INTEGER DEFAULT 0"
-                                ,"RegionNormalized BOOLEAN DEFAULT 0"
-                                ,"RegionReferenceWidth INTEGER DEFAULT 0"
-                                ,"RegionReferenceHeight INTEGER DEFAULT 0"
-                                ,"CaptureSource INTEGER DEFAULT 0"
-                                ,"CaptureInterval INTEGER DEFAULT 150"
-                                ,"CaptureSkipUnchanged BOOLEAN DEFAULT 1"
-                                ,"CaptureHistoryLimit INTEGER DEFAULT 30"
-                                ,"CaptureSaveFailures BOOLEAN DEFAULT 0"
-                                ,"CaptureFailureDirectory TEXT"
+                                 "OcrMinimumNumber REAL DEFAULT 0",
+                                 "OcrMaximumNumber REAL DEFAULT 0",
+                                 "ProcessPath TEXT",
+                                 "ProcessStartTimeUtcTicks INTEGER DEFAULT 0",
+                                 "RegionNormalized BOOLEAN DEFAULT 0",
+                                 "RegionReferenceWidth INTEGER DEFAULT 0",
+                                 "RegionReferenceHeight INTEGER DEFAULT 0",
+                                 "CaptureSource INTEGER DEFAULT 0",
+                                 "CaptureInterval INTEGER DEFAULT 150",
+                                 "CaptureSkipUnchanged BOOLEAN DEFAULT 1",
+                                 "CaptureHistoryLimit INTEGER DEFAULT 30",
+                                 "CaptureSaveFailures BOOLEAN DEFAULT 0",
+                                 "CaptureFailureDirectory TEXT",
+                                 "CaptureRequireExactClientSize BOOLEAN DEFAULT 0",
+                                 "CaptureRequiredClientWidth INTEGER DEFAULT 0",
+                                 "CaptureRequiredClientHeight INTEGER DEFAULT 0"
                             };
                             foreach (string visionColumn in visionColumns)
                             {
@@ -14227,12 +14713,34 @@ namespace WPELibrary.Lib
                                 "RegionNormalized BOOLEAN DEFAULT 0",
                                 "RegionReferenceWidth INTEGER DEFAULT 0",
                                 "RegionReferenceHeight INTEGER DEFAULT 0",
+                                "ColorR INTEGER DEFAULT 255",
+                                "ColorG INTEGER DEFAULT 255",
+                                "ColorB INTEGER DEFAULT 255",
+                                "ColorTolerance INTEGER DEFAULT 16",
+                                "ColorMinimumPixels INTEGER DEFAULT 10",
+                                "ColorMinimumRatio REAL DEFAULT 0",
                                 "TemplateNormalize BOOLEAN DEFAULT 1",
                                 "TemplateScaleVariation BOOLEAN DEFAULT 0",
                                 "TemplateMinScale REAL DEFAULT 0.9",
                                 "TemplateMaxScale REAL DEFAULT 1.1",
                                 "TemplateScaleStep REAL DEFAULT 0.05",
-                                "TemplateVariants TEXT"
+                                "TemplateVariants TEXT",
+                                "ActionType INTEGER DEFAULT 0",
+                                "ScrollDirection INTEGER DEFAULT 1",
+                                "ScrollAmount INTEGER DEFAULT 3",
+                                "ActionDelay INTEGER DEFAULT 300",
+                                "VerificationEnabled BOOLEAN DEFAULT 0",
+                                "VerificationType INTEGER DEFAULT 0",
+                                "VerificationKeyword TEXT",
+                                "VerificationTemplatePng BLOB",
+                                "VerificationSeparateRegion BOOLEAN DEFAULT 0",
+                                "VerificationRegionX INTEGER DEFAULT 0",
+                                "VerificationRegionY INTEGER DEFAULT 0",
+                                "VerificationRegionWidth INTEGER DEFAULT 0",
+                                "VerificationRegionHeight INTEGER DEFAULT 0",
+                                "VerificationRegionNormalized BOOLEAN DEFAULT 0",
+                                "VerificationRegionReferenceWidth INTEGER DEFAULT 0",
+                                "VerificationRegionReferenceHeight INTEGER DEFAULT 0"
                             };
                             foreach (string conditionColumn in conditionColumns)
                             {
@@ -14496,18 +15004,18 @@ namespace WPELibrary.Lib
                             sql = "INSERT OR REPLACE INTO RobotVisionProfile (";
                             sql += "GUID, WindowHandle, ProcessId, ProcessName, ProcessPath, ProcessStartTimeUtcTicks, WindowTitle,";
                             sql += "RegionX, RegionY, RegionWidth, RegionHeight, RegionNormalized, RegionReferenceWidth, RegionReferenceHeight,";
-                            sql += "CaptureSource, CaptureInterval, CaptureSkipUnchanged, CaptureHistoryLimit, CaptureSaveFailures, CaptureFailureDirectory,";
+                            sql += "CaptureSource, CaptureInterval, CaptureSkipUnchanged, CaptureHistoryLimit, CaptureSaveFailures, CaptureFailureDirectory, CaptureRequireExactClientSize, CaptureRequiredClientWidth, CaptureRequiredClientHeight,";
                             sql += "OcrScale, OcrBinary, OcrThreshold, OcrContrast, OcrAdaptive, OcrAdaptiveWindow, OcrAdaptiveOffset,";
                             sql += "OcrInvert, OcrDenoise, OcrSharpen, OcrWhitelist, OcrBlacklist, OcrLanguage,";
-                            sql += "OcrExecutable, OcrTessdataPath, OcrTimeout, OcrPsm, OcrKeyword,";
+                            sql += "OcrExecutable, OcrTessdataPath, OcrTimeout, OcrPsm, OcrEngine, OcrModelDirectory, OcrDetectionThreshold, OcrRecognitionThreshold, OcrMaxImageSide, OcrKeyword,";
                             sql += "OcrMatchMode, OcrMinimumConfidence, OcrMinimumNumber, OcrMaximumNumber";
                             sql += ") VALUES (";
                             sql += "@GUID, @WindowHandle, @ProcessId, @ProcessName, @ProcessPath, @ProcessStartTimeUtcTicks, @WindowTitle,";
                             sql += "@RegionX, @RegionY, @RegionWidth, @RegionHeight, @RegionNormalized, @RegionReferenceWidth, @RegionReferenceHeight,";
-                            sql += "@CaptureSource, @CaptureInterval, @CaptureSkipUnchanged, @CaptureHistoryLimit, @CaptureSaveFailures, @CaptureFailureDirectory,";
+                            sql += "@CaptureSource, @CaptureInterval, @CaptureSkipUnchanged, @CaptureHistoryLimit, @CaptureSaveFailures, @CaptureFailureDirectory, @CaptureRequireExactClientSize, @CaptureRequiredClientWidth, @CaptureRequiredClientHeight,";
                             sql += "@OcrScale, @OcrBinary, @OcrThreshold, @OcrContrast, @OcrAdaptive, @OcrAdaptiveWindow, @OcrAdaptiveOffset,";
                             sql += "@OcrInvert, @OcrDenoise, @OcrSharpen, @OcrWhitelist, @OcrBlacklist, @OcrLanguage,";
-                            sql += "@OcrExecutable, @OcrTessdataPath, @OcrTimeout, @OcrPsm, @OcrKeyword,";
+                            sql += "@OcrExecutable, @OcrTessdataPath, @OcrTimeout, @OcrPsm, @OcrEngine, @OcrModelDirectory, @OcrDetectionThreshold, @OcrRecognitionThreshold, @OcrMaxImageSide, @OcrKeyword,";
                             sql += "@OcrMatchMode, @OcrMinimumConfidence, @OcrMinimumNumber, @OcrMaximumNumber";
                             sql += ");";
 
@@ -14537,6 +15045,9 @@ namespace WPELibrary.Lib
                                 cmd.Parameters.AddWithValue("@CaptureHistoryLimit", captureSettings.HistoryLimit);
                                 cmd.Parameters.AddWithValue("@CaptureSaveFailures", captureSettings.SaveFailureSnapshots);
                                 cmd.Parameters.AddWithValue("@CaptureFailureDirectory", captureSettings.FailureSnapshotDirectory ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@CaptureRequireExactClientSize", captureSettings.RequireExactClientSize);
+                                cmd.Parameters.AddWithValue("@CaptureRequiredClientWidth", captureSettings.RequiredClientWidth);
+                                cmd.Parameters.AddWithValue("@CaptureRequiredClientHeight", captureSettings.RequiredClientHeight);
                                 cmd.Parameters.AddWithValue("@OcrScale", ocrOptions.ScaleFactor);
                                 cmd.Parameters.AddWithValue("@OcrBinary", ocrOptions.UseBinaryThreshold);
                                 cmd.Parameters.AddWithValue("@OcrThreshold", ocrOptions.BinaryThreshold);
@@ -14554,6 +15065,11 @@ namespace WPELibrary.Lib
                                 cmd.Parameters.AddWithValue("@OcrTessdataPath", ocrOptions.TessdataPath ?? string.Empty);
                                 cmd.Parameters.AddWithValue("@OcrTimeout", ocrOptions.TimeoutMilliseconds);
                                 cmd.Parameters.AddWithValue("@OcrPsm", ocrOptions.PageSegmentationMode);
+                                cmd.Parameters.AddWithValue("@OcrEngine", (int)ocrOptions.Engine);
+                                cmd.Parameters.AddWithValue("@OcrModelDirectory", ocrOptions.OnnxModelDirectory ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrDetectionThreshold", ocrOptions.OnnxDetectionThreshold);
+                                cmd.Parameters.AddWithValue("@OcrRecognitionThreshold", ocrOptions.OnnxRecognitionThreshold);
+                                cmd.Parameters.AddWithValue("@OcrMaxImageSide", ocrOptions.OnnxMaxImageSide);
                                 cmd.Parameters.AddWithValue("@OcrKeyword", ocrCondition.ExpectedText ?? string.Empty);
                                 cmd.Parameters.AddWithValue("@OcrMatchMode", (int)ocrCondition.MatchMode);
                                 cmd.Parameters.AddWithValue("@OcrMinimumConfidence", ocrCondition.MinimumConfidence);
@@ -14592,6 +15108,8 @@ namespace WPELibrary.Lib
 
                     VisionConditionDefinition condition = step.Condition;
                     byte[] templatePng = VisionResourceSerializer.ToPngBytes(condition.Template);
+                    byte[] verificationTemplatePng = VisionResourceSerializer.ToPngBytes(
+                        step.Verification == null ? null : step.Verification.Template);
                     string templateVariants = string.Empty;
                     if (condition.TemplateVariants != null)
                     {
@@ -14602,15 +15120,15 @@ namespace WPELibrary.Lib
                     string sql = "INSERT INTO RobotVisionCondition (";
                     sql += "GUID, RobotGUID, StepIndex, Name, ConditionType,";
                     sql += "RegionX, RegionY, RegionWidth, RegionHeight, RegionNormalized, RegionReferenceWidth, RegionReferenceHeight, Keyword, MatchMode,";
-                    sql += "MinimumNumber, MaximumNumber, MinimumConfidence, MinimumSimilarity,";
+                    sql += "MinimumNumber, MaximumNumber, MinimumConfidence, ColorR, ColorG, ColorB, ColorTolerance, ColorMinimumPixels, ColorMinimumRatio, MinimumSimilarity,";
                     sql += "TemplateNormalize, TemplateScaleVariation, TemplateMinScale, TemplateMaxScale, TemplateScaleStep,";
-                    sql += "RequiredConfirmations, PollInterval, Timeout, MaxRetries, FailurePolicy, TemplatePng, TemplateVariants";
+                    sql += "RequiredConfirmations, PollInterval, Timeout, MaxRetries, FailurePolicy, ActionType, ScrollDirection, ScrollAmount, ActionDelay, VerificationEnabled, VerificationType, VerificationKeyword, VerificationTemplatePng, VerificationSeparateRegion, VerificationRegionX, VerificationRegionY, VerificationRegionWidth, VerificationRegionHeight, VerificationRegionNormalized, VerificationRegionReferenceWidth, VerificationRegionReferenceHeight, TemplatePng, TemplateVariants";
                     sql += ") VALUES (";
                     sql += "@GUID, @RobotGUID, @StepIndex, @Name, @ConditionType,";
                     sql += "@RegionX, @RegionY, @RegionWidth, @RegionHeight, @RegionNormalized, @RegionReferenceWidth, @RegionReferenceHeight, @Keyword, @MatchMode,";
-                    sql += "@MinimumNumber, @MaximumNumber, @MinimumConfidence, @MinimumSimilarity,";
+                    sql += "@MinimumNumber, @MaximumNumber, @MinimumConfidence, @ColorR, @ColorG, @ColorB, @ColorTolerance, @ColorMinimumPixels, @ColorMinimumRatio, @MinimumSimilarity,";
                     sql += "@TemplateNormalize, @TemplateScaleVariation, @TemplateMinScale, @TemplateMaxScale, @TemplateScaleStep,";
-                    sql += "@RequiredConfirmations, @PollInterval, @Timeout, @MaxRetries, @FailurePolicy, @TemplatePng, @TemplateVariants";
+                    sql += "@RequiredConfirmations, @PollInterval, @Timeout, @MaxRetries, @FailurePolicy, @ActionType, @ScrollDirection, @ScrollAmount, @ActionDelay, @VerificationEnabled, @VerificationType, @VerificationKeyword, @VerificationTemplatePng, @VerificationSeparateRegion, @VerificationRegionX, @VerificationRegionY, @VerificationRegionWidth, @VerificationRegionHeight, @VerificationRegionNormalized, @VerificationRegionReferenceWidth, @VerificationRegionReferenceHeight, @TemplatePng, @TemplateVariants";
                     sql += ");";
 
                     using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
@@ -14634,6 +15152,13 @@ namespace WPELibrary.Lib
                         cmd.Parameters.AddWithValue("@MinimumNumber", textCondition.MinimumNumber);
                         cmd.Parameters.AddWithValue("@MaximumNumber", textCondition.MaximumNumber);
                         cmd.Parameters.AddWithValue("@MinimumConfidence", textCondition.MinimumConfidence);
+                        VisionColorCondition colorCondition = condition.ColorCondition ?? new VisionColorCondition();
+                        cmd.Parameters.AddWithValue("@ColorR", colorCondition.Red);
+                        cmd.Parameters.AddWithValue("@ColorG", colorCondition.Green);
+                        cmd.Parameters.AddWithValue("@ColorB", colorCondition.Blue);
+                        cmd.Parameters.AddWithValue("@ColorTolerance", colorCondition.Tolerance);
+                        cmd.Parameters.AddWithValue("@ColorMinimumPixels", colorCondition.MinimumPixelCount);
+                        cmd.Parameters.AddWithValue("@ColorMinimumRatio", colorCondition.MinimumMatchRatio);
                         cmd.Parameters.AddWithValue("@MinimumSimilarity", condition.MinimumSimilarity);
                         cmd.Parameters.AddWithValue("@TemplateNormalize", condition.NormalizeTemplateBrightness);
                         cmd.Parameters.AddWithValue("@TemplateScaleVariation", condition.AllowTemplateScaleVariation);
@@ -14645,6 +15170,31 @@ namespace WPELibrary.Lib
                         cmd.Parameters.AddWithValue("@Timeout", condition.TimeoutMilliseconds);
                         cmd.Parameters.AddWithValue("@MaxRetries", condition.MaxRetries);
                         cmd.Parameters.AddWithValue("@FailurePolicy", (int)condition.FailurePolicy);
+                        VisionActionDefinition actionDefinition = step.ActionDefinition ?? new VisionActionDefinition();
+                        actionDefinition.Validate();
+                        cmd.Parameters.AddWithValue("@ActionType", (int)actionDefinition.Type);
+                        cmd.Parameters.AddWithValue("@ScrollDirection", (int)actionDefinition.ScrollDirection);
+                        cmd.Parameters.AddWithValue("@ScrollAmount", actionDefinition.ScrollAmount);
+                        cmd.Parameters.AddWithValue("@ActionDelay", actionDefinition.DelayMilliseconds);
+                        VisionConditionDefinition verification = step.Verification;
+                        VisionTextCondition verificationText = verification == null || verification.TextCondition == null
+                            ? new VisionTextCondition()
+                            : verification.TextCondition;
+                        cmd.Parameters.AddWithValue("@VerificationEnabled", step.VerificationEnabled && verification != null);
+                        cmd.Parameters.AddWithValue("@VerificationType", verification == null ? 0 : (int)verification.Type);
+                        cmd.Parameters.AddWithValue("@VerificationKeyword", verificationText.ExpectedText ?? string.Empty);
+                        cmd.Parameters.AddWithValue("@VerificationTemplatePng", verificationTemplatePng);
+                        VisionRegion verificationRegion = verification == null || verification.Region == null
+                            ? region
+                            : verification.Region;
+                        cmd.Parameters.AddWithValue("@VerificationSeparateRegion", step.VerificationUsesSeparateRegion && verification != null);
+                        cmd.Parameters.AddWithValue("@VerificationRegionX", verificationRegion.X);
+                        cmd.Parameters.AddWithValue("@VerificationRegionY", verificationRegion.Y);
+                        cmd.Parameters.AddWithValue("@VerificationRegionWidth", verificationRegion.Width);
+                        cmd.Parameters.AddWithValue("@VerificationRegionHeight", verificationRegion.Height);
+                        cmd.Parameters.AddWithValue("@VerificationRegionNormalized", verificationRegion.UseNormalizedCoordinates);
+                        cmd.Parameters.AddWithValue("@VerificationRegionReferenceWidth", verificationRegion.ReferenceWidth);
+                        cmd.Parameters.AddWithValue("@VerificationRegionReferenceHeight", verificationRegion.ReferenceHeight);
                         cmd.Parameters.AddWithValue("@TemplatePng", templatePng);
                         cmd.Parameters.AddWithValue("@TemplateVariants", templateVariants);
                         cmd.ExecuteNonQuery();

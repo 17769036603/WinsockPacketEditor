@@ -326,6 +326,11 @@
   <data name="ByteAnnotation_CollapseButton" xml:space="preserve"><value>折叠字节注释</value></data>
   <data name="ByteAnnotation_ExpandButton" xml:space="preserve"><value>展开字节注释</value></data>
   <data name="Main_Settings" xml:space="preserve"><value>设置</value></data>
+  <data name="Startup_AdminRequired" xml:space="preserve"><value>注入模式需要管理员权限才能启动。</value></data>
+  <data name="Startup_AdminRestartFailed" xml:space="preserve"><value>请求管理员权限失败：{0}</value></data>
+  <data name="Startup_Failed" xml:space="preserve"><value>启动失败：{0}</value></data>
+  <data name="Injector_TargetNotApproved" xml:space="preserve"><value>当前进程已不再是允许注入的目标，请刷新进程列表后重试。</value></data>
+  <data name="Injector_LibraryMissing" xml:space="preserve"><value>程序目录中缺少 WPELibrary.dll。</value></data>
   <data name="Main_Start" xml:space="preserve"><value>开始 (&amp;K)</value></data>
   <data name="Main_Stop" xml:space="preserve"><value>停止 (&amp;T)</value></data>
   <data name="Main_Clear" xml:space="preserve"><value>清空当前捕获 (&amp;C)</value></data>
@@ -427,6 +432,14 @@
   <data name="UI_Name" xml:space="preserve"><value>名称</value></data>
   <data name="UI_Order" xml:space="preserve"><value>序号</value></data>
   <data name="UI_Send" xml:space="preserve"><value>发送</value></data>
+  <data name="UI_Sending" xml:space="preserve"><value>发送中…</value></data>
+  <data name="UI_NoSendData" xml:space="preserve"><value>这个封包没有可发送的数据。</value></data>
+  <data name="UI_BatchSendBusy" xml:space="preserve"><value>批量发送正在进行，请先停止批量发送。</value></data>
+  <data name="UI_SortOrderPositive" xml:space="preserve"><value>序号必须大于 0。</value></data>
+  <data name="UI_LoopCountNonNegative" xml:space="preserve"><value>次数不能小于 0；0 表示连续发送。</value></data>
+  <data name="UI_LoopIntervalNonNegative" xml:space="preserve"><value>间隔不能小于 0。</value></data>
+  <data name="UI_CharlesSessionFilter" xml:space="preserve"><value>Charles 会话文件（*.chlsx）|*.chlsx</value></data>
+  <data name="UI_FilterFileFilter" xml:space="preserve"><value>FILT 过滤器文件（*.filt）|*.filt</value></data>
   <data name="UI_PacketDetails" xml:space="preserve"><value>封包详情</value></data>
   <data name="UI_Stop" xml:space="preserve"><value>停止</value></data>
   <data name="UI_SendCount" xml:space="preserve"><value>发送次数</value></data>
@@ -435,7 +448,6 @@
   <data name="UI_Loop" xml:space="preserve"><value>循环</value></data>
   <data name="UI_SweepInterval" xml:space="preserve"><value>递进间隔</value></data>
   <data name="UI_NextInterval" xml:space="preserve"><value>下条间隔</value></data>
-  <data name="UI_MoveToGroup" xml:space="preserve"><value>移动到分组</value></data>
   <data name="UI_EditPacket" xml:space="preserve"><value>编辑封包内容</value></data>
   <data name="UI_EditMove" xml:space="preserve"><value>编辑 / 移动</value></data>
   <data name="UI_DeletePreset" xml:space="preserve"><value>删除预设</value></data>
@@ -445,7 +457,6 @@
   <data name="UI_NoGroupTip" xml:space="preserve"><value>未选择分组</value></data>
   <data name="UI_SelectedContext" xml:space="preserve"><value>{0} · 已选 {1}</value></data>
   <data name="UI_SelectedContextTip" xml:space="preserve"><value>当前分组：{0}；已选择：{1} 条</value></data>
-  <data name="UI_GroupName" xml:space="preserve"><value>分组名称</value></data>
   <data name="UI_OK" xml:space="preserve"><value>确定</value></data>
   <data name="UI_Cancel" xml:space="preserve"><value>取消</value></data>
   <data name="UI_SelectAllTip" xml:space="preserve"><value>勾选当前分组中的全部项目</value></data>
@@ -614,6 +625,64 @@
   <data name="UI_AdvancedEditorCollapse" xml:space="preserve"><value>高级编辑（收起）</value></data>
   <data name="UI_AdvancedEditorExpand" xml:space="preserve"><value>高级编辑（展开）</value></data>
   <data name="Vision_Tab" xml:space="preserve"><value>图文识别</value></data>
+  <data name="Vision_SectionCapture" xml:space="preserve"><value>① 选择窗口和区域</value></data>
+  <data name="Vision_SectionPreview" xml:space="preserve"><value>② 截图预览</value></data>
+  <data name="Vision_SectionRecognition" xml:space="preserve"><value>③ 选择识别方式</value></data>
+  <data name="Vision_SectionAssistant" xml:space="preserve"><value>④ 配置识别动作</value></data>
+  <data name="Vision_SectionSettings" xml:space="preserve"><value>⑤ 设置</value></data>
+  <data name="Vision_CurrentScreenshot" xml:space="preserve"><value>当前截图</value></data>
+  <data name="Vision_RecognitionPreview" xml:space="preserve"><value>图片 / 处理预览</value></data>
+  <data name="Vision_ModeOcr" xml:space="preserve"><value>文字识别</value></data>
+  <data name="Vision_ModeTemplate" xml:space="preserve"><value>图片识别</value></data>
+  <data name="Vision_Condition" xml:space="preserve"><value>条件</value></data>
+  <data name="Vision_ConditionSourceHint" xml:space="preserve"><value>文字/数字条件使用上方识别关键词或数值范围。</value></data>
+  <data name="Vision_ConditionHint" xml:space="preserve"><value></value></data>
+  <data name="Vision_AfterAction" xml:space="preserve"><value>确认后动作</value></data>
+  <data name="Vision_ActionSafetyHint" xml:space="preserve"><value></value></data>
+  <data name="Vision_ActionSafetyPrompt" xml:space="preserve"><value>当前步骤包含真实鼠标动作。运行时将激活目标窗口并移动或点击系统鼠标，是否继续？</value></data>
+  <data name="Vision_ActionSafetyTitle" xml:space="preserve"><value>确认执行真实鼠标动作</value></data>
+  <data name="Vision_ActionSafetyCancelled" xml:space="preserve"><value>已取消：未授权执行真实鼠标动作。</value></data>
+  <data name="Vision_ActionCancelled" xml:space="preserve"><value>已重置编辑内容，尚未确认的动作不会同步到右侧指令集。</value></data>
+  <data name="Vision_ActionVerification" xml:space="preserve"><value>动作后验证</value></data>
+  <data name="Vision_ActionVerificationOff" xml:space="preserve"><value>动作后验证：关闭</value></data>
+  <data name="Vision_ActionVerificationText" xml:space="preserve"><value>动作后验证：文字</value></data>
+  <data name="Vision_ActionVerificationImage" xml:space="preserve"><value>动作后验证：图片</value></data>
+  <data name="Vision_ConfirmAction" xml:space="preserve"><value>确认动作</value></data>
+  <data name="Vision_CancelAction" xml:space="preserve"><value>重置编辑</value></data>
+  <data name="Vision_ConfirmActionHint" xml:space="preserve"><value>点击确认动作后，才会同步到右侧指令集。</value></data>
+  <data name="Vision_VerificationKeyword" xml:space="preserve"><value>验证文字</value></data>
+  <data name="Vision_VerificationType" xml:space="preserve"><value>验证方式</value></data>
+  <data name="Vision_VerificationText" xml:space="preserve"><value>文字</value></data>
+  <data name="Vision_VerificationImage" xml:space="preserve"><value>图片</value></data>
+  <data name="Vision_VerificationNone" xml:space="preserve"><value>不验证</value></data>
+  <data name="Vision_AddTextWait" xml:space="preserve"><value>添加文字等待</value></data>
+  <data name="Vision_AddImageWait" xml:space="preserve"><value>添加图片等待</value></data>
+  <data name="Vision_VerificationIncomplete" xml:space="preserve"><value>动作后验证条件不完整，请填写验证文字或准备验证图片。</value></data>
+  <data name="Vision_VerificationRegion" xml:space="preserve"><value>使用独立区域</value></data>
+  <data name="Vision_SelectVerificationRegion" xml:space="preserve"><value>选择验证区域</value></data>
+  <data name="Vision_VerificationTextHint" xml:space="preserve"><value>验证文字：动作后在此区域识别</value></data>
+  <data name="Vision_VerificationImageHint" xml:space="preserve"><value>验证图片：使用图片识别页当前模板</value></data>
+  <data name="Vision_ActionNone" xml:space="preserve"><value>不操作</value></data>
+  <data name="Vision_ActionLeftClick" xml:space="preserve"><value>左键单击</value></data>
+  <data name="Vision_ActionRightClick" xml:space="preserve"><value>右键单击</value></data>
+  <data name="Vision_ActionDoubleClick" xml:space="preserve"><value>左键双击</value></data>
+  <data name="Vision_ActionScroll" xml:space="preserve"><value>滚轮</value></data>
+  <data name="Vision_ScrollUp" xml:space="preserve"><value>向上</value></data>
+  <data name="Vision_ScrollDown" xml:space="preserve"><value>向下</value></data>
+  <data name="Vision_ScrollDirection" xml:space="preserve"><value>滚动方向</value></data>
+  <data name="Vision_AdvancedSettings" xml:space="preserve"><value>高级设置</value></data>
+  <data name="Vision_AdvancedSettingsHint" xml:space="preserve"><value>截图、历史记录、文字识别、图片识别和等待参数集中在这里；日常使用无需调整。</value></data>
+  <data name="Vision_TemplateConditionHint" xml:space="preserve"><value>请先在“图片识别”页准备参考图片。</value></data>
+  <data name="Vision_MoreCaptureSettings" xml:space="preserve"><value>更多截图设置</value></data>
+  <data name="Vision_LessCaptureSettings" xml:space="preserve"><value>收起截图设置</value></data>
+  <data name="Vision_MoreOcrSettings" xml:space="preserve"><value>高级文字识别设置</value></data>
+  <data name="Vision_LessOcrSettings" xml:space="preserve"><value>收起文字识别设置</value></data>
+  <data name="Vision_MoreTemplateSettings" xml:space="preserve"><value>高级图片识别设置</value></data>
+  <data name="Vision_LessTemplateSettings" xml:space="preserve"><value>收起图片识别设置</value></data>
+  <data name="Vision_MoreWaitSettings" xml:space="preserve"><value>高级等待设置</value></data>
+  <data name="Vision_LessWaitSettings" xml:space="preserve"><value>收起等待设置</value></data>
+  <data name="Vision_MoreVerificationSettings" xml:space="preserve"><value>更多验证设置</value></data>
+  <data name="Vision_LessVerificationSettings" xml:space="preserve"><value>收起验证设置</value></data>
   <data name="Vision_TargetWindow" xml:space="preserve"><value>目标窗口</value></data>
   <data name="Vision_RefreshWindows" xml:space="preserve"><value>刷新窗口</value></data>
   <data name="Vision_X" xml:space="preserve"><value>区域 X</value></data>
@@ -623,8 +692,9 @@
   <data name="Vision_Capture" xml:space="preserve"><value>截图预览</value></data>
   <data name="Vision_SaveScreenshot" xml:space="preserve"><value>保存截图</value></data>
   <data name="Vision_SaveProfile" xml:space="preserve"><value>保存识别区域</value></data>
-  <data name="Vision_SelectWindowHint" xml:space="preserve"><value>请选择一个可见目标窗口。</value></data>
+  <data name="Vision_SelectWindowHint" xml:space="preserve"><value>未检测到可用目标窗口；注入后程序会自动绑定。</value></data>
   <data name="Vision_WindowSelected" xml:space="preserve"><value>已选择：{0}，客户区 {1}×{2}</value></data>
+  <data name="Vision_WindowAutoBound" xml:space="preserve"><value>已自动绑定注入目标窗口：{0}</value></data>
   <data name="Vision_CaptureSuccess" xml:space="preserve"><value>截图成功：区域 ({0},{1}) {2}×{3}</value></data>
   <data name="Vision_CaptureFailed" xml:space="preserve"><value>截图失败：{0}</value></data>
   <data name="Vision_ProfileInvalid" xml:space="preserve"><value>识别区域无效：{0}</value></data>
@@ -633,64 +703,83 @@
   <data name="Vision_PngFilter" xml:space="preserve"><value>PNG 图片 (*.png)|*.png|所有文件 (*.*)|*.*</value></data>
   <data name="Vision_DefaultFileName" xml:space="preserve"><value>识别区域.png</value></data>
   <data name="Vision_ScreenshotSaved" xml:space="preserve"><value>截图已保存：{0}</value></data>
-  <data name="Vision_Template" xml:space="preserve"><value>模板</value></data>
-  <data name="Vision_LoadTemplate" xml:space="preserve"><value>加载模板</value></data>
-  <data name="Vision_SaveTemplate" xml:space="preserve"><value>保存当前为模板</value></data>
+  <data name="Vision_Template" xml:space="preserve"><value>参考图片</value></data>
+  <data name="Vision_LoadTemplate" xml:space="preserve"><value>加载参考图片</value></data>
+  <data name="Vision_SaveTemplate" xml:space="preserve"><value>保存为参考图片</value></data>
   <data name="Vision_Threshold" xml:space="preserve"><value>阈值 (%)</value></data>
-  <data name="Vision_Match" xml:space="preserve"><value>开始匹配</value></data>
-  <data name="Vision_NoTemplate" xml:space="preserve"><value>请先加载或保存一个模板。</value></data>
-  <data name="Vision_TemplateLoaded" xml:space="preserve"><value>模板已加载：{0}</value></data>
-  <data name="Vision_TemplateSaved" xml:space="preserve"><value>模板已保存：{0}</value></data>
+  <data name="Vision_Match" xml:space="preserve"><value>开始图片识别</value></data>
+  <data name="Vision_NoTemplate" xml:space="preserve"><value>请先加载或保存一张参考图片。</value></data>
+  <data name="Vision_TemplateLoaded" xml:space="preserve"><value>参考图片已加载：{0}</value></data>
+  <data name="Vision_TemplateSaved" xml:space="preserve"><value>参考图片已保存：{0}</value></data>
   <data name="Vision_MatchFound" xml:space="preserve"><value>匹配成功：位置 ({0},{1})，尺寸 {2}×{3}，相似度 {4:P1}</value></data>
   <data name="Vision_MatchNotFound" xml:space="preserve"><value>未达到阈值，最高相似度 {0:P1}。</value></data>
   <data name="Vision_MatchCancelled" xml:space="preserve"><value>匹配已取消。</value></data>
-  <data name="Vision_TemplateLoadFailed" xml:space="preserve"><value>模板加载失败：{0}</value></data>
+  <data name="Vision_TemplateLoadFailed" xml:space="preserve"><value>参考图片加载失败：{0}</value></data>
   <data name="Vision_TemplateFilter" xml:space="preserve"><value>图片 (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp|所有文件 (*.*)|*.*</value></data>
   <data name="Vision_Ocr" xml:space="preserve"><value>文字识别</value></data>
   <data name="Vision_OcrScale" xml:space="preserve"><value>放大</value></data>
   <data name="Vision_OcrBinary" xml:space="preserve"><value>二值化</value></data>
   <data name="Vision_OcrThreshold" xml:space="preserve"><value>阈值</value></data>
   <data name="Vision_OcrKeyword" xml:space="preserve"><value>关键词</value></data>
-  <data name="Vision_OcrRecognize" xml:space="preserve"><value>开始 OCR</value></data>
-  <data name="Vision_OcrHint" xml:space="preserve"><value>仅对当前截图识别；未安装 Tesseract 时会明确提示。</value></data>
-  <data name="Vision_OcrUnavailable" xml:space="preserve"><value>OCR 不可用：{0}</value></data>
-  <data name="Vision_OcrCancelled" xml:space="preserve"><value>OCR 已取消。</value></data>
+  <data name="Vision_OcrRecognize" xml:space="preserve"><value>开始文字识别</value></data>
+  <data name="Vision_OcrHint" xml:space="preserve"><value>截图后自动识别并填入关键词；关键词仍可手动修改，也可再次点击识别。</value></data>
+  <data name="Vision_OcrUnavailable" xml:space="preserve"><value>文字识别不可用：{0}</value></data>
+  <data name="Vision_OcrCancelled" xml:space="preserve"><value>文字识别已取消。</value></data>
   <data name="Vision_OcrSuccess" xml:space="preserve"><value>识别文字：{0}；置信度 {1:P1}。</value></data>
-  <data name="Vision_OcrFailed" xml:space="preserve"><value>OCR 失败：{0}</value></data>
+  <data name="Vision_OcrFailed" xml:space="preserve"><value>文字识别失败：{0}</value></data>
   <data name="Vision_OcrConditionMatched" xml:space="preserve"><value>关键词已命中。</value></data>
   <data name="Vision_OcrConditionNotMatched" xml:space="preserve"><value>关键词未命中：{0}</value></data>
   <data name="Vision_Steps" xml:space="preserve"><value>助手步骤</value></data>
+  <data name="Vision_NewStep" xml:space="preserve"><value>新建助手步骤</value></data>
   <data name="Vision_AddOcrStep" xml:space="preserve"><value>添加文字等待</value></data>
-  <data name="Vision_AddTemplateStep" xml:space="preserve"><value>添加模板等待</value></data>
+  <data name="Vision_AddTemplateStep" xml:space="preserve"><value>添加图片识别步骤</value></data>
+  <data name="Vision_ConfirmStep" xml:space="preserve"><value>确认步骤</value></data>
   <data name="Vision_RemoveStep" xml:space="preserve"><value>移除步骤</value></data>
-  <data name="Vision_NoKeyword" xml:space="preserve"><value>请先填写 OCR 关键词。</value></data>
+  <data name="Vision_SelectStep" xml:space="preserve"><value>请先选择一个助手步骤。</value></data>
+  <data name="Vision_NoKeyword" xml:space="preserve"><value>请先填写文字识别关键词。</value></data>
   <data name="Vision_StepAdded" xml:space="preserve"><value>识别步骤已添加，保存机器人后生效。</value></data>
+  <data name="Vision_StepUpdated" xml:space="preserve"><value>识别步骤已更新，保存机器人后生效。</value></data>
+  <data name="Vision_StepConfirmed" xml:space="preserve"><value>步骤已确认，保存机器人后生效。</value></data>
   <data name="Vision_StepRemoved" xml:space="preserve"><value>识别步骤已移除，保存机器人后生效。</value></data>
-  <data name="Vision_TemplateStepName" xml:space="preserve"><value>等待模板出现</value></data>
+  <data name="Vision_TemplateStepName" xml:space="preserve"><value>等待图片出现</value></data>
   <data name="Vision_Assistant" xml:space="preserve"><value>识别助手</value></data>
-  <data name="Vision_RunSteps" xml:space="preserve"><value>运行识别步骤</value></data>
-  <data name="Vision_StopSteps" xml:space="preserve"><value>停止识别步骤</value></data>
-  <data name="Vision_AssistantHint" xml:space="preserve"><value>添加步骤后可在目标窗口上运行；状态机只观察并记录，不自动执行其他动作。</value></data>
+  <data name="Vision_RunSteps" xml:space="preserve"><value>测试识别流程</value></data>
+  <data name="Vision_StopSteps" xml:space="preserve"><value>停止测试</value></data>
+  <data name="Vision_AssistantHint" xml:space="preserve"><value>可先测试识别流程；确认动作后才会同步到右侧指令集。</value></data>
+  <data name="Vision_AssistantLog" xml:space="preserve"><value>执行日志</value></data>
+  <data name="Vision_AssistantLogShow" xml:space="preserve"><value>显示执行日志</value></data>
+  <data name="Vision_AssistantLogHide" xml:space="preserve"><value>收起执行日志</value></data>
   <data name="Vision_AssistantNoSteps" xml:space="preserve"><value>请先添加至少一个识别步骤。</value></data>
   <data name="Vision_AssistantRunning" xml:space="preserve"><value>识别步骤运行中。</value></data>
   <data name="Vision_AssistantStopping" xml:space="preserve"><value>正在停止识别步骤。</value></data>
   <data name="Vision_AssistantCancelled" xml:space="preserve"><value>识别步骤已取消。</value></data>
   <data name="Vision_AssistantSucceeded" xml:space="preserve"><value>识别步骤完成：{0} 步。</value></data>
   <data name="Vision_AssistantFailed" xml:space="preserve"><value>识别步骤失败：{0}</value></data>
-  <data name="Vision_TemplateDisappearStepName" xml:space="preserve"><value>等待模板消失</value></data>
+  <data name="Vision_TemplateDisappearStepName" xml:space="preserve"><value>等待图片消失</value></data>
+  <data name="Vision_ColorAppears" xml:space="preserve"><value>颜色出现</value></data>
+  <data name="Vision_ColorDisappears" xml:space="preserve"><value>颜色消失</value></data>
+  <data name="Vision_Color" xml:space="preserve"><value>RGB（如 255,255,255）</value></data>
+  <data name="Vision_ColorTolerance" xml:space="preserve"><value>颜色容差</value></data>
+  <data name="Vision_ColorMinimumPixels" xml:space="preserve"><value>最少像素</value></data>
+  <data name="Vision_ColorMinimumRatio" xml:space="preserve"><value>最少比例</value></data>
+  <data name="Vision_ColorConditionHint" xml:space="preserve"><value>输入 RGB 颜色、通道容差和最少匹配像素。</value></data>
+  <data name="Vision_ColorInvalid" xml:space="preserve"><value>颜色条件无效，请填写三个 0-255 的 RGB 数值。</value></data>
+  <data name="Vision_ColorStepName" xml:space="preserve"><value>等待颜色出现</value></data>
+  <data name="Vision_ColorDisappearStepName" xml:space="preserve"><value>等待颜色消失</value></data>
   <data name="Vision_TextAppears" xml:space="preserve"><value>文字出现</value></data>
   <data name="Vision_TextDisappears" xml:space="preserve"><value>文字消失</value></data>
   <data name="Vision_NumberRange" xml:space="preserve"><value>数字范围</value></data>
-  <data name="Vision_TemplateAppears" xml:space="preserve"><value>模板出现</value></data>
-  <data name="Vision_TemplateDisappears" xml:space="preserve"><value>模板消失</value></data>
+  <data name="Vision_TemplateAppears" xml:space="preserve"><value>图片出现</value></data>
+  <data name="Vision_TemplateDisappears" xml:space="preserve"><value>图片消失</value></data>
   <data name="Vision_SelectOcrCondition" xml:space="preserve"><value>请选择文字或数字条件。</value></data>
-  <data name="Vision_SelectTemplateCondition" xml:space="preserve"><value>请选择模板出现或模板消失条件。</value></data>
+  <data name="Vision_SelectTemplateCondition" xml:space="preserve"><value>请选择图片出现或图片消失条件。</value></data>
   <data name="Vision_Minimum" xml:space="preserve"><value>最小值</value></data>
   <data name="Vision_Maximum" xml:space="preserve"><value>最大值</value></data>
   <data name="Vision_Confirmations" xml:space="preserve"><value>确认次数</value></data>
   <data name="Vision_PollMilliseconds" xml:space="preserve"><value>轮询(ms)</value></data>
   <data name="Vision_TimeoutMilliseconds" xml:space="preserve"><value>超时(ms)</value></data>
   <data name="Vision_Retries" xml:space="preserve"><value>重试</value></data>
+  <data name="Vision_FailurePolicy" xml:space="preserve"><value>失败处理</value></data>
   <data name="Vision_StopPolicy" xml:space="preserve"><value>失败停止</value></data>
   <data name="Vision_SkipPolicy" xml:space="preserve"><value>失败跳过</value></data>
   <data name="Vision_CaptureSource" xml:space="preserve"><value>来源</value></data>
@@ -706,17 +795,17 @@
   <data name="Vision_ClearHistory" xml:space="preserve"><value>清空</value></data>
   <data name="Vision_HistoryLoaded" xml:space="preserve"><value>已加载历史截图：{0}</value></data>
   <data name="Vision_CaptureQuality" xml:space="preserve"><value>截图来源：{0}；亮度 {1:0.0}；对比度 {2:0.0}{3}</value></data>
-  <data name="Vision_AddTemplateVariant" xml:space="preserve"><value>添加模板变体</value></data>
-  <data name="Vision_SelectTemplateStep" xml:space="preserve"><value>请先选中模板步骤并准备模板。</value></data>
-  <data name="Vision_TemplateVariantAdded" xml:space="preserve"><value>模板变体已添加，共 {0} 个。</value></data>
+  <data name="Vision_AddTemplateVariant" xml:space="preserve"><value>添加图片变体</value></data>
+  <data name="Vision_SelectTemplateStep" xml:space="preserve"><value>请先选中图片识别步骤并准备参考图片。</value></data>
+  <data name="Vision_TemplateVariantAdded" xml:space="preserve"><value>图片变体已添加，共 {0} 个。</value></data>
   <data name="Vision_NoSelection" xml:space="preserve"><value>没有有效选区。</value></data>
-  <data name="Vision_SelectionApplied" xml:space="preserve"><value>拖选区域已应用，可保存为模板。</value></data>
+  <data name="Vision_SelectionApplied" xml:space="preserve"><value>拖选区域已应用，可保存为参考图片。</value></data>
   <data name="Vision_OcrContrast" xml:space="preserve"><value>对比度</value></data>
   <data name="Vision_OcrCancel" xml:space="preserve"><value>取消识别</value></data>
   <data name="Vision_OcrRunning" xml:space="preserve"><value>正在识别…</value></data>
   <data name="Vision_OcrPreview" xml:space="preserve"><value>预处理预览</value></data>
   <data name="Vision_RestorePreview" xml:space="preserve"><value>恢复模板预览</value></data>
-  <data name="Vision_OcrPreviewReady" xml:space="preserve"><value>已显示当前 OCR 预处理结果。</value></data>
+  <data name="Vision_OcrPreviewReady" xml:space="preserve"><value>已显示当前文字识别预处理结果。</value></data>
   <data name="Vision_RestorePreviewReady" xml:space="preserve"><value>已恢复模板预览。</value></data>
   <data name="Vision_OcrAdaptive" xml:space="preserve"><value>自适应阈值</value></data>
   <data name="Vision_OcrAdaptiveWindow" xml:space="preserve"><value>窗口</value></data>
@@ -725,9 +814,67 @@
   <data name="Vision_OcrDenoise" xml:space="preserve"><value>去噪</value></data>
   <data name="Vision_OcrSharpen" xml:space="preserve"><value>锐化</value></data>
   <data name="Vision_OcrWhitelist" xml:space="preserve"><value>字符白名单</value></data>
+  <data name="Vision_OcrEngine" xml:space="preserve"><value>引擎</value></data>
+  <data name="Vision_OcrEngineAuto" xml:space="preserve"><value>自动（ONNX优先）</value></data>
+  <data name="Vision_OcrEngineOnnx" xml:space="preserve"><value>本地 ONNX</value></data>
+  <data name="Vision_OcrEngineTesseract" xml:space="preserve"><value>Tesseract</value></data>
+  <data name="Vision_OcrModelDirectory" xml:space="preserve"><value>模型目录</value></data>
+  <data name="Vision_OcrDetectionThreshold" xml:space="preserve"><value>检测阈值</value></data>
+  <data name="Vision_OcrRecognitionThreshold" xml:space="preserve"><value>识别阈值</value></data>
+  <data name="Vision_OcrMaxImageSide" xml:space="preserve"><value>最大边长</value></data>
+  <data name="Vision_OcrTesseractStatus" xml:space="preserve"><value>当前使用 Tesseract；自动模式下 ONNX 不可用时回退。</value></data>
   <data name="Vision_TemplateNormalize" xml:space="preserve"><value>亮度归一化</value></data>
   <data name="Vision_TemplateScale" xml:space="preserve"><value>允许缩放</value></data>
   <data name="Vision_TemplateTolerance" xml:space="preserve"><value>容差%</value></data>
   <data name="Vision_MatchCancel" xml:space="preserve"><value>取消匹配</value></data>
   <data name="Vision_MatchRunning" xml:space="preserve"><value>正在匹配…</value></data>
+  <data name="Robot_ExecuteLogShow" xml:space="preserve"><value>打开指令执行记录</value></data>
+  <data name="Robot_ExecuteLogHide" xml:space="preserve"><value>收起指令执行记录</value></data>
+  <data name="Vision_SelectRegion" xml:space="preserve"><value>框选识别区域</value></data>
+  <data name="Vision_Recapture" xml:space="preserve"><value>重新截图</value></data>
+  <data name="Vision_AdvancedRegion" xml:space="preserve"><value>高级区域设置</value></data>
+  <data name="Vision_RegionPickerHint" xml:space="preserve"><value>拖动选择识别区域，按 Esc 取消</value></data>
+  <data name="Vision_RegionPickerNotVisible" xml:space="preserve"><value>目标窗口必须完整可见且未最小化后才能框选区域。</value></data>
+  <data name="Vision_RegionSelectionInvalid" xml:space="preserve"><value>请选择更大的有效区域。</value></data>
+  <data name="Vision_RegionSelectionCancelled" xml:space="preserve"><value>已取消框选，原区域未修改。</value></data>
+  <data name="Vision_RegionSelected" xml:space="preserve"><value>已选择区域：({0},{1}) {2}×{3}</value></data>
+  <data name="Vision_OcrTest" xml:space="preserve"><value>识别并填入</value></data>
+  <data name="Vision_OcrKeywordFilled" xml:space="preserve"><value>已自动填入关键词，可继续手动修改。</value></data>
+  <data name="Vision_LogAssistantCancelled" xml:space="preserve"><value>识别助手已取消。</value></data>
+  <data name="Vision_LogStepMissingCondition" xml:space="preserve"><value>步骤缺少识别条件。</value></data>
+  <data name="Vision_LogVerificationMissingCondition" xml:space="preserve"><value>启用动作验证时必须配置验证条件。</value></data>
+  <data name="Vision_LogWaitingStep" xml:space="preserve"><value>等待步骤“{0}”，第 {1} 次尝试。</value></data>
+  <data name="Vision_LogCancelledWaiting" xml:space="preserve"><value>等待识别条件时已取消。</value></data>
+  <data name="Vision_LogStepConfirmed" xml:space="preserve"><value>步骤“{0}”条件已确认。</value></data>
+  <data name="Vision_LogActionNoResult" xml:space="preserve"><value>识别动作没有返回结果。</value></data>
+  <data name="Vision_LogCancelledVerifying" xml:space="preserve"><value>验证动作时已取消。</value></data>
+  <data name="Vision_LogVerificationTimeout" xml:space="preserve"><value>步骤“{0}”动作验证超时。</value></data>
+  <data name="Vision_LogStepRetry" xml:space="preserve"><value>步骤“{0}”超时，正在重试。</value></data>
+  <data name="Vision_LogStepSkipped" xml:space="preserve"><value>步骤“{0}”超时，已跳过。</value></data>
+  <data name="Vision_LogStepTimeout" xml:space="preserve"><value>步骤“{0}”超时。</value></data>
+  <data name="Vision_LogCompleted" xml:space="preserve"><value>识别助手流程已完成。</value></data>
+  <data name="Vision_LogConditionConfirmation" xml:space="preserve"><value>条件确认 {0}/{1}。</value></data>
+  <data name="Vision_LogConditionNotMatched" xml:space="preserve"><value>条件未命中。</value></data>
+  <data name="Vision_LogVerificationWaiting" xml:space="preserve"><value>等待动作验证，第 {0} 次尝试。</value></data>
+  <data name="Vision_LogVerificationRetry" xml:space="preserve"><value>动作验证超时，正在重试。</value></data>
+  <data name="Vision_LogVerificationConfirmed" xml:space="preserve"><value>步骤“{0}”动作验证已确认。</value></data>
+  <data name="Vision_LogObservationNoResult" xml:space="preserve"><value>识别没有返回结果。</value></data>
+  <data name="Vision_LogObservationError" xml:space="preserve"><value>识别错误：{0}</value></data>
+  <data name="Vision_LogOcr" xml:space="preserve"><value>OCR 文本“{0}”，置信度 {1:P1}，成功={2}。</value></data>
+  <data name="Vision_LogTemplate" xml:space="preserve"><value>模板命中={0}，相似度 {1:P1}，位置=({2},{3})。</value></data>
+  <data name="Vision_LogColor" xml:space="preserve"><value>颜色命中={0}，像素={1}，比例={2:P2}，平均距离={3:0.0}。</value></data>
+  <data name="Vision_LogObservationEmpty" xml:space="preserve"><value>没有 OCR、模板或颜色识别结果。</value></data>
+  <data name="Vision_LogCaptureDiagnostics" xml:space="preserve"><value> 截图={0}ms，识别={1}ms，来源={2}，缓存={3}，亮度={4:0.0}，对比度={5:0.0}{6}{7}。</value></data>
+  <data name="Vision_FixedClientSize" xml:space="preserve"><value>固定客户区尺寸</value></data>
+  <data name="Vision_RequiredWidth" xml:space="preserve"><value>宽</value></data>
+  <data name="Vision_RequiredHeight" xml:space="preserve"><value>高</value></data>
+  <data name="Vision_Apply1280x720" xml:space="preserve"><value>应用 1280×720</value></data>
+  <data name="Vision_Fixed1280Applied" xml:space="preserve"><value>已应用固定 1280×720 配置，并切换为像素坐标。</value></data>
+  <data name="Vision_ClientSizeAny" xml:space="preserve"><value>未启用固定客户区尺寸。</value></data>
+  <data name="Vision_ClientSizeRequiredOnly" xml:space="preserve"><value>要求客户区：{0}×{1}</value></data>
+  <data name="Vision_ClientSizeStatus" xml:space="preserve"><value>当前客户区：{0}×{1}；要求：{2}×{3}；{4}</value></data>
+  <data name="Vision_ClientSizeValid" xml:space="preserve"><value>尺寸符合</value></data>
+  <data name="Vision_ClientSizeInvalid" xml:space="preserve"><value>尺寸不符合</value></data>
+  <data name="Vision_ClientSizeUnavailable" xml:space="preserve"><value>当前客户区不可读取</value></data>
+  <data name="Vision_FixedCoordinatesRequired" xml:space="preserve"><value>固定尺寸模式必须使用像素坐标。</value></data>
 </root>

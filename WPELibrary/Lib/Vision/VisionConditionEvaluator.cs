@@ -42,10 +42,7 @@ namespace WPELibrary.Lib.Vision
                     if (!observation.OcrResult.Success)
                     {
                         if (string.IsNullOrWhiteSpace(observation.OcrResult.Text) &&
-                            string.Equals(
-                                observation.OcrResult.Error,
-                                "Tesseract returned no text.",
-                                StringComparison.OrdinalIgnoreCase))
+                            IsNoTextResult(observation.OcrResult.Error))
                         {
                             return true;
                         }
@@ -87,10 +84,37 @@ namespace WPELibrary.Lib.Vision
                     return !observation.TemplateResult.Found ||
                         observation.TemplateResult.Similarity < condition.MinimumSimilarity;
 
+                case VisionConditionType.ColorAppears:
+                    if (observation.ColorResult == null || observation.ColorResult.Cancelled)
+                    {
+                        reason = "Color result is not usable.";
+                        return false;
+                    }
+                    if (!observation.ColorResult.Found)
+                    {
+                        reason = "The target color did not reach the configured pixel threshold.";
+                    }
+                    return observation.ColorResult.Found;
+
+                case VisionConditionType.ColorDisappears:
+                    if (observation.ColorResult == null || observation.ColorResult.Cancelled)
+                    {
+                        reason = "Color result is not usable.";
+                        return false;
+                    }
+                    return !observation.ColorResult.Found;
+
                 default:
                     reason = "Unknown vision condition type.";
                     return false;
             }
+        }
+
+        private static bool IsNoTextResult(string error)
+        {
+            return string.Equals(error, "Tesseract returned no text.", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(error, "ONNX OCR returned no text.", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(error, "ONNX OCR returned no text boxes.", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

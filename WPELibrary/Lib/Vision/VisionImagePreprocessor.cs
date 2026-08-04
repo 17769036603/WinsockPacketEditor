@@ -109,52 +109,60 @@ namespace WPELibrary.Lib.Vision
                 int outputWidth = checked(width * options.ScaleFactor);
                 int outputHeight = checked(height * options.ScaleFactor);
                 Bitmap output = new Bitmap(outputWidth, outputHeight, PixelFormat.Format32bppArgb);
-                BitmapData outputData = output.LockBits(
-                    new Rectangle(0, 0, outputWidth, outputHeight),
-                    ImageLockMode.WriteOnly,
-                    PixelFormat.Format32bppArgb);
                 try
                 {
-                    int outputStride = Math.Abs(outputData.Stride);
-                    byte[] outputBytes = new byte[outputStride * outputHeight];
-                    for (int y = 0; y < outputHeight; y++)
+                    BitmapData outputData = output.LockBits(
+                        new Rectangle(0, 0, outputWidth, outputHeight),
+                        ImageLockMode.WriteOnly,
+                        PixelFormat.Format32bppArgb);
+                    try
                     {
-                        if (cancellationToken.IsCancellationRequested)
+                        int outputStride = Math.Abs(outputData.Stride);
+                        byte[] outputBytes = new byte[outputStride * outputHeight];
+                        for (int y = 0; y < outputHeight; y++)
                         {
-                            throw new OperationCanceledException(cancellationToken);
+                            if (cancellationToken.IsCancellationRequested)
+                            {
+                                throw new OperationCanceledException(cancellationToken);
+                            }
+
+                            int sourceY = y / options.ScaleFactor;
+                            int outputRowOffset = outputData.Stride >= 0
+                                ? y * outputStride
+                                : (outputHeight - 1 - y) * outputStride;
+                            int sourceRowOffset = sourceY * width;
+                            int sourceByteRowOffset = sourceStrideSigned >= 0
+                                ? sourceY * sourceStride
+                                : (height - 1 - sourceY) * sourceStride;
+                            for (int x = 0; x < outputWidth; x++)
+                            {
+                                int sourceX = x / options.ScaleFactor;
+                                int outputOffset = outputRowOffset + x * 4;
+                                if (useGrayscale)
+                                {
+                                    byte value = (byte)grayscale[sourceRowOffset + sourceX];
+                                    outputBytes[outputOffset] = value;
+                                    outputBytes[outputOffset + 1] = value;
+                                    outputBytes[outputOffset + 2] = value;
+                                }
+                                else
+                                {
+                                    int sourceOffset = sourceByteRowOffset + sourceX * 4;
+                                    outputBytes[outputOffset] = (byte)AdjustContrast(sourceBytes[sourceOffset], options.Contrast);
+                                    outputBytes[outputOffset + 1] = (byte)AdjustContrast(sourceBytes[sourceOffset + 1], options.Contrast);
+                                    outputBytes[outputOffset + 2] = (byte)AdjustContrast(sourceBytes[sourceOffset + 2], options.Contrast);
+                                }
+                                outputBytes[outputOffset + 3] = 255;
+                            }
                         }
 
-                        int sourceY = y / options.ScaleFactor;
-                        int outputRowOffset = outputData.Stride >= 0
-                            ? y * outputStride
-                            : (outputHeight - 1 - y) * outputStride;
-                        int sourceRowOffset = sourceY * width;
-                        int sourceByteRowOffset = sourceStrideSigned >= 0
-                            ? sourceY * sourceStride
-                            : (height - 1 - sourceY) * sourceStride;
-                        for (int x = 0; x < outputWidth; x++)
-                        {
-                            int sourceX = x / options.ScaleFactor;
-                            int outputOffset = outputRowOffset + x * 4;
-                            if (useGrayscale)
-                            {
-                                byte value = (byte)grayscale[sourceRowOffset + sourceX];
-                                outputBytes[outputOffset] = value;
-                                outputBytes[outputOffset + 1] = value;
-                                outputBytes[outputOffset + 2] = value;
-                            }
-                            else
-                            {
-                                int sourceOffset = sourceByteRowOffset + sourceX * 4;
-                                outputBytes[outputOffset] = (byte)AdjustContrast(sourceBytes[sourceOffset], options.Contrast);
-                                outputBytes[outputOffset + 1] = (byte)AdjustContrast(sourceBytes[sourceOffset + 1], options.Contrast);
-                                outputBytes[outputOffset + 2] = (byte)AdjustContrast(sourceBytes[sourceOffset + 2], options.Contrast);
-                            }
-                            outputBytes[outputOffset + 3] = 255;
-                        }
+                        Marshal.Copy(outputBytes, 0, outputData.Scan0, outputBytes.Length);
                     }
-
-                    Marshal.Copy(outputBytes, 0, outputData.Scan0, outputBytes.Length);
+                    finally
+                    {
+                        output.UnlockBits(outputData);
+                    }
+                    return output;
                 }
                 catch (OperationCanceledException)
                 {
@@ -166,12 +174,6 @@ namespace WPELibrary.Lib.Vision
                     output.Dispose();
                     throw;
                 }
-                finally
-                {
-                    output.UnlockBits(outputData);
-                }
-
-                return output;
             }
         }
 

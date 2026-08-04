@@ -67,7 +67,28 @@ namespace WPELibrary.Lib
 
                 Application.EnableVisualStyles();                
                 Application.SetCompatibleTextRenderingDefault(false);                
-                Application.Run(new Socket_Form());                
+                Socket_Form socketForm = new Socket_Form();
+#if REAL_ACCEPTANCE
+                if (string.Equals(ChannelName, "REAL_ACCEPTANCE_AUTOSTART", StringComparison.Ordinal))
+                {
+                    System.Windows.Forms.Timer acceptanceTimer = new System.Windows.Forms.Timer
+                    {
+                        Interval = 500
+                    };
+                    acceptanceTimer.Tick += (sender, args) => socketForm.WriteAcceptanceStatusForAcceptance();
+                    socketForm.FormClosed += (sender, args) =>
+                    {
+                        acceptanceTimer.Stop();
+                        acceptanceTimer.Dispose();
+                    };
+                    socketForm.Shown += (sender, args) =>
+                    {
+                        acceptanceTimer.Start();
+                        socketForm.BeginInvoke(new MethodInvoker(socketForm.StartHookForAcceptance));
+                    };
+                }
+#endif
+                Application.Run(socketForm);
             }
             catch (Exception ex)
             {
@@ -106,6 +127,21 @@ namespace WPELibrary.Lib
             }
         }
 
+        private static unsafe int CopyFilteredReceiveBuffer(
+            byte[] filteredBuffer,
+            byte* destination,
+            int destinationCapacity)
+        {
+            if (filteredBuffer == null || destination == null || destinationCapacity <= 0)
+            {
+                return 0;
+            }
+
+            int bytesToCopy = Math.Min(filteredBuffer.Length, destinationCapacity);
+            filteredBuffer.AsSpan(0, bytesToCopy).CopyTo(new Span<byte>(destination, bytesToCopy));
+            return bytesToCopy;
+        }
+
         #endregion
 
         #region//开始拦截
@@ -116,6 +152,7 @@ namespace WPELibrary.Lib
             string failedHook = string.Empty;
             try
             {
+                Socket_Cache.Filter.StartDeferredExecution();
                 if (Socket_Cache.SocketPacket.Support_WS1)
                 {
                     #region//Winsock 1.1 Start Hook
@@ -263,6 +300,7 @@ namespace WPELibrary.Lib
         public void StopHook()
         {
             List<string> errors = new List<string>();
+            Socket_Cache.Filter.StopDeferredExecution();
             this.DisposeHook(ref this.lhWS1_Send, errors, "WS1.send");
             this.DisposeHook(ref this.lhWS1_SendTo, errors, "WS1.sendto");
             this.DisposeHook(ref this.lhWS1_Recv, errors, "WS1.recv");
@@ -424,8 +462,7 @@ namespace WPELibrary.Lib
                     }
                     else
                     {
-                        res = Math.Min(bNewBuffer.Length, res);
-                        new Span<byte>(bNewBuffer).CopyTo(new Span<byte>((byte*)lpBuffer, res));
+                        res = CopyFilteredReceiveBuffer(bNewBuffer, (byte*)lpBuffer, Length);
                     }
 
                     _ = Socket_Operation.ProcessingHookResultAsync(Socket, bRawBuffer, bNewBuffer, res, ptType, FilterAction, new Socket_Cache.SocketPacket.SockAddr(), PacketTime);
@@ -540,8 +577,7 @@ namespace WPELibrary.Lib
                     }
                     else
                     {
-                        res = Math.Min(bNewBuffer.Length, res);
-                        new Span<byte>(bNewBuffer).CopyTo(new Span<byte>((byte*)lpBuffer, res));
+                        res = CopyFilteredReceiveBuffer(bNewBuffer, (byte*)lpBuffer, Length);
                     }
 
                     _ = Socket_Operation.ProcessingHookResultAsync(Socket, bRawBuffer, bNewBuffer, res, ptType, FilterAction, From, PacketTime);

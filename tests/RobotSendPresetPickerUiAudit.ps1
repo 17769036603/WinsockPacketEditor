@@ -133,6 +133,35 @@ try {
         $instructionTable)
     $robotForm = [WPELibrary.Socket_RobotForm]::new($robotInfo)
     try {
+        $robotLayout = Get-PrivateField $robotForm "tlpRobotForm"
+        $instructionEditor = Get-PrivateField $robotForm "tcRobotInstruction"
+        $instructionSet = Get-PrivateField $robotForm "gbRobotInstruction"
+        $buttonLayout = Get-PrivateField $robotForm "tlpButton"
+        $buttons = @(
+            (Get-PrivateField $robotForm "bExecute"),
+            (Get-PrivateField $robotForm "bStop"),
+            (Get-PrivateField $robotForm "bSave"),
+            (Get-PrivateField $robotForm "bClose"))
+        Assert-True (
+            $robotForm.ClientSize.Width -le 700 -and
+            $robotForm.ClientSize.Width -ge 560) (
+                "Robot form should use the compact layout. width={0}" -f
+                $robotForm.ClientSize.Width)
+        Assert-True (
+            $instructionSet.Width -le 330 -and
+            $instructionSet.Width -ge 220) (
+                "Robot instruction set should use the narrow right column. width={0}" -f
+                $instructionSet.Width)
+        Assert-True ($instructionEditor.Width -ge 300) "Robot instruction editor is too narrow."
+        Assert-True ($instructionEditor.Height -ge 340) "Robot instruction editor did not expand into the available height."
+        Assert-True (
+            $instructionEditor.Right -le $instructionSet.Left) (
+                "Robot instruction columns overlap after compact layout.")
+        Assert-True ($buttonLayout.Bottom -eq $robotLayout.ClientSize.Height) "Robot action buttons are not at the bottom edge."
+        Assert-True ($buttonLayout.Height -le 60) "Robot action button area retained an unexpected blank row."
+        $buttonRows = @($buttons | ForEach-Object { $buttonLayout.GetPositionFromControl($_).Row } | Sort-Object -Unique)
+        Assert-True ($buttonRows.Count -eq 1 -and $buttonRows[0] -eq 0) "Robot action buttons are not arranged on one row."
+
         $selectedName = Get-PrivateField $robotForm "lSelectedSendPreset"
         $selectedFolder = Get-PrivateField $robotForm "lSelectedSendFolder"
         $insertButton = Get-PrivateField $robotForm "bSend_SendList"

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using WPELibrary.Lib;
 
@@ -95,7 +96,13 @@ namespace WPELibrary.Lib.Vision
                         out resolved,
                         out resolveReason))
                     {
-                        return VisionObservation.Failed(resolveReason);
+                        // Exact-size profiles are fail-closed. The visible-window
+                        // resolver intentionally excludes hidden/minimized windows,
+                        // so returning a normal recognition failure here would let
+                        // the state machine retry or skip instead of stopping.
+                        return this.captureSettings.RequireExactClientSize
+                            ? VisionObservation.TerminalFailure(resolveReason)
+                            : VisionObservation.Failed(resolveReason);
                     }
                     targetHandle = resolved.Handle;
                     this.profile.WindowHandle = resolved.Handle.ToInt64();
@@ -104,6 +111,17 @@ namespace WPELibrary.Lib.Vision
                     this.profile.ProcessPath = resolved.ProcessPath;
                     this.profile.ProcessStartTimeUtcTicks = resolved.ProcessStartTimeUtcTicks;
                     this.profile.WindowTitle = resolved.WindowTitle;
+                }
+
+                Size currentClientSize;
+                string clientSizeError;
+                if (!VisionWindowService.TryValidateClientSize(
+                    targetHandle,
+                    this.captureSettings,
+                    out currentClientSize,
+                    out clientSizeError))
+                {
+                    return VisionObservation.TerminalFailure(clientSizeError);
                 }
 
                 string conditionKey = targetHandle.ToInt64().ToString() + "|" + BuildConditionKey(condition);
@@ -125,6 +143,7 @@ namespace WPELibrary.Lib.Vision
                     captureStopwatch.Stop();
                     if (this.cachedObservation != null &&
                         this.captureSettings.SkipUnchangedFrames &&
+                        !captureResult.IsBlank &&
                         string.Equals(this.lastConditionKey, conditionKey, StringComparison.Ordinal) &&
                         captureResult.Fingerprint == this.lastFrameFingerprint)
                     {
@@ -140,37 +159,61 @@ namespace WPELibrary.Lib.Vision
 
                     Stopwatch evaluationStopwatch = Stopwatch.StartNew();
                     VisionObservation observation;
-                    switch (condition.Type)
+                    if (captureResult.IsBlank)
                     {
-                        case VisionConditionType.TextAppears:
-                        case VisionConditionType.TextDisappears:
-                        case VisionConditionType.NumberInRange:
-                            if (this.textRecognizer == null)
-                            {
-                                observation = VisionObservation.Failed("No OCR recognizer is configured.");
+                        observation = VisionObservation.Failed(
+                            string.IsNullOrWhiteSpace(captureResult.Warning)
+                                ? "The capture appears blank or uniform; recognition was skipped."
+                                : captureResult.Warning);
+                    }
+                    else
+                    {
+                        switch (condition.Type)
+                        {
+                            case VisionConditionType.TextAppears:
+                            case VisionConditionType.TextDisappears:
+                            case VisionConditionType.NumberInRange:
+                                if (this.textRecognizer == null)
+                                {
+                                    observation = VisionObservation.Failed("No OCR recognizer is configured.");
+                                    break;
+                                }
+                                observation = VisionObservation.FromOcr(
+                                    this.textRecognizer.Recognize(
+                                        capture,
+                                        this.ocrOptions,
+                                        cancellationToken));
                                 break;
-                            }
-                            observation = VisionObservation.FromOcr(
-                                this.textRecognizer.Recognize(
-                                    capture,
-                                    this.ocrOptions,
-                                    cancellationToken));
-                            break;
 
-                        case VisionConditionType.TemplateAppears:
-                        case VisionConditionType.TemplateDisappears:
-                            observation = VisionObservation.FromTemplate(
-                                VisionTemplateMatcher.FindBestMatch(
-                                    capture,
-                                    GetTemplates(condition),
-                                    condition.MinimumSimilarity,
-                                    BuildTemplateMatchOptions(condition),
-                                    cancellationToken));
-                            break;
+                            case VisionConditionType.TemplateAppears:
+                            case VisionConditionType.TemplateDisappears:
+                                observation = VisionObservation.FromTemplate(
+                                    VisionTemplateMatcher.FindBestMatch(
+                                        capture,
+                                        GetTemplates(condition),
+                                        condition.MinimumSimilarity,
+                                        BuildTemplateMatchOptions(condition),
+                                        cancellationToken));
+                                break;
 
-                        default:
-                            observation = VisionObservation.Failed("Unsupported vision condition type.");
-                            break;
+                            case VisionConditionType.ColorAppears:
+                            case VisionConditionType.ColorDisappears:
+                                if (condition.ColorCondition == null)
+                                {
+                                    observation = VisionObservation.Failed("No color condition is configured.");
+                                    break;
+                                }
+                                observation = VisionObservation.FromColor(
+                                    VisionColorMatcher.Find(
+                                        capture,
+                                        condition.ColorCondition,
+                                        cancellationToken));
+                                break;
+
+                            default:
+                                observation = VisionObservation.Failed("Unsupported vision condition type.");
+                                break;
+                        }
                     }
                     evaluationStopwatch.Stop();
                     observation.CaptureSource = captureResult.SourceMode.ToString();
@@ -198,6 +241,14 @@ namespace WPELibrary.Lib.Vision
                     return observation;
                 }
             }
+            catch (VisionClientSizeMismatchException ex)
+            {
+                return VisionObservation.TerminalFailure(ex.Message);
+            }
+            catch (VisionTemplateWorkloadException ex)
+            {
+                return VisionObservation.TerminalFailure(ex.Message);
+            }
             catch (Exception ex)
             {
                 return VisionObservation.Failed(ex.Message);
@@ -221,7 +272,7 @@ namespace WPELibrary.Lib.Vision
         private static string BuildConditionKey(VisionConditionDefinition condition)
         {
             return string.Format(
-                "{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}|{9}|{10}|{11}|{12}",
+                "{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}|{9}|{10}|{11}|{12}|{13}|{14}|{15}|{16}|{17}|{18}",
                 condition.Type,
                 condition.Region == null ? string.Empty : condition.Region.ToString(),
                 condition.TextCondition == null ? string.Empty : condition.TextCondition.ExpectedText,
@@ -234,7 +285,13 @@ namespace WPELibrary.Lib.Vision
                 condition.TemplateMaximumScale,
                 condition.TemplateScaleStep,
                 CalculateBitmapFingerprint(condition.Template),
-                CalculateTemplateVariantFingerprint(condition));
+                CalculateTemplateVariantFingerprint(condition),
+                condition.ColorCondition == null ? string.Empty : condition.ColorCondition.Red.ToString(),
+                condition.ColorCondition == null ? string.Empty : condition.ColorCondition.Green.ToString(),
+                condition.ColorCondition == null ? string.Empty : condition.ColorCondition.Blue.ToString(),
+                condition.ColorCondition == null ? string.Empty : condition.ColorCondition.Tolerance.ToString(),
+                condition.ColorCondition == null ? string.Empty : condition.ColorCondition.MinimumPixelCount.ToString(),
+                condition.ColorCondition == null ? string.Empty : condition.ColorCondition.MinimumMatchRatio.ToString());
         }
 
         private static string CalculateTemplateVariantFingerprint(VisionConditionDefinition condition)
@@ -260,18 +317,7 @@ namespace WPELibrary.Lib.Vision
                 return 0U;
             }
 
-            uint fingerprint = 2166136261U;
-            int stepX = Math.Max(1, bitmap.Width / 32);
-            int stepY = Math.Max(1, bitmap.Height / 32);
-            for (int y = 0; y < bitmap.Height; y += stepY)
-            {
-                for (int x = 0; x < bitmap.Width; x += stepX)
-                {
-                    fingerprint ^= unchecked((uint)bitmap.GetPixel(x, y).ToArgb());
-                    fingerprint *= 16777619U;
-                }
-            }
-            return fingerprint;
+            return VisionBitmapFingerprint.Compute(bitmap);
         }
 
         private static VisionObservation CopyObservation(
@@ -282,7 +328,9 @@ namespace WPELibrary.Lib.Vision
             {
                 OcrResult = source.OcrResult,
                 TemplateResult = source.TemplateResult,
+                ColorResult = source.ColorResult,
                 Error = source.Error,
+                IsTerminalFailure = source.IsTerminalFailure,
                 CaptureSource = source.CaptureSource,
                 CaptureWarning = source.CaptureWarning,
                 FrameFingerprint = source.FrameFingerprint,
@@ -300,8 +348,9 @@ namespace WPELibrary.Lib.Vision
         {
             return observation != null &&
                 (!string.IsNullOrWhiteSpace(observation.Error) ||
-                 (observation.OcrResult != null && !observation.OcrResult.Success) ||
-                 (observation.TemplateResult != null && !observation.TemplateResult.Found));
+                  (observation.OcrResult != null && !observation.OcrResult.Success) ||
+                  (observation.TemplateResult != null && !observation.TemplateResult.Found) ||
+                  (observation.ColorResult != null && !observation.ColorResult.Found));
         }
 
         private static string SaveFailureSnapshot(
@@ -329,18 +378,48 @@ namespace WPELibrary.Lib.Vision
                     ? "unknown"
                     : condition.Type.ToString();
                 string fileName = string.Format(
-                    "{0:yyyyMMdd_HHmmss_fff}_{1}_{2:X8}_{3}.png",
+                    "wpe_vision_{0:yyyyMMdd_HHmmss_fff}_{1}_{2:X8}_{3}.png",
                     DateTime.Now,
                     safeType,
                     captureResult == null ? 0U : captureResult.Fingerprint,
                     Guid.NewGuid().ToString("N").Substring(0, 8));
                 string path = Path.Combine(directory, fileName);
                 VisionWindowService.SavePng(capture, path);
+                CleanupFailureSnapshots(directory, 200);
                 return path;
             }
             catch (Exception)
             {
                 return string.Empty;
+            }
+        }
+
+        private static void CleanupFailureSnapshots(string directory, int maximumCount)
+        {
+            try
+            {
+                string[] paths = Directory.GetFiles(directory, "wpe_vision_*.png")
+                    .OrderByDescending(path => File.GetLastWriteTimeUtc(path))
+                    .ToArray();
+                for (int index = maximumCount; index < paths.Length; index++)
+                {
+                    try
+                    {
+                        File.Delete(paths[index]);
+                    }
+                    catch (IOException)
+                    {
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                    }
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
             }
         }
 

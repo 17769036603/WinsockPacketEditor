@@ -3192,6 +3192,93 @@ namespace WPELibrary
             this.StartHook_MainForm();
         }
 
+#if REAL_ACCEPTANCE
+        private bool acceptanceSendAttempted;
+        private string acceptanceSendResult = "pending";
+        private string acceptanceSendPacketType = string.Empty;
+        private int acceptanceSendSocket;
+        private int acceptanceSendBytes;
+        private string acceptanceSendError = string.Empty;
+
+        internal void StartHookForAcceptance()
+        {
+            this.StartHook_MainForm();
+            this.WriteAcceptanceStatusForAcceptance();
+        }
+
+        internal void WriteAcceptanceStatusForAcceptance()
+        {
+            try
+            {
+                this.TrySendOneCapturedPacketForAcceptance();
+                string assemblyDirectory = Path.GetDirectoryName(typeof(Socket_Form).Assembly.Location);
+                string statusPath = Path.Combine(
+                    string.IsNullOrEmpty(assemblyDirectory) ? AppDomain.CurrentDomain.BaseDirectory : assemblyDirectory,
+                    "real-acceptance-status.txt");
+                File.WriteAllText(
+                    statusPath,
+                    string.Format(
+                        "timestamp={0:o}{1}hook-running={2}{1}total-packets={3}{1}send-bytes={4}{1}recv-bytes={5}{1}captured-list-count={6}{1}send-attempted={7}{1}send-result={8}{1}send-packet-type={9}{1}send-packet-socket={10}{1}send-packet-bytes={11}{1}send-error={12}{1}",
+                        DateTime.Now,
+                        Environment.NewLine,
+                        this.ws.IsRunning,
+                        Socket_Cache.SocketPacket.TotalPackets,
+                        Socket_Cache.SocketPacket.Total_SendBytes,
+                        Socket_Cache.SocketPacket.Total_RecvBytes,
+                        Socket_Cache.SocketList.lstRecPacket.Count,
+                        this.acceptanceSendAttempted,
+                        this.acceptanceSendResult,
+                        this.acceptanceSendPacketType,
+                        this.acceptanceSendSocket,
+                        this.acceptanceSendBytes,
+                        this.acceptanceSendError.Replace(Environment.NewLine, " ")));
+            }
+            catch
+            {
+                // The runtime UI remains the fallback acceptance signal.
+            }
+        }
+
+        private void TrySendOneCapturedPacketForAcceptance()
+        {
+            if (this.acceptanceSendAttempted)
+            {
+                return;
+            }
+
+            Socket_PacketInfo packet = Socket_Cache.SocketList.lstRecPacket
+                .FirstOrDefault(item =>
+                    item != null &&
+                    item.PacketSocket > 0 &&
+                    item.PacketBuffer != null &&
+                    item.PacketBuffer.Length > 0);
+            if (packet == null)
+            {
+                return;
+            }
+
+            this.acceptanceSendAttempted = true;
+            this.acceptanceSendPacketType = packet.PacketType.ToString();
+            this.acceptanceSendSocket = packet.PacketSocket;
+            this.acceptanceSendBytes = packet.PacketBuffer.Length;
+            try
+            {
+                bool sent = Socket_Operation.SendPacket(
+                    packet.PacketSocket,
+                    packet.PacketType,
+                    packet.PacketFrom,
+                    packet.PacketTo,
+                    packet.PacketBuffer);
+                this.acceptanceSendResult = sent.ToString();
+            }
+            catch (Exception ex)
+            {
+                this.acceptanceSendResult = "false";
+                this.acceptanceSendError = ex.Message;
+            }
+        }
+#endif
+
         private void StartHook_MainForm()
         {
             try
@@ -3538,7 +3625,7 @@ namespace WPELibrary
                 {
                     if (sendInfo.SCollection == null || sendInfo.SCollection.Count == 0)
                     {
-                        MessageBox.Show(this, "这个封包没有可发送的数据。", "发送",
+                        MessageBox.Show(this, UiText("UI_NoSendData"), UiText("UI_Send"),
                             MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
@@ -3550,8 +3637,8 @@ namespace WPELibrary
 
                     if (this.bgwSendList.IsBusy)
                     {
-                        MessageBox.Show(this, "批量发送正在进行，请先停止批量发送。",
-                            "发送", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        MessageBox.Show(this, UiText("UI_BatchSendBusy"), UiText("UI_Send"),
+                            MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
 
@@ -3776,7 +3863,7 @@ namespace WPELibrary
             bool isActive = sendInfo != null && this.IsSendListActive(sendInfo.SID);
             if (columnName == "cSendNow")
             {
-                e.Value = isActive ? "发送中…" : "发送";
+                e.Value = isActive ? UiText("UI_Sending") : UiText("UI_Send");
                 e.CellStyle.BackColor = System.Drawing.SystemColors.Control;
                 e.CellStyle.ForeColor = isActive
                     ? System.Drawing.SystemColors.GrayText
@@ -3786,7 +3873,7 @@ namespace WPELibrary
             }
             else
             {
-                e.Value = "停止";
+                e.Value = UiText("UI_Stop");
                 e.CellStyle.BackColor = System.Drawing.SystemColors.Control;
                 e.CellStyle.ForeColor = isActive
                     ? System.Drawing.SystemColors.ControlText
@@ -3989,14 +4076,14 @@ namespace WPELibrary
                 e.Cancel = true;
                 if (columnName == "cSortOrder")
                 {
-                    this.dgvSendList.Rows[e.RowIndex].ErrorText = "序号必须大于 0。";
+                    this.dgvSendList.Rows[e.RowIndex].ErrorText = UiText("UI_SortOrderPositive");
                 }
                 else
                 {
                     this.dgvSendList.Rows[e.RowIndex].ErrorText =
                         columnName == "cLoopCount"
-                            ? "次数不能小于 0；0 表示连续发送。"
-                            : "间隔不能小于 0。";
+                            ? UiText("UI_LoopCountNonNegative")
+                            : UiText("UI_LoopIntervalNonNegative");
                 }
             }
         }
@@ -5924,11 +6011,11 @@ namespace WPELibrary
 
                 if (iSelectIndex == 0)
                 {
-                    this.ofdExtraction.Filter = "Charles 会话文件（*.chlsx）|*.chlsx";
+                    this.ofdExtraction.Filter = UiText("UI_CharlesSessionFilter");
                 }
                 else if (iSelectIndex == 1)
                 {
-                    this.ofdExtraction.Filter = "FILT 过滤器文件（*.filt）|*.filt";
+                    this.ofdExtraction.Filter = UiText("UI_FilterFileFilter");
                 }
 
                 ofdExtraction.ShowDialog();

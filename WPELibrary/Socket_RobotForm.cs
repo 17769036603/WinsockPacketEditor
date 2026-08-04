@@ -29,18 +29,26 @@ namespace WPELibrary
         private Label lSelectedSendPreset;
         private Label lSelectedSendFolder;
         private Button bSelectSendPreset;
+        private TableLayoutPanel executeLogHost;
+        private Button bToggleExecuteLog;
+        private bool executeLogExpanded;
         private ComboBox cbbVisionWindows;
         private NumericUpDown nudVisionX;
         private NumericUpDown nudVisionY;
         private NumericUpDown nudVisionWidth;
         private NumericUpDown nudVisionHeight;
         private PictureBox pbVisionPreview;
+        private Label lVisionPreviewEmpty;
         private PictureBox pbVisionTemplate;
         private Label lVisionStatus;
         private Label lVisionMatchStatus;
         private Label lVisionOcrStatus;
         private Label lVisionAssistantStatus;
+        private TableLayoutPanel visionAssistantLogHost;
+        private Button bToggleVisionAssistantLog;
+        private bool visionAssistantLogExpanded;
         private TextBox txtVisionAssistantLog;
+        private Socket_VisionProfile robotExecutionVisionProfile;
         private NumericUpDown nudVisionThreshold;
         private CheckBox chkVisionTemplateNormalize;
         private CheckBox chkVisionTemplateScale;
@@ -56,17 +64,47 @@ namespace WPELibrary
         private CheckBox chkVisionOcrDenoise;
         private CheckBox chkVisionOcrSharpen;
         private TextBox txtVisionOcrWhitelist;
+        private ComboBox cbbVisionOcrEngine;
+        private TextBox txtVisionOcrModelDirectory;
+        private NumericUpDown nudVisionOcrDetectionThreshold;
+        private NumericUpDown nudVisionOcrRecognitionThreshold;
+        private NumericUpDown nudVisionOcrMaxImageSide;
+        private Label lVisionOcrModelStatus;
         private Button bVisionRecognizeText;
+        private Button bVisionSelectRegion;
+        private Button bVisionRecapture;
         private Button bVisionCancelOcr;
         private Button bVisionPreviewOcr;
         private Button bVisionRestorePreview;
         private Button bVisionMatchTemplate;
         private Button bVisionCancelMatch;
         private TextBox txtVisionOcrKeyword;
-        private ComboBox cbbVisionSteps;
+        private ListBox cbbVisionSteps;
         private ComboBox cbbVisionConditionType;
+        private ComboBox cbbVisionActionType;
+        private ComboBox cbbVisionScrollDirection;
+        private NumericUpDown nudVisionScrollAmount;
+        private Button bVisionConfirmAction;
+        private Button bVisionCancelAction;
+        private CheckBox chkVisionActionVerification;
+        private Button bVisionActionVerificationMenu;
+        private ComboBox cbbVisionVerificationType;
+        private TextBox txtVisionVerificationKeyword;
+        private Label lVisionVerificationKeyword;
+        private CheckBox chkVisionVerificationSeparateRegion;
+        private Button bVisionSelectVerificationRegion;
+        private Label lVisionVerificationHint;
+        private VisionRegion visionVerificationRegion;
+        private TableLayoutPanel visionVerificationAdvancedPanel;
+        private Button bVisionAdvancedSettings;
+        private Panel visionAdvancedStorage;
+        private readonly List<Control> visionAdvancedModules = new List<Control>();
         private NumericUpDown nudVisionNumberMinimum;
         private NumericUpDown nudVisionNumberMaximum;
+        private TextBox txtVisionColorRgb;
+        private NumericUpDown nudVisionColorTolerance;
+        private NumericUpDown nudVisionColorMinimumPixels;
+        private NumericUpDown nudVisionColorMinimumRatio;
         private NumericUpDown nudVisionConfirmations;
         private NumericUpDown nudVisionPollInterval;
         private NumericUpDown nudVisionTimeout;
@@ -78,6 +116,8 @@ namespace WPELibrary
         private CancellationTokenSource visionAssistantCancellation;
         private Task<VisionAssistantRunResult> visionAssistantTask;
         private bool updatingVisionStepEditor;
+        private bool visionRobotClosing;
+        private readonly VisionAssistantStep visionNewStep = new VisionAssistantStep();
         private Bitmap visionPreview;
         private Bitmap visionTemplate;
         private Bitmap visionPreprocessedPreview;
@@ -86,6 +126,11 @@ namespace WPELibrary
         private bool visionPreviewSelecting;
         private Point visionPreviewSelectionStart;
         private CheckBox chkVisionNormalized;
+        private CheckBox chkVisionFixedClientSize;
+        private NumericUpDown nudVisionRequiredWidth;
+        private NumericUpDown nudVisionRequiredHeight;
+        private Label lVisionFixedClientSizeStatus;
+        private Button bVisionApplyFixedSize;
         private ComboBox cbbVisionCaptureSource;
         private NumericUpDown nudVisionCaptureInterval;
         private CheckBox chkVisionSkipUnchanged;
@@ -97,6 +142,10 @@ namespace WPELibrary
         private Task<VisionOcrResult> visionOcrTask;
         private CancellationTokenSource visionMatchCancellation;
         private Task<VisionMatchResult> visionMatchTask;
+        private readonly object visionAssistantUiSync = new object();
+        private readonly Queue<string> pendingVisionAssistantLogs = new Queue<string>();
+        private string pendingVisionAssistantStatus;
+        private bool visionAssistantUiUpdateScheduled;
 
         #region//窗体加载
 
@@ -106,6 +155,9 @@ namespace WPELibrary
             {
                 MultiLanguage.SetDefaultLanguage(MultiLanguage.DefaultLanguage);
                 InitializeComponent();
+                this.AutoScaleMode = AutoScaleMode.Dpi;
+                this.MinimumSize = new Size(600, 511);
+                this.InitExecutionLogLayout();
                 this.InitSendPresetPickerLayout();
                 this.InitVisionLayout();
 
@@ -143,6 +195,7 @@ namespace WPELibrary
                 this.InitSendPresetPicker();
                 this.InitRobot();
                 this.InitVisionProfile();
+                this.EnsureVisionInstructionRows();
             }
             catch (Exception ex)
             {
@@ -172,7 +225,11 @@ namespace WPELibrary
             {
                 dgvRobotInstruction.AutoGenerateColumns = false;
                 dgvRobotInstruction.BackgroundColor = Color.FromArgb(248, 248, 248);
+                dgvRobotInstruction.AccessibleName = gbRobotInstruction.Text;
+                dgvRobotInstruction.AccessibleRole = AccessibleRole.Table;
+                dgvRobotInstruction.ShowCellToolTips = true;
                 dgvRobotInstruction.Paint += this.dgvRobotInstruction_Paint;
+                dgvRobotInstruction.CellToolTipTextNeeded += this.dgvRobotInstruction_CellToolTipTextNeeded;
                 dgvRobotInstruction.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvRobotInstruction, true, null);
                 dgvRobotInstruction.DataSource = this.dtRobotInstruction;
                 this.txtExecute.BackColor = Color.FromArgb(248, 248, 248);
@@ -186,6 +243,82 @@ namespace WPELibrary
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
+        }
+
+        private void InitExecutionLogLayout()
+        {
+            this.tlpRobotForm.Controls.Remove(this.gbExecute);
+            this.gbExecute.Controls.Remove(this.txtExecute);
+            this.gbExecute.Dispose();
+
+            this.executeLogHost = new TableLayoutPanel
+            {
+                Name = "executeLogHost",
+                ColumnCount = 1,
+                RowCount = 1,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(3, 0, 3, 0),
+                Padding = new Padding(0),
+                GrowStyle = TableLayoutPanelGrowStyle.FixedSize
+            };
+            this.bToggleExecuteLog = new Button
+            {
+                Name = "bToggleExecuteLog",
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0),
+                Text = UiText("Robot_ExecuteLogShow"),
+                UseVisualStyleBackColor = true,
+                AccessibleName = UiText("Robot_ExecuteLogShow")
+            };
+            this.bToggleExecuteLog.Click += this.bToggleExecuteLog_Click;
+
+            this.txtExecute.Dock = DockStyle.Fill;
+            this.txtExecute.Margin = new Padding(0, 3, 0, 0);
+            this.executeLogHost.Controls.Add(this.bToggleExecuteLog, 0, 0);
+            this.tlpRobotForm.Controls.Add(this.executeLogHost, 0, 2);
+            this.SetExecuteLogExpanded(false);
+        }
+
+        private void bToggleExecuteLog_Click(object sender, EventArgs e)
+        {
+            this.SetExecuteLogExpanded(!this.executeLogExpanded);
+        }
+
+        private void SetExecuteLogExpanded(bool expanded)
+        {
+            if (this.executeLogHost == null || this.bToggleExecuteLog == null)
+            {
+                return;
+            }
+
+            this.executeLogExpanded = expanded;
+            this.executeLogHost.SuspendLayout();
+            this.executeLogHost.Controls.Remove(this.txtExecute);
+            this.executeLogHost.RowStyles.Clear();
+
+            if (expanded)
+            {
+                this.executeLogHost.RowCount = 2;
+                this.executeLogHost.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+                this.executeLogHost.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                this.executeLogHost.Controls.Add(this.txtExecute, 0, 1);
+                this.txtExecute.Visible = true;
+                this.bToggleExecuteLog.Text = UiText("Robot_ExecuteLogHide");
+                this.bToggleExecuteLog.AccessibleName = UiText("Robot_ExecuteLogHide");
+                this.tlpRobotForm.RowStyles[2].Height = 50F;
+            }
+            else
+            {
+                this.executeLogHost.RowCount = 1;
+                this.executeLogHost.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                this.txtExecute.Visible = false;
+                this.bToggleExecuteLog.Text = UiText("Robot_ExecuteLogShow");
+                this.bToggleExecuteLog.AccessibleName = UiText("Robot_ExecuteLogShow");
+                this.tlpRobotForm.RowStyles[2].Height = 34F;
+            }
+
+            this.executeLogHost.ResumeLayout(true);
+            this.tlpRobotForm.PerformLayout();
         }
 
         private string SendPresetPickerText(string key)
@@ -206,821 +339,1144 @@ namespace WPELibrary
             {
                 Name = "tpInstruction_Vision",
                 Text = UiText("Vision_Tab"),
-                Padding = new Padding(6),
-                AutoScroll = true,
+                Padding = new Padding(4),
                 UseVisualStyleBackColor = true
             };
 
-            TableLayoutPanel root = new TableLayoutPanel
+            FlowLayoutPanel page = new FlowLayoutPanel
             {
-                Dock = DockStyle.Top,
-                ColumnCount = 4,
-                RowCount = 15,
-                Padding = new Padding(3),
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                AutoScroll = true,
+                Padding = new Padding(4),
+                Margin = new Padding(0)
             };
-            root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100F));
-            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100F));
-            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 160F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 72F));
+            page.Resize += (sender, e) => FitVisionSections(page);
+            page.Layout += (sender, e) => FitVisionSections(page);
+            visionTab.Resize += (sender, e) => FitVisionSections(page);
+            visionTab.Enter += (sender, e) => FitVisionSections(page);
+            visionTab.Controls.Add(page);
+
+            TabPage visionSettingsTab = new TabPage
+            {
+                Name = "tpInstruction_VisionSettings",
+                Text = UiText("Main_Settings"),
+                Padding = new Padding(4),
+                UseVisualStyleBackColor = true
+            };
+            FlowLayoutPanel settingsPage = CreateVisionVerticalFlow();
+            settingsPage.Dock = DockStyle.Fill;
+            settingsPage.Padding = new Padding(4);
+            settingsPage.Resize += (sender, e) => FitVisionSections(settingsPage);
+            settingsPage.Layout += (sender, e) => FitVisionSections(settingsPage);
+            visionSettingsTab.Resize += (sender, e) => FitVisionSections(settingsPage);
+            visionSettingsTab.Enter += (sender, e) => FitVisionSections(settingsPage);
+            visionSettingsTab.Controls.Add(settingsPage);
+
+            this.visionAdvancedStorage = new Panel
+            {
+                Visible = false,
+                Size = Size.Empty
+            };
+            this.Controls.Add(this.visionAdvancedStorage);
+
+            GroupBox captureSection = CreateVisionSection(UiText("Vision_SectionCapture"));
+            TableLayoutPanel captureLayout = CreateVisionGrid(1);
 
             this.cbbVisionWindows = new ComboBox
             {
                 Dock = DockStyle.Fill,
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 FormattingEnabled = true,
-                DisplayMember = "DisplayName"
+                DisplayMember = "DisplayName",
+                AccessibleName = UiText("Vision_TargetWindow"),
+                Margin = new Padding(0, 2, 4, 2)
             };
             this.cbbVisionWindows.SelectedIndexChanged += this.cbbVisionWindows_SelectedIndexChanged;
-
+            this.cbbVisionWindows.Visible = false;
+            Label lVisionTargetWindow = CreateVisionLabel(UiText("Vision_TargetWindow"));
+            lVisionTargetWindow.Visible = false;
             Button bRefreshVisionWindows = new Button
             {
                 Dock = DockStyle.Fill,
                 Text = UiText("Vision_RefreshWindows"),
-                UseVisualStyleBackColor = true
+                AccessibleName = UiText("Vision_RefreshWindows"),
+                AccessibleRole = AccessibleRole.PushButton,
+                UseVisualStyleBackColor = true,
+                Margin = new Padding(0, 2, 0, 2),
+                Visible = false
             };
             bRefreshVisionWindows.Click += this.bRefreshVisionWindows_Click;
-
-            root.Controls.Add(new Label
-            {
-                Dock = DockStyle.Fill,
-                Text = UiText("Vision_TargetWindow"),
-                TextAlign = ContentAlignment.MiddleLeft
-            }, 0, 0);
-            root.Controls.Add(this.cbbVisionWindows, 1, 0);
-            root.SetColumnSpan(this.cbbVisionWindows, 2);
-            root.Controls.Add(bRefreshVisionWindows, 3, 0);
+            captureLayout.Controls.Add(lVisionTargetWindow, 0, 0);
+            captureLayout.Controls.Add(this.cbbVisionWindows, 0, 1);
+            captureLayout.Controls.Add(bRefreshVisionWindows, 0, 2);
 
             this.nudVisionX = CreateVisionNumber(0);
             this.nudVisionY = CreateVisionNumber(0);
             this.nudVisionWidth = CreateVisionNumber(1);
             this.nudVisionHeight = CreateVisionNumber(1);
-            AddVisionNumber(root, UiText("Vision_X"), this.nudVisionX, 0, 1);
-            AddVisionNumber(root, UiText("Vision_Y"), this.nudVisionY, 2, 1);
-            AddVisionNumber(root, UiText("Vision_Width"), this.nudVisionWidth, 0, 2);
-            AddVisionNumber(root, UiText("Vision_Height"), this.nudVisionHeight, 2, 2);
+            this.bVisionSelectRegion = CreateVisionButton(UiText("Vision_SelectRegion"));
+            this.bVisionSelectRegion.Click += this.bVisionSelectRegion_Click;
 
-            FlowLayoutPanel captureToolbar = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                AutoScroll = true,
-                Padding = new Padding(0, 4, 0, 2),
-                Margin = new Padding(0)
-            };
-            Button bCaptureVision = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_Capture"),
-                UseVisualStyleBackColor = true,
-                Margin = new Padding(0, 0, 6, 0)
-            };
-            bCaptureVision.Click += this.bCaptureVision_Click;
-            captureToolbar.Controls.Add(bCaptureVision);
+            FlowLayoutPanel captureActions = CreateVisionFlow();
+            captureActions.Controls.Add(this.bVisionSelectRegion);
+            this.bVisionSelectRegion.AutoSize = false;
+            this.bVisionSelectRegion.Size = new Size(84, 26);
+            this.bVisionSelectRegion.Margin = new Padding(0, 2, 1, 2);
+            this.bVisionRecapture = CreateVisionButton(UiText("Vision_Recapture"));
+            this.bVisionRecapture.Click += this.bCaptureVision_Click;
+            this.bVisionRecapture.AutoSize = false;
+            this.bVisionRecapture.Size = new Size(84, 26);
+            this.bVisionRecapture.Margin = new Padding(0, 2, 1, 2);
+            captureActions.Controls.Add(this.bVisionRecapture);
+            Button bSaveVisionProfile = CreateVisionButton(UiText("Vision_SaveProfile"));
+            bSaveVisionProfile.Click += this.bSaveVisionProfile_Click;
+            bSaveVisionProfile.AutoSize = false;
+            bSaveVisionProfile.Size = new Size(84, 26);
+            bSaveVisionProfile.Margin = new Padding(0, 2, 0, 2);
+            captureActions.Controls.Add(bSaveVisionProfile);
+            captureActions.WrapContents = true;
+            captureLayout.Controls.Add(captureActions, 0, 3);
 
-            captureToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_CaptureSource"),
-                Margin = new Padding(0, 5, 4, 0)
-            });
+            FlowLayoutPanel captureAdvancedContent = CreateVisionVerticalFlow();
+            TableLayoutPanel manualRegionSettings = CreateVisionGrid(2);
+            manualRegionSettings.ColumnStyles[0] = new ColumnStyle(SizeType.Absolute, 58F);
+            manualRegionSettings.ColumnStyles[1] = new ColumnStyle(SizeType.Percent, 100F);
+            AddVisionNumber(manualRegionSettings, UiText("Vision_X"), this.nudVisionX, 0, 0);
+            AddVisionNumber(manualRegionSettings, UiText("Vision_Y"), this.nudVisionY, 0, 1);
+            AddVisionNumber(manualRegionSettings, UiText("Vision_Width"), this.nudVisionWidth, 0, 2);
+            AddVisionNumber(manualRegionSettings, UiText("Vision_Height"), this.nudVisionHeight, 0, 3);
+            captureAdvancedContent.Controls.Add(manualRegionSettings);
+            captureAdvancedContent.Controls.Add(CreateVisionLabel(UiText("Vision_CaptureSource")));
             this.cbbVisionCaptureSource = new ComboBox
             {
-                Width = 90,
+                Width = 92,
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 DisplayMember = "Text",
-                Margin = new Padding(0, 2, 6, 0)
+                AccessibleName = UiText("Vision_CaptureSource"),
+                Margin = new Padding(0, 2, 8, 2)
             };
             this.cbbVisionCaptureSource.Items.Add(new VisionCaptureSourceChoice(VisionCaptureSourceMode.Auto, UiText("Vision_CaptureAuto")));
             this.cbbVisionCaptureSource.Items.Add(new VisionCaptureSourceChoice(VisionCaptureSourceMode.Screen, UiText("Vision_CaptureScreen")));
             this.cbbVisionCaptureSource.Items.Add(new VisionCaptureSourceChoice(VisionCaptureSourceMode.WindowRender, UiText("Vision_CaptureWindowRender")));
             this.cbbVisionCaptureSource.SelectedIndex = 0;
-            captureToolbar.Controls.Add(this.cbbVisionCaptureSource);
-
-            captureToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_CaptureInterval"),
-                Margin = new Padding(0, 5, 4, 0)
-            });
+            captureAdvancedContent.Controls.Add(this.cbbVisionCaptureSource);
+            captureAdvancedContent.Controls.Add(CreateVisionLabel(UiText("Vision_CaptureInterval")));
             this.nudVisionCaptureInterval = CreateVisionNumber(0);
             this.nudVisionCaptureInterval.Maximum = 60000;
             this.nudVisionCaptureInterval.Value = 150;
-            this.nudVisionCaptureInterval.Width = 58;
-            this.nudVisionCaptureInterval.Margin = new Padding(0, 2, 6, 0);
-            captureToolbar.Controls.Add(this.nudVisionCaptureInterval);
-            this.chkVisionSkipUnchanged = new CheckBox
-            {
-                AutoSize = true,
-                Text = UiText("Vision_SkipUnchanged"),
-                Checked = true,
-                Margin = new Padding(0, 5, 6, 0)
-            };
-            captureToolbar.Controls.Add(this.chkVisionSkipUnchanged);
-            this.chkVisionNormalized = new CheckBox
-            {
-                AutoSize = true,
-                Text = UiText("Vision_NormalizedRegion"),
-                Checked = true,
-                Margin = new Padding(0, 5, 6, 0)
-            };
-            captureToolbar.Controls.Add(this.chkVisionNormalized);
-            captureToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_HistoryLimit"),
-                Margin = new Padding(0, 5, 4, 0)
-            });
+            this.nudVisionCaptureInterval.Width = 66;
+            this.nudVisionCaptureInterval.Dock = DockStyle.None;
+            captureAdvancedContent.Controls.Add(this.nudVisionCaptureInterval);
+            this.chkVisionSkipUnchanged = CreateVisionCheckBox(UiText("Vision_SkipUnchanged"));
+            this.chkVisionSkipUnchanged.Checked = true;
+            captureAdvancedContent.Controls.Add(this.chkVisionSkipUnchanged);
+            FlowLayoutPanel fixedClientSizeLayout = CreateVisionFlow();
+            this.chkVisionFixedClientSize = CreateVisionCheckBox(UiText("Vision_FixedClientSize"));
+            this.chkVisionFixedClientSize.CheckedChanged += (sender, e) => this.UpdateVisionFixedClientSizeUi();
+            fixedClientSizeLayout.Controls.Add(this.chkVisionFixedClientSize);
+            fixedClientSizeLayout.Controls.Add(CreateVisionLabel(UiText("Vision_RequiredWidth")));
+            this.nudVisionRequiredWidth = CreateVisionNumber(1);
+            this.nudVisionRequiredWidth.Maximum = 8192;
+            this.nudVisionRequiredWidth.Value = 1280;
+            this.nudVisionRequiredWidth.Width = 64;
+            this.nudVisionRequiredWidth.ValueChanged += (sender, e) => this.UpdateVisionFixedClientSizeUi();
+            fixedClientSizeLayout.Controls.Add(this.nudVisionRequiredWidth);
+            fixedClientSizeLayout.Controls.Add(CreateVisionLabel(UiText("Vision_RequiredHeight")));
+            this.nudVisionRequiredHeight = CreateVisionNumber(1);
+            this.nudVisionRequiredHeight.Maximum = 8192;
+            this.nudVisionRequiredHeight.Value = 720;
+            this.nudVisionRequiredHeight.Width = 64;
+            this.nudVisionRequiredHeight.ValueChanged += (sender, e) => this.UpdateVisionFixedClientSizeUi();
+            fixedClientSizeLayout.Controls.Add(this.nudVisionRequiredHeight);
+            this.bVisionApplyFixedSize = CreateVisionButton(UiText("Vision_Apply1280x720"));
+            this.bVisionApplyFixedSize.Click += this.bVisionApplyFixedSize_Click;
+            fixedClientSizeLayout.Controls.Add(this.bVisionApplyFixedSize);
+            captureAdvancedContent.Controls.Add(fixedClientSizeLayout);
+            this.lVisionFixedClientSizeStatus = CreateVisionStatusLabel(UiText("Vision_ClientSizeAny"));
+            captureAdvancedContent.Controls.Add(this.lVisionFixedClientSizeStatus);
+            this.chkVisionNormalized = CreateVisionCheckBox(UiText("Vision_NormalizedRegion"));
+            this.chkVisionNormalized.Checked = true;
+            captureAdvancedContent.Controls.Add(this.chkVisionNormalized);
             this.nudVisionHistoryLimit = CreateVisionNumber(0);
             this.nudVisionHistoryLimit.Maximum = 200;
             this.nudVisionHistoryLimit.Value = 30;
-            this.nudVisionHistoryLimit.Width = 48;
-            this.nudVisionHistoryLimit.Margin = new Padding(0, 2, 6, 0);
-            captureToolbar.Controls.Add(this.nudVisionHistoryLimit);
-            this.chkVisionSaveFailureSnapshots = new CheckBox
-            {
-                AutoSize = true,
-                Text = UiText("Vision_SaveFailureSnapshots"),
-                Margin = new Padding(0, 5, 6, 0)
-            };
-            captureToolbar.Controls.Add(this.chkVisionSaveFailureSnapshots);
-
-            Button bSaveVisionProfile = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_SaveProfile"),
-                UseVisualStyleBackColor = true
-            };
-            bSaveVisionProfile.Click += this.bSaveVisionProfile_Click;
-            Button bSaveVisionPreview = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_SaveScreenshot"),
-                UseVisualStyleBackColor = true
-            };
+            this.nudVisionHistoryLimit.Width = 52;
+            this.nudVisionHistoryLimit.Dock = DockStyle.None;
+            captureAdvancedContent.Controls.Add(CreateVisionLabel(UiText("Vision_HistoryLimit")));
+            captureAdvancedContent.Controls.Add(this.nudVisionHistoryLimit);
+            this.chkVisionSaveFailureSnapshots = CreateVisionCheckBox(UiText("Vision_SaveFailureSnapshots"));
+            captureAdvancedContent.Controls.Add(this.chkVisionSaveFailureSnapshots);
+            Button bSaveVisionPreview = CreateVisionButton(UiText("Vision_SaveScreenshot"));
             bSaveVisionPreview.Click += (sender, e) => this.SaveVisionPreview();
-            captureToolbar.Controls.Add(bSaveVisionPreview);
-            captureToolbar.Controls.Add(bSaveVisionProfile);
-            root.Controls.Add(captureToolbar, 0, 3);
-            root.SetColumnSpan(captureToolbar, 4);
+            captureAdvancedContent.Controls.Add(bSaveVisionPreview);
+            TableLayoutPanel captureAdvancedPanel = CreateVisionCollapsiblePanel(
+                UiText("Vision_AdvancedRegion"),
+                UiText("Vision_LessCaptureSettings"),
+                captureAdvancedContent);
+            captureAdvancedPanel.Controls[0].Name = "bVisionAdvancedRegionToggle";
+            this.RegisterVisionAdvancedModule(captureAdvancedPanel);
 
-            FlowLayoutPanel templateToolbar = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                AutoScroll = true,
-                Padding = new Padding(0, 4, 0, 2),
-                Margin = new Padding(0)
-            };
-            templateToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_Template"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(0, 5, 6, 0)
-            });
-            Button bLoadVisionTemplate = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_LoadTemplate"),
-                UseVisualStyleBackColor = true,
-                Margin = new Padding(0, 0, 6, 0)
-            };
-            bLoadVisionTemplate.Click += this.bLoadVisionTemplate_Click;
-            templateToolbar.Controls.Add(bLoadVisionTemplate);
-            Button bSaveVisionTemplate = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_SaveTemplate"),
-                UseVisualStyleBackColor = true,
-                Margin = new Padding(0, 0, 12, 0)
-            };
-            bSaveVisionTemplate.Click += this.bSaveVisionTemplate_Click;
-            templateToolbar.Controls.Add(bSaveVisionTemplate);
-            Button bAddVisionTemplateVariant = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_AddTemplateVariant"),
-                UseVisualStyleBackColor = true,
-                Margin = new Padding(0, 0, 12, 0)
-            };
-            bAddVisionTemplateVariant.Click += this.bAddVisionTemplateVariant_Click;
-            templateToolbar.Controls.Add(bAddVisionTemplateVariant);
-            templateToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_Threshold"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(0, 5, 6, 0)
-            });
-            this.nudVisionThreshold = new NumericUpDown
-            {
-                Minimum = 0,
-                Maximum = 100,
-                Value = 90,
-                Increment = 1,
-                Width = 64,
-                Margin = new Padding(0, 2, 8, 0)
-            };
-            templateToolbar.Controls.Add(this.nudVisionThreshold);
-            this.chkVisionTemplateNormalize = new CheckBox
-            {
-                AutoSize = true,
-                Text = UiText("Vision_TemplateNormalize"),
-                Checked = true,
-                Margin = new Padding(0, 5, 6, 0)
-            };
-            templateToolbar.Controls.Add(this.chkVisionTemplateNormalize);
-            this.chkVisionTemplateScale = new CheckBox
-            {
-                AutoSize = true,
-                Text = UiText("Vision_TemplateScale"),
-                Margin = new Padding(0, 5, 6, 0)
-            };
-            templateToolbar.Controls.Add(this.chkVisionTemplateScale);
-            templateToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_TemplateTolerance"),
-                Margin = new Padding(0, 5, 4, 0)
-            });
-            this.nudVisionTemplateScaleTolerance = new NumericUpDown
-            {
-                Minimum = 0,
-                Maximum = 50,
-                Value = 10,
-                Width = 48,
-                Margin = new Padding(0, 2, 6, 0)
-            };
-            templateToolbar.Controls.Add(this.nudVisionTemplateScaleTolerance);
-            this.bVisionMatchTemplate = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_Match"),
-                UseVisualStyleBackColor = true,
-                Margin = new Padding(0, 0, 6, 0)
-            };
-            this.bVisionMatchTemplate.Click += this.bMatchVisionTemplate_Click;
-            templateToolbar.Controls.Add(this.bVisionMatchTemplate);
-            this.bVisionCancelMatch = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_MatchCancel"),
-                UseVisualStyleBackColor = true,
-                Enabled = false,
-                Margin = new Padding(0)
-            };
-            this.bVisionCancelMatch.Click += this.bCancelVisionMatch_Click;
-            templateToolbar.Controls.Add(this.bVisionCancelMatch);
-            root.Controls.Add(templateToolbar, 0, 4);
-            root.SetColumnSpan(templateToolbar, 4);
+            this.lVisionStatus = CreateVisionStatusLabel(UiText("Vision_SelectWindowHint"));
+            captureLayout.Controls.Add(this.lVisionStatus, 0, 6);
+            AttachVisionSectionContent(captureSection, captureLayout);
+            page.Controls.Add(captureSection);
 
-            FlowLayoutPanel ocrToolbar = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                AutoScroll = true,
-                Padding = new Padding(0, 4, 0, 2),
-                Margin = new Padding(0)
-            };
-            ocrToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_Ocr"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(0, 5, 6, 0)
-            });
-            ocrToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrScale"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(0, 5, 4, 0)
-            });
-            this.nudVisionOcrScale = new NumericUpDown
-            {
-                Minimum = 1,
-                Maximum = 4,
-                Value = 2,
-                Width = 48,
-                Margin = new Padding(0, 2, 8, 0)
-            };
-            ocrToolbar.Controls.Add(this.nudVisionOcrScale);
-            this.chkVisionOcrBinary = new CheckBox
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrBinary"),
-                Margin = new Padding(0, 5, 8, 0)
-            };
-            ocrToolbar.Controls.Add(this.chkVisionOcrBinary);
-            ocrToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrThreshold"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(0, 5, 4, 0)
-            });
-            this.nudVisionOcrThreshold = new NumericUpDown
-            {
-                Minimum = 0,
-                Maximum = 255,
-                Value = 160,
-                Width = 58,
-                Margin = new Padding(0, 2, 8, 0)
-            };
-            ocrToolbar.Controls.Add(this.nudVisionOcrThreshold);
-            ocrToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrContrast"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(0, 5, 4, 0)
-            });
-            this.nudVisionOcrContrast = new NumericUpDown
-            {
-                Minimum = 0.1M,
-                Maximum = 5M,
-                DecimalPlaces = 1,
-                Increment = 0.1M,
-                Value = 1M,
-                Width = 54,
-                Margin = new Padding(0, 2, 8, 0)
-            };
-            ocrToolbar.Controls.Add(this.nudVisionOcrContrast);
-            this.chkVisionOcrAdaptive = new CheckBox
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrAdaptive"),
-                Margin = new Padding(0, 5, 6, 0)
-            };
-            ocrToolbar.Controls.Add(this.chkVisionOcrAdaptive);
-            ocrToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrAdaptiveWindow"),
-                Margin = new Padding(0, 5, 4, 0)
-            });
-            this.nudVisionOcrAdaptiveWindow = new NumericUpDown
-            {
-                Minimum = 3,
-                Maximum = 51,
-                Increment = 2,
-                Value = 15,
-                Width = 48,
-                Margin = new Padding(0, 2, 6, 0)
-            };
-            ocrToolbar.Controls.Add(this.nudVisionOcrAdaptiveWindow);
-            ocrToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrAdaptiveOffset"),
-                Margin = new Padding(0, 5, 4, 0)
-            });
-            this.nudVisionOcrAdaptiveOffset = new NumericUpDown
-            {
-                Minimum = -64,
-                Maximum = 64,
-                Value = 8,
-                Width = 48,
-                Margin = new Padding(0, 2, 6, 0)
-            };
-            ocrToolbar.Controls.Add(this.nudVisionOcrAdaptiveOffset);
-            this.chkVisionOcrInvert = new CheckBox
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrInvert"),
-                Margin = new Padding(0, 5, 6, 0)
-            };
-            ocrToolbar.Controls.Add(this.chkVisionOcrInvert);
-            this.chkVisionOcrDenoise = new CheckBox
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrDenoise"),
-                Margin = new Padding(0, 5, 6, 0)
-            };
-            ocrToolbar.Controls.Add(this.chkVisionOcrDenoise);
-            this.chkVisionOcrSharpen = new CheckBox
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrSharpen"),
-                Margin = new Padding(0, 5, 6, 0)
-            };
-            ocrToolbar.Controls.Add(this.chkVisionOcrSharpen);
-            ocrToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrWhitelist"),
-                Margin = new Padding(0, 5, 4, 0)
-            });
-            this.txtVisionOcrWhitelist = new TextBox
-            {
-                Width = 120,
-                Margin = new Padding(0, 2, 8, 0)
-            };
-            ocrToolbar.Controls.Add(this.txtVisionOcrWhitelist);
-            ocrToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrKeyword"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(0, 5, 4, 0)
-            });
-            this.txtVisionOcrKeyword = new TextBox
-            {
-                Width = 140,
-                Margin = new Padding(0, 2, 8, 0)
-            };
-            ocrToolbar.Controls.Add(this.txtVisionOcrKeyword);
-            ocrToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_Minimum"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(0, 5, 4, 0)
-            });
-            this.nudVisionNumberMinimum = CreateVisionDecimal(-1000000000D, 1000000000D, 0D);
-            this.nudVisionNumberMinimum.Width = 72;
-            ocrToolbar.Controls.Add(this.nudVisionNumberMinimum);
-            ocrToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_Maximum"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(0, 5, 4, 0)
-            });
-            this.nudVisionNumberMaximum = CreateVisionDecimal(-1000000000D, 1000000000D, 1000000000D);
-            this.nudVisionNumberMaximum.Width = 72;
-            ocrToolbar.Controls.Add(this.nudVisionNumberMaximum);
-            this.bVisionRecognizeText = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrRecognize"),
-                UseVisualStyleBackColor = true,
-                Margin = new Padding(0)
-            };
-            this.bVisionRecognizeText.Click += this.bRecognizeVisionText_Click;
-            ocrToolbar.Controls.Add(this.bVisionRecognizeText);
-            this.bVisionCancelOcr = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrCancel"),
-                UseVisualStyleBackColor = true,
-                Enabled = false,
-                Margin = new Padding(0, 0, 6, 0)
-            };
-            this.bVisionCancelOcr.Click += this.bCancelVisionOcr_Click;
-            ocrToolbar.Controls.Add(this.bVisionCancelOcr);
-            this.bVisionPreviewOcr = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_OcrPreview"),
-                UseVisualStyleBackColor = true,
-                Margin = new Padding(0, 0, 6, 0)
-            };
-            this.bVisionPreviewOcr.Click += this.bPreviewVisionOcr_Click;
-            ocrToolbar.Controls.Add(this.bVisionPreviewOcr);
-            this.bVisionRestorePreview = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_RestorePreview"),
-                UseVisualStyleBackColor = true,
-                Margin = new Padding(0)
-            };
-            this.bVisionRestorePreview.Click += this.bRestoreVisionPreview_Click;
-            ocrToolbar.Controls.Add(this.bVisionRestorePreview);
-            root.Controls.Add(ocrToolbar, 0, 5);
-            root.SetColumnSpan(ocrToolbar, 4);
-
-            FlowLayoutPanel stepToolbar = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                AutoScroll = true,
-                Padding = new Padding(0, 4, 0, 2),
-                Margin = new Padding(0)
-            };
-            stepToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_Steps"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(0, 5, 6, 0)
-            });
-            this.cbbVisionConditionType = new ComboBox
-            {
-                Width = 150,
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                DisplayMember = "Text",
-                Margin = new Padding(0, 2, 6, 0)
-            };
-            this.cbbVisionConditionType.Items.Add(new VisionConditionChoice(
-                VisionConditionType.TextAppears,
-                UiText("Vision_TextAppears")));
-            this.cbbVisionConditionType.Items.Add(new VisionConditionChoice(
-                VisionConditionType.TextDisappears,
-                UiText("Vision_TextDisappears")));
-            this.cbbVisionConditionType.Items.Add(new VisionConditionChoice(
-                VisionConditionType.NumberInRange,
-                UiText("Vision_NumberRange")));
-            this.cbbVisionConditionType.Items.Add(new VisionConditionChoice(
-                VisionConditionType.TemplateAppears,
-                UiText("Vision_TemplateAppears")));
-            this.cbbVisionConditionType.Items.Add(new VisionConditionChoice(
-                VisionConditionType.TemplateDisappears,
-                UiText("Vision_TemplateDisappears")));
-            this.cbbVisionConditionType.SelectedIndex = 0;
-            stepToolbar.Controls.Add(this.cbbVisionConditionType);
-            this.cbbVisionSteps = new ComboBox
-            {
-                Width = 180,
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                DisplayMember = "Name",
-                Margin = new Padding(0, 2, 6, 0)
-            };
-            this.cbbVisionSteps.SelectedIndexChanged += this.cbbVisionSteps_SelectedIndexChanged;
-            stepToolbar.Controls.Add(this.cbbVisionSteps);
-            Button bAddVisionOcrStep = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_AddOcrStep"),
-                UseVisualStyleBackColor = true,
-                Margin = new Padding(0, 0, 6, 0)
-            };
-            bAddVisionOcrStep.Click += this.bAddVisionOcrStep_Click;
-            stepToolbar.Controls.Add(bAddVisionOcrStep);
-            Button bAddVisionTemplateStep = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_AddTemplateStep"),
-                UseVisualStyleBackColor = true,
-                Margin = new Padding(0, 0, 6, 0)
-            };
-            bAddVisionTemplateStep.Click += this.bAddVisionTemplateStep_Click;
-            stepToolbar.Controls.Add(bAddVisionTemplateStep);
-            Button bRemoveVisionStep = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_RemoveStep"),
-                UseVisualStyleBackColor = true,
-                Margin = new Padding(0)
-            };
-            bRemoveVisionStep.Click += this.bRemoveVisionStep_Click;
-            stepToolbar.Controls.Add(bRemoveVisionStep);
-            stepToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_Confirmations"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(8, 5, 4, 0)
-            });
-            this.nudVisionConfirmations = CreateVisionNumber(1);
-            this.nudVisionConfirmations.Maximum = 10;
-            this.nudVisionConfirmations.Value = 3;
-            this.nudVisionConfirmations.Width = 52;
-            stepToolbar.Controls.Add(this.nudVisionConfirmations);
-            stepToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_PollMilliseconds"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(8, 5, 4, 0)
-            });
-            this.nudVisionPollInterval = CreateVisionNumber(10);
-            this.nudVisionPollInterval.Maximum = 60000;
-            this.nudVisionPollInterval.Value = 250;
-            this.nudVisionPollInterval.Width = 72;
-            stepToolbar.Controls.Add(this.nudVisionPollInterval);
-            stepToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_TimeoutMilliseconds"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(8, 5, 4, 0)
-            });
-            this.nudVisionTimeout = CreateVisionNumber(10);
-            this.nudVisionTimeout.Maximum = 3600000;
-            this.nudVisionTimeout.Value = 10000;
-            this.nudVisionTimeout.Width = 80;
-            stepToolbar.Controls.Add(this.nudVisionTimeout);
-            stepToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_Retries"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(8, 5, 4, 0)
-            });
-            this.nudVisionRetries = CreateVisionNumber(0);
-            this.nudVisionRetries.Maximum = 100;
-            this.nudVisionRetries.Value = 0;
-            this.nudVisionRetries.Width = 52;
-            stepToolbar.Controls.Add(this.nudVisionRetries);
-            this.cbbVisionFailurePolicy = new ComboBox
-            {
-                Width = 90,
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                DisplayMember = "Text",
-                Margin = new Padding(8, 2, 0, 0)
-            };
-            this.cbbVisionFailurePolicy.Items.Add(new VisionFailureChoice(
-                VisionFailurePolicy.Stop,
-                UiText("Vision_StopPolicy")));
-            this.cbbVisionFailurePolicy.Items.Add(new VisionFailureChoice(
-                VisionFailurePolicy.Skip,
-                UiText("Vision_SkipPolicy")));
-            this.cbbVisionFailurePolicy.SelectedIndex = 0;
-            stepToolbar.Controls.Add(this.cbbVisionFailurePolicy);
-            root.Controls.Add(stepToolbar, 0, 6);
-            root.SetColumnSpan(stepToolbar, 4);
-
-            FlowLayoutPanel assistantToolbar = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                AutoScroll = true,
-                Padding = new Padding(0, 4, 0, 2),
-                Margin = new Padding(0)
-            };
-            assistantToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_Assistant"),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(0, 5, 8, 0)
-            });
-            this.bVisionRunSteps = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_RunSteps"),
-                UseVisualStyleBackColor = true,
-                Margin = new Padding(0, 0, 6, 0)
-            };
-            this.bVisionRunSteps.Click += this.bRunVisionAssistant_Click;
-            assistantToolbar.Controls.Add(this.bVisionRunSteps);
-            this.bVisionStopSteps = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_StopSteps"),
-                UseVisualStyleBackColor = true,
-                Enabled = false,
-                Margin = new Padding(0)
-            };
-            this.bVisionStopSteps.Click += this.bStopVisionAssistant_Click;
-            assistantToolbar.Controls.Add(this.bVisionStopSteps);
-            root.Controls.Add(assistantToolbar, 0, 7);
-            root.SetColumnSpan(assistantToolbar, 4);
-
-            this.pbVisionPreview = new PictureBox
-            {
-                Dock = DockStyle.Fill,
-                BackColor = Color.FromArgb(248, 248, 248),
-                BorderStyle = BorderStyle.FixedSingle,
-                SizeMode = PictureBoxSizeMode.Zoom
-            };
+            GroupBox previewSection = CreateVisionSection(UiText("Vision_SectionPreview"));
+            TableLayoutPanel previewLayout = CreateVisionGrid(1);
+            previewLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            previewLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 96F));
+            previewLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            previewLayout.Controls.Add(CreateVisionLabel(UiText("Vision_CurrentScreenshot")), 0, 0);
+            this.pbVisionPreview = CreateVisionPictureBox();
             this.pbVisionPreview.MouseDown += this.pbVisionPreview_MouseDown;
             this.pbVisionPreview.MouseMove += this.pbVisionPreview_MouseMove;
             this.pbVisionPreview.MouseUp += this.pbVisionPreview_MouseUp;
             this.pbVisionPreview.Paint += this.pbVisionPreview_Paint;
-            root.Controls.Add(this.pbVisionPreview, 0, 8);
-            root.SetColumnSpan(this.pbVisionPreview, 2);
+            this.pbVisionTemplate = CreateVisionPictureBox();
+            previewLayout.Controls.Add(this.pbVisionPreview, 0, 1);
+            this.lVisionPreviewEmpty = CreateVisionStatusLabel(UiText("Vision_NoPreview"));
+            previewLayout.Controls.Add(this.lVisionPreviewEmpty, 0, 2);
 
-            this.pbVisionTemplate = new PictureBox
-            {
-                Dock = DockStyle.Fill,
-                BackColor = Color.FromArgb(248, 248, 248),
-                BorderStyle = BorderStyle.FixedSingle,
-                SizeMode = PictureBoxSizeMode.Zoom
-            };
-            root.Controls.Add(this.pbVisionTemplate, 2, 8);
-            root.SetColumnSpan(this.pbVisionTemplate, 2);
-
-            FlowLayoutPanel historyToolbar = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                AutoScroll = true,
-                Padding = new Padding(0, 2, 0, 2),
-                Margin = new Padding(0)
-            };
-            historyToolbar.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = UiText("Vision_History"),
-                Margin = new Padding(0, 5, 6, 0)
-            });
+            TableLayoutPanel historyLayout = CreateVisionGrid(2);
+            historyLayout.ColumnStyles[0] = new ColumnStyle(SizeType.Percent, 100F);
+            historyLayout.ColumnStyles[1] = new ColumnStyle(SizeType.AutoSize);
+            FlowLayoutPanel historyLabel = CreateVisionFlow();
+            historyLabel.Controls.Add(CreateVisionLabel(UiText("Vision_History")));
             this.cbbVisionHistory = new ComboBox
             {
-                Width = 420,
+                Dock = DockStyle.Fill,
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 DisplayMember = "DisplayName",
-                Margin = new Padding(0, 2, 6, 0)
+                AccessibleName = UiText("Vision_History"),
+                Margin = new Padding(0, 2, 6, 2)
             };
             this.cbbVisionHistory.SelectedIndexChanged += this.cbbVisionHistory_SelectedIndexChanged;
-            historyToolbar.Controls.Add(this.cbbVisionHistory);
-            Button bClearVisionHistory = new Button
-            {
-                AutoSize = true,
-                Text = UiText("Vision_ClearHistory"),
-                UseVisualStyleBackColor = true,
-                Margin = new Padding(0)
-            };
+            historyLabel.Controls.Add(this.cbbVisionHistory);
+            historyLayout.Controls.Add(historyLabel, 0, 0);
+            Button bClearVisionHistory = CreateVisionButton(UiText("Vision_ClearHistory"));
             bClearVisionHistory.Click += this.bClearVisionHistory_Click;
-            historyToolbar.Controls.Add(bClearVisionHistory);
-            root.Controls.Add(historyToolbar, 0, 9);
-            root.SetColumnSpan(historyToolbar, 4);
+            historyLayout.Controls.Add(bClearVisionHistory, 1, 0);
+            TableLayoutPanel historyPanel = CreateVisionCollapsiblePanel(
+                UiText("Vision_MoreCaptureSettings"),
+                UiText("Vision_LessCaptureSettings"),
+                historyLayout);
+            this.RegisterVisionAdvancedModule(historyPanel);
+            AttachVisionSectionContent(previewSection, previewLayout);
+            page.Controls.Add(previewSection);
 
-            this.lVisionStatus = new Label
+            GroupBox recognitionSection = CreateVisionSection(UiText("Vision_SectionRecognition"));
+            TableLayoutPanel recognitionLayout = CreateVisionGrid(1);
+            TabControl modeTabs = new TabControl
+            {
+                Dock = DockStyle.Top,
+                Height = 130,
+                Margin = new Padding(0, 0, 0, 6)
+            };
+
+            TabPage ocrPage = new TabPage
+            {
+                Text = UiText("Vision_ModeOcr"),
+                Padding = new Padding(6),
+                AutoScroll = true,
+                UseVisualStyleBackColor = true
+            };
+            FlowLayoutPanel ocrRoot = CreateVisionVerticalFlow();
+            TableLayoutPanel ocrBasic = CreateVisionGrid(1);
+            this.nudVisionOcrScale = CreateVisionNumber(1);
+            this.nudVisionOcrScale.Maximum = 4;
+            this.nudVisionOcrScale.Value = 2;
+            this.nudVisionOcrScale.Width = 60;
+            this.nudVisionOcrScale.Dock = DockStyle.None;
+            ocrBasic.Controls.Add(CreateVisionLabel(UiText("Vision_OcrKeyword")), 0, 0);
+            this.txtVisionOcrKeyword = new TextBox
             {
                 Dock = DockStyle.Fill,
-                AutoEllipsis = true,
-                TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = SystemColors.GrayText,
-                Text = UiText("Vision_SelectWindowHint")
+                AccessibleName = UiText("Vision_OcrKeyword"),
+                AccessibleRole = AccessibleRole.Text,
+                Margin = new Padding(0, 2, 0, 2)
             };
-            root.Controls.Add(this.lVisionStatus, 0, 10);
-            root.SetColumnSpan(this.lVisionStatus, 4);
+            ocrBasic.Controls.Add(this.txtVisionOcrKeyword, 0, 1);
+            FlowLayoutPanel ocrActions = CreateVisionFlow();
+            this.bVisionRecognizeText = CreateVisionButton(UiText("Vision_OcrTest"));
+            this.bVisionRecognizeText.Click += this.bRecognizeVisionText_Click;
+            ocrActions.Controls.Add(this.bVisionRecognizeText);
+            this.bVisionCancelOcr = CreateVisionButton(UiText("Vision_OcrCancel"));
+            this.bVisionCancelOcr.Enabled = false;
+            this.bVisionCancelOcr.Visible = false;
+            this.bVisionCancelOcr.Click += this.bCancelVisionOcr_Click;
+            ocrActions.Controls.Add(this.bVisionCancelOcr);
+            this.bVisionPreviewOcr = CreateVisionButton(UiText("Vision_OcrPreview"));
+            this.bVisionPreviewOcr.Click += this.bPreviewVisionOcr_Click;
+            this.bVisionRestorePreview = CreateVisionButton(UiText("Vision_RestorePreview"));
+            this.bVisionRestorePreview.Click += this.bRestoreVisionPreview_Click;
+            ocrBasic.Controls.Add(ocrActions, 0, 2);
+            ocrRoot.Controls.Add(ocrBasic);
 
-            this.lVisionMatchStatus = new Label
+            FlowLayoutPanel ocrAdvancedContent = CreateVisionFlow();
+            FlowLayoutPanel ocrScaleSettings = CreateVisionFlow();
+            ocrScaleSettings.Controls.Add(CreateVisionLabel(UiText("Vision_OcrScale")));
+            ocrScaleSettings.Controls.Add(this.nudVisionOcrScale);
+            ocrAdvancedContent.Controls.Add(ocrScaleSettings);
+            FlowLayoutPanel binarySettings = CreateVisionFlow();
+            this.chkVisionOcrBinary = CreateVisionCheckBox(UiText("Vision_OcrBinary"));
+            binarySettings.Controls.Add(this.chkVisionOcrBinary);
+            binarySettings.Controls.Add(CreateVisionLabel(UiText("Vision_OcrThreshold")));
+            this.nudVisionOcrThreshold = CreateVisionNumber(0);
+            this.nudVisionOcrThreshold.Maximum = 255;
+            this.nudVisionOcrThreshold.Value = 160;
+            this.nudVisionOcrThreshold.Width = 60;
+            this.nudVisionOcrThreshold.Dock = DockStyle.None;
+            binarySettings.Controls.Add(this.nudVisionOcrThreshold);
+            ocrAdvancedContent.Controls.Add(binarySettings);
+            ocrAdvancedContent.Controls.Add(CreateVisionLabel(UiText("Vision_OcrContrast")));
+            this.nudVisionOcrContrast = CreateVisionDecimal(0.1D, 5D, 1D);
+            this.nudVisionOcrContrast.Width = 60;
+            this.nudVisionOcrContrast.Dock = DockStyle.None;
+            ocrAdvancedContent.Controls.Add(this.nudVisionOcrContrast);
+            FlowLayoutPanel adaptiveSettings = CreateVisionFlow();
+            this.chkVisionOcrAdaptive = CreateVisionCheckBox(UiText("Vision_OcrAdaptive"));
+            adaptiveSettings.Controls.Add(this.chkVisionOcrAdaptive);
+            adaptiveSettings.Controls.Add(CreateVisionLabel(UiText("Vision_OcrAdaptiveWindow")));
+            this.nudVisionOcrAdaptiveWindow = CreateVisionNumber(3);
+            this.nudVisionOcrAdaptiveWindow.Maximum = 51;
+            this.nudVisionOcrAdaptiveWindow.Value = 15;
+            this.nudVisionOcrAdaptiveWindow.Width = 52;
+            this.nudVisionOcrAdaptiveWindow.Dock = DockStyle.None;
+            adaptiveSettings.Controls.Add(this.nudVisionOcrAdaptiveWindow);
+            adaptiveSettings.Controls.Add(CreateVisionLabel(UiText("Vision_OcrAdaptiveOffset")));
+            this.nudVisionOcrAdaptiveOffset = CreateVisionNumber(-64);
+            this.nudVisionOcrAdaptiveOffset.Minimum = -64;
+            this.nudVisionOcrAdaptiveOffset.Maximum = 64;
+            this.nudVisionOcrAdaptiveOffset.Value = 8;
+            this.nudVisionOcrAdaptiveOffset.Width = 52;
+            this.nudVisionOcrAdaptiveOffset.Dock = DockStyle.None;
+            adaptiveSettings.Controls.Add(this.nudVisionOcrAdaptiveOffset);
+            ocrAdvancedContent.Controls.Add(adaptiveSettings);
+            FlowLayoutPanel filterSettings = CreateVisionFlow();
+            this.chkVisionOcrInvert = CreateVisionCheckBox(UiText("Vision_OcrInvert"));
+            this.chkVisionOcrDenoise = CreateVisionCheckBox(UiText("Vision_OcrDenoise"));
+            this.chkVisionOcrSharpen = CreateVisionCheckBox(UiText("Vision_OcrSharpen"));
+            filterSettings.Controls.Add(this.chkVisionOcrInvert);
+            filterSettings.Controls.Add(this.chkVisionOcrDenoise);
+            filterSettings.Controls.Add(this.chkVisionOcrSharpen);
+            ocrAdvancedContent.Controls.Add(filterSettings);
+            FlowLayoutPanel whitelistSettings = CreateVisionFlow();
+            whitelistSettings.Controls.Add(CreateVisionLabel(UiText("Vision_OcrWhitelist")));
+            this.txtVisionOcrWhitelist = new TextBox
             {
-                Dock = DockStyle.Fill,
-                AutoEllipsis = true,
-                TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = SystemColors.GrayText,
-                Text = UiText("Vision_NoTemplate")
+                Width = 150,
+                AccessibleName = UiText("Vision_OcrWhitelist"),
+                AccessibleRole = AccessibleRole.Text,
+                Margin = new Padding(0, 2, 0, 2)
             };
-            root.Controls.Add(this.lVisionMatchStatus, 0, 11);
-            root.SetColumnSpan(this.lVisionMatchStatus, 4);
-
-            this.lVisionOcrStatus = new Label
+            whitelistSettings.Controls.Add(this.txtVisionOcrWhitelist);
+            ocrAdvancedContent.Controls.Add(whitelistSettings);
+            FlowLayoutPanel engineSettings = CreateVisionFlow();
+            engineSettings.Controls.Add(CreateVisionLabel(UiText("Vision_OcrEngine")));
+            this.cbbVisionOcrEngine = new ComboBox
             {
-                Dock = DockStyle.Fill,
-                AutoEllipsis = true,
-                TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = SystemColors.GrayText,
-                Text = UiText("Vision_OcrHint")
+                Width = 100,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                DisplayMember = "Text",
+                AccessibleName = UiText("Vision_OcrEngine"),
+                Margin = new Padding(0, 2, 8, 2)
             };
-            root.Controls.Add(this.lVisionOcrStatus, 0, 12);
-            root.SetColumnSpan(this.lVisionOcrStatus, 4);
-
-            this.lVisionAssistantStatus = new Label
+            this.cbbVisionOcrEngine.Items.Add(new VisionOcrEngineChoice(
+                VisionOcrEngine.Auto,
+                UiText("Vision_OcrEngineAuto")));
+            this.cbbVisionOcrEngine.Items.Add(new VisionOcrEngineChoice(
+                VisionOcrEngine.Onnx,
+                UiText("Vision_OcrEngineOnnx")));
+            this.cbbVisionOcrEngine.Items.Add(new VisionOcrEngineChoice(
+                VisionOcrEngine.Tesseract,
+                UiText("Vision_OcrEngineTesseract")));
+            this.cbbVisionOcrEngine.SelectedIndexChanged += (sender, e) => this.UpdateVisionOcrModelStatus();
+            this.cbbVisionOcrEngine.SelectedIndex = 0;
+            engineSettings.Controls.Add(this.cbbVisionOcrEngine);
+            engineSettings.Controls.Add(CreateVisionLabel(UiText("Vision_OcrModelDirectory")));
+            this.txtVisionOcrModelDirectory = new TextBox
             {
-                Dock = DockStyle.Fill,
-                AutoEllipsis = true,
-                TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = SystemColors.GrayText,
-                Text = UiText("Vision_AssistantHint")
+                Width = 220,
+                AccessibleName = UiText("Vision_OcrModelDirectory"),
+                AccessibleRole = AccessibleRole.Text,
+                Margin = new Padding(0, 2, 8, 2)
             };
-            root.Controls.Add(this.lVisionAssistantStatus, 0, 13);
-            root.SetColumnSpan(this.lVisionAssistantStatus, 4);
+            this.txtVisionOcrModelDirectory.TextChanged += (sender, e) => this.UpdateVisionOcrModelStatus();
+            engineSettings.Controls.Add(this.txtVisionOcrModelDirectory);
+            engineSettings.Controls.Add(CreateVisionLabel(UiText("Vision_OcrDetectionThreshold")));
+            this.nudVisionOcrDetectionThreshold = CreateVisionDecimal(0D, 1D, 0.3D);
+            this.nudVisionOcrDetectionThreshold.Width = 58;
+            this.nudVisionOcrDetectionThreshold.Dock = DockStyle.None;
+            engineSettings.Controls.Add(this.nudVisionOcrDetectionThreshold);
+            engineSettings.Controls.Add(CreateVisionLabel(UiText("Vision_OcrRecognitionThreshold")));
+            this.nudVisionOcrRecognitionThreshold = CreateVisionDecimal(0D, 1D, 0.5D);
+            this.nudVisionOcrRecognitionThreshold.Width = 58;
+            this.nudVisionOcrRecognitionThreshold.Dock = DockStyle.None;
+            engineSettings.Controls.Add(this.nudVisionOcrRecognitionThreshold);
+            engineSettings.Controls.Add(CreateVisionLabel(UiText("Vision_OcrMaxImageSide")));
+            this.nudVisionOcrMaxImageSide = CreateVisionNumber(128);
+            this.nudVisionOcrMaxImageSide.Maximum = 4096;
+            this.nudVisionOcrMaxImageSide.Value = 960;
+            this.nudVisionOcrMaxImageSide.Width = 66;
+            this.nudVisionOcrMaxImageSide.Dock = DockStyle.None;
+            engineSettings.Controls.Add(this.nudVisionOcrMaxImageSide);
+            this.lVisionOcrModelStatus = CreateVisionStatusLabel(string.Empty);
+            engineSettings.Controls.Add(this.lVisionOcrModelStatus);
+            ocrAdvancedContent.Controls.Add(engineSettings);
+            FlowLayoutPanel ocrExtraActions = CreateVisionFlow();
+            ocrExtraActions.Controls.Add(this.bVisionPreviewOcr);
+            ocrExtraActions.Controls.Add(this.bVisionRestorePreview);
+            ocrAdvancedContent.Controls.Add(ocrExtraActions);
+            TableLayoutPanel ocrAdvancedPanel = CreateVisionCollapsiblePanel(
+                UiText("Vision_MoreOcrSettings"),
+                UiText("Vision_LessOcrSettings"),
+                ocrAdvancedContent);
+            this.RegisterVisionAdvancedModule(ocrAdvancedPanel);
+            this.lVisionOcrStatus = CreateVisionStatusLabel(string.Empty);
+            ocrRoot.Controls.Add(this.lVisionOcrStatus);
+            ocrPage.Controls.Add(ocrRoot);
+            modeTabs.TabPages.Add(ocrPage);
 
+            TabPage templatePage = new TabPage
+            {
+                Text = UiText("Vision_ModeTemplate"),
+                Padding = new Padding(6),
+                AutoScroll = true,
+                UseVisualStyleBackColor = true
+            };
+            FlowLayoutPanel templateRoot = CreateVisionVerticalFlow();
+            FlowLayoutPanel templateActions = CreateVisionFlow();
+            Button bLoadVisionTemplate = CreateVisionButton(UiText("Vision_LoadTemplate"));
+            bLoadVisionTemplate.Click += this.bLoadVisionTemplate_Click;
+            templateActions.Controls.Add(bLoadVisionTemplate);
+            Button bSaveVisionTemplate = CreateVisionButton(UiText("Vision_SaveTemplate"));
+            bSaveVisionTemplate.Click += this.bSaveVisionTemplate_Click;
+            templateActions.Controls.Add(bSaveVisionTemplate);
+            Button bAddVisionTemplateVariant = CreateVisionButton(UiText("Vision_AddTemplateVariant"));
+            bAddVisionTemplateVariant.Click += this.bAddVisionTemplateVariant_Click;
+            templateActions.Controls.Add(bAddVisionTemplateVariant);
+            this.bVisionMatchTemplate = CreateVisionButton(UiText("Vision_Match"));
+            this.bVisionMatchTemplate.Click += this.bMatchVisionTemplate_Click;
+            templateActions.Controls.Add(this.bVisionMatchTemplate);
+            this.bVisionCancelMatch = CreateVisionButton(UiText("Vision_MatchCancel"));
+            this.bVisionCancelMatch.Enabled = false;
+            this.bVisionCancelMatch.Visible = false;
+            this.bVisionCancelMatch.Click += this.bCancelVisionMatch_Click;
+            templateActions.Controls.Add(this.bVisionCancelMatch);
+            templateRoot.Controls.Add(templateActions);
+            FlowLayoutPanel templateBasic = CreateVisionFlow();
+            templateBasic.Controls.Add(CreateVisionLabel(UiText("Vision_Threshold")));
+            this.nudVisionThreshold = CreateVisionNumber(0);
+            this.nudVisionThreshold.Maximum = 100;
+            this.nudVisionThreshold.Value = 90;
+            this.nudVisionThreshold.Width = 60;
+            this.nudVisionThreshold.Dock = DockStyle.None;
+            templateBasic.Controls.Add(this.nudVisionThreshold);
+            templateRoot.Controls.Add(templateBasic);
+            FlowLayoutPanel templateAdvancedContent = CreateVisionFlow();
+            this.chkVisionTemplateNormalize = CreateVisionCheckBox(UiText("Vision_TemplateNormalize"));
+            this.chkVisionTemplateNormalize.Checked = true;
+            this.chkVisionTemplateScale = CreateVisionCheckBox(UiText("Vision_TemplateScale"));
+            templateAdvancedContent.Controls.Add(this.chkVisionTemplateNormalize);
+            templateAdvancedContent.Controls.Add(this.chkVisionTemplateScale);
+            templateAdvancedContent.Controls.Add(CreateVisionLabel(UiText("Vision_TemplateTolerance")));
+            this.nudVisionTemplateScaleTolerance = CreateVisionNumber(0);
+            this.nudVisionTemplateScaleTolerance.Maximum = 50;
+            this.nudVisionTemplateScaleTolerance.Value = 10;
+            this.nudVisionTemplateScaleTolerance.Width = 52;
+            this.nudVisionTemplateScaleTolerance.Dock = DockStyle.None;
+            templateAdvancedContent.Controls.Add(this.nudVisionTemplateScaleTolerance);
+            TableLayoutPanel templateAdvancedPanel = CreateVisionCollapsiblePanel(
+                UiText("Vision_MoreTemplateSettings"),
+                UiText("Vision_LessTemplateSettings"),
+                templateAdvancedContent);
+            this.RegisterVisionAdvancedModule(templateAdvancedPanel);
+            this.lVisionMatchStatus = CreateVisionStatusLabel(UiText("Vision_NoTemplate"));
+            templateRoot.Controls.Add(this.lVisionMatchStatus);
+            templateRoot.Controls.Add(CreateVisionLabel(UiText("Vision_RecognitionPreview")));
+            Panel templatePreviewHost = new Panel
+            {
+                Height = 108,
+                Width = 145,
+                Margin = new Padding(0, 2, 0, 4)
+            };
+            this.pbVisionTemplate.Dock = DockStyle.Fill;
+            templatePreviewHost.Controls.Add(this.pbVisionTemplate);
+            templateRoot.Controls.Add(templatePreviewHost);
+            templatePage.Controls.Add(templateRoot);
+            modeTabs.TabPages.Add(templatePage);
+            modeTabs.SelectedIndexChanged += (sender, e) =>
+            {
+                int targetHeight = modeTabs.SelectedIndex == 0 ? 130 : 225;
+                if (modeTabs.Height != targetHeight)
+                {
+                    modeTabs.Height = targetHeight;
+                    recognitionSection.PerformLayout();
+                }
+            };
+            recognitionLayout.Controls.Add(modeTabs, 0, 0);
+            AttachVisionSectionContent(recognitionSection, recognitionLayout);
+
+            GroupBox assistantSection = CreateVisionSection(UiText("Vision_SectionAssistant"));
+            TableLayoutPanel assistantLayout = CreateVisionGrid(1);
+            this.bVisionAdvancedSettings = CreateVisionButton(UiText("Vision_AdvancedSettings"));
+            this.bVisionAdvancedSettings.Click += this.bVisionAdvancedSettings_Click;
+            FlowLayoutPanel conditionTitle = CreateVisionFlow();
+            conditionTitle.FlowDirection = FlowDirection.TopDown;
+            conditionTitle.WrapContents = false;
+            conditionTitle.Controls.Add(CreateVisionLabel(UiText("Vision_Condition")));
+            this.cbbVisionConditionType = new ComboBox
+            {
+                Width = 140,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                DisplayMember = "Text",
+                AccessibleName = UiText("Vision_Condition"),
+                Margin = new Padding(0, 2, 6, 2)
+            };
+            this.cbbVisionConditionType.Items.Add(new VisionConditionChoice(VisionConditionType.TextAppears, UiText("Vision_TextAppears")));
+            this.cbbVisionConditionType.Items.Add(new VisionConditionChoice(VisionConditionType.TextDisappears, UiText("Vision_TextDisappears")));
+            this.cbbVisionConditionType.Items.Add(new VisionConditionChoice(VisionConditionType.NumberInRange, UiText("Vision_NumberRange")));
+            this.cbbVisionConditionType.Items.Add(new VisionConditionChoice(VisionConditionType.TemplateAppears, UiText("Vision_TemplateAppears")));
+            this.cbbVisionConditionType.Items.Add(new VisionConditionChoice(VisionConditionType.TemplateDisappears, UiText("Vision_TemplateDisappears")));
+            this.cbbVisionConditionType.Items.Add(new VisionConditionChoice(VisionConditionType.ColorAppears, UiText("Vision_ColorAppears")));
+            this.cbbVisionConditionType.Items.Add(new VisionConditionChoice(VisionConditionType.ColorDisappears, UiText("Vision_ColorDisappears")));
+            this.cbbVisionConditionType.SelectedIndex = 0;
+            conditionTitle.Controls.Add(this.cbbVisionConditionType);
+            Label conditionSourceHint = CreateVisionStatusLabel(UiText("Vision_ConditionSourceHint"));
+            conditionTitle.Controls.Add(conditionSourceHint);
+            assistantLayout.Controls.Add(conditionTitle, 0, 0);
+
+            FlowLayoutPanel conditionRange = CreateVisionFlow();
+            conditionRange.Controls.Add(CreateVisionLabel(UiText("Vision_Minimum")));
+            this.nudVisionNumberMinimum = CreateVisionDecimal(-1000000000D, 1000000000D, 0D);
+            this.nudVisionNumberMinimum.Width = 76;
+            this.nudVisionNumberMinimum.Dock = DockStyle.None;
+            conditionRange.Controls.Add(this.nudVisionNumberMinimum);
+            conditionRange.Controls.Add(CreateVisionLabel(UiText("Vision_Maximum")));
+            this.nudVisionNumberMaximum = CreateVisionDecimal(-1000000000D, 1000000000D, 1000000000D);
+            this.nudVisionNumberMaximum.Width = 76;
+            this.nudVisionNumberMaximum.Dock = DockStyle.None;
+            conditionRange.Controls.Add(this.nudVisionNumberMaximum);
+            conditionRange.Visible = false;
+            assistantLayout.Controls.Add(conditionRange, 0, 1);
+
+            FlowLayoutPanel colorSettings = CreateVisionFlow();
+            colorSettings.Controls.Add(CreateVisionLabel(UiText("Vision_Color")));
+            this.txtVisionColorRgb = new TextBox
+            {
+                Width = 92,
+                Text = "255,255,255",
+                AccessibleName = UiText("Vision_Color"),
+                AccessibleRole = AccessibleRole.Text,
+                Margin = new Padding(0, 2, 8, 2)
+            };
+            colorSettings.Controls.Add(this.txtVisionColorRgb);
+            colorSettings.Controls.Add(CreateVisionLabel(UiText("Vision_ColorTolerance")));
+            this.nudVisionColorTolerance = CreateVisionNumber(0);
+            this.nudVisionColorTolerance.Maximum = 255;
+            this.nudVisionColorTolerance.Value = 16;
+            this.nudVisionColorTolerance.Width = 52;
+            this.nudVisionColorTolerance.Dock = DockStyle.None;
+            colorSettings.Controls.Add(this.nudVisionColorTolerance);
+            colorSettings.Controls.Add(CreateVisionLabel(UiText("Vision_ColorMinimumPixels")));
+            this.nudVisionColorMinimumPixels = CreateVisionNumber(1);
+            this.nudVisionColorMinimumPixels.Maximum = 100000;
+            this.nudVisionColorMinimumPixels.Value = 10;
+            this.nudVisionColorMinimumPixels.Width = 64;
+            this.nudVisionColorMinimumPixels.Dock = DockStyle.None;
+            colorSettings.Controls.Add(this.nudVisionColorMinimumPixels);
+            colorSettings.Controls.Add(CreateVisionLabel(UiText("Vision_ColorMinimumRatio")));
+            this.nudVisionColorMinimumRatio = CreateVisionDecimal(0D, 1D, 0D);
+            this.nudVisionColorMinimumRatio.Width = 58;
+            this.nudVisionColorMinimumRatio.Dock = DockStyle.None;
+            colorSettings.Controls.Add(this.nudVisionColorMinimumRatio);
+            colorSettings.Visible = false;
+            assistantLayout.Controls.Add(colorSettings, 0, 2);
+
+            Label conditionHint = CreateVisionStatusLabel(UiText("Vision_ConditionHint"));
+            assistantLayout.Controls.Add(conditionHint, 0, 3);
+
+            FlowLayoutPanel actionSettings = CreateVisionFlow();
+            actionSettings.Controls.Add(CreateVisionLabel(UiText("Vision_AfterAction")));
+            this.cbbVisionActionType = new ComboBox
+            {
+                Width = 112,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                DisplayMember = "Text",
+                AccessibleName = UiText("Vision_AfterAction"),
+                Margin = new Padding(0, 2, 6, 2)
+            };
+            this.cbbVisionActionType.Items.Add(new VisionActionChoice(VisionActionType.None, UiText("Vision_ActionNone")));
+            this.cbbVisionActionType.Items.Add(new VisionActionChoice(VisionActionType.LeftClick, UiText("Vision_ActionLeftClick")));
+            this.cbbVisionActionType.Items.Add(new VisionActionChoice(VisionActionType.RightClick, UiText("Vision_ActionRightClick")));
+            this.cbbVisionActionType.Items.Add(new VisionActionChoice(VisionActionType.DoubleClick, UiText("Vision_ActionDoubleClick")));
+            this.cbbVisionActionType.Items.Add(new VisionActionChoice(VisionActionType.Scroll, UiText("Vision_ActionScroll")));
+            this.cbbVisionActionType.SelectedIndexChanged += (sender, e) => this.UpdateVisionActionEditor();
+            this.cbbVisionActionType.SelectedIndex = 0;
+            actionSettings.Controls.Add(this.cbbVisionActionType);
+            this.cbbVisionScrollDirection = new ComboBox
+            {
+                Width = 70,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                DisplayMember = "Text",
+                AccessibleName = UiText("Vision_ScrollDirection"),
+                Margin = new Padding(0, 2, 4, 2)
+            };
+            this.cbbVisionScrollDirection.Items.Add(new VisionScrollChoice(VisionScrollDirection.Up, UiText("Vision_ScrollUp")));
+            this.cbbVisionScrollDirection.Items.Add(new VisionScrollChoice(VisionScrollDirection.Down, UiText("Vision_ScrollDown")));
+            this.cbbVisionScrollDirection.SelectedIndex = 1;
+            actionSettings.Controls.Add(this.cbbVisionScrollDirection);
+            this.nudVisionScrollAmount = CreateVisionNumber(1);
+            this.nudVisionScrollAmount.Maximum = 100;
+            this.nudVisionScrollAmount.Value = 3;
+            this.nudVisionScrollAmount.Width = 48;
+            this.nudVisionScrollAmount.Dock = DockStyle.None;
+            actionSettings.Controls.Add(this.nudVisionScrollAmount);
+            assistantLayout.Controls.Add(actionSettings, 0, 4);
+
+            FlowLayoutPanel verificationSettings = CreateVisionFlow();
+            this.chkVisionActionVerification = CreateVisionCheckBox(UiText("Vision_ActionVerification"));
+            this.chkVisionActionVerification.CheckedChanged += (sender, e) => this.UpdateVisionVerificationEditor();
+            this.chkVisionActionVerification.Visible = false;
+            this.bVisionActionVerificationMenu = CreateVisionButton(
+                UiText("Vision_ActionVerification") + "  ▼");
+            this.bVisionActionVerificationMenu.Name = "bVisionActionVerificationMenu";
+            ContextMenuStrip verificationMenu = new ContextMenuStrip();
+            this.bVisionActionVerificationMenu.ContextMenuStrip = verificationMenu;
+            this.bVisionActionVerificationMenu.Click += (sender, e) => verificationMenu.Show(
+                this.bVisionActionVerificationMenu,
+                new Point(0, this.bVisionActionVerificationMenu.Height));
+            ToolStripMenuItem noVerification = new ToolStripMenuItem(
+                UiText("Vision_VerificationNone"));
+            noVerification.Click += (sender, e) => this.SetVisionVerificationMode(null);
+            ToolStripMenuItem textVerification = new ToolStripMenuItem(
+                UiText("Vision_AddTextWait"));
+            textVerification.Click += (sender, e) => this.SetVisionVerificationMode(
+                VisionConditionType.TextAppears);
+            ToolStripMenuItem imageVerification = new ToolStripMenuItem(
+                UiText("Vision_AddImageWait"));
+            imageVerification.Click += (sender, e) => this.SetVisionVerificationMode(
+                VisionConditionType.TemplateAppears);
+            verificationMenu.Items.Add(noVerification);
+            verificationMenu.Items.Add(textVerification);
+            verificationMenu.Items.Add(imageVerification);
+            verificationSettings.Controls.Add(this.bVisionActionVerificationMenu);
+            this.lVisionVerificationKeyword = CreateVisionLabel(UiText("Vision_VerificationKeyword"));
+            verificationSettings.Controls.Add(this.lVisionVerificationKeyword);
+            this.cbbVisionVerificationType = new ComboBox
+            {
+                Width = 92,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                DisplayMember = "Text",
+                AccessibleName = UiText("Vision_VerificationType"),
+                Margin = new Padding(0, 2, 6, 2)
+            };
+            this.cbbVisionVerificationType.Items.Add(new VisionVerificationChoice(
+                VisionConditionType.TextAppears,
+                UiText("Vision_VerificationText")));
+            this.cbbVisionVerificationType.Items.Add(new VisionVerificationChoice(
+                VisionConditionType.TemplateAppears,
+                UiText("Vision_VerificationImage")));
+            this.cbbVisionVerificationType.SelectedIndex = 0;
+            this.cbbVisionVerificationType.SelectedIndexChanged += (sender, e) => this.UpdateVisionVerificationEditor();
+            this.txtVisionVerificationKeyword = new TextBox
+            {
+                Width = 120,
+                AccessibleName = UiText("Vision_VerificationKeyword"),
+                AccessibleRole = AccessibleRole.Text,
+                Margin = new Padding(0, 2, 0, 2)
+            };
+            verificationSettings.Controls.Add(this.txtVisionVerificationKeyword);
+
+            FlowLayoutPanel verificationAdvancedContent = CreateVisionVerticalFlow();
+            FlowLayoutPanel verificationTypeSettings = CreateVisionFlow();
+            verificationTypeSettings.Controls.Add(CreateVisionLabel(UiText("Vision_VerificationType")));
+            verificationTypeSettings.Controls.Add(this.cbbVisionVerificationType);
+            verificationAdvancedContent.Controls.Add(verificationTypeSettings);
+            this.chkVisionVerificationSeparateRegion = CreateVisionCheckBox(UiText("Vision_VerificationRegion"));
+            this.chkVisionVerificationSeparateRegion.CheckedChanged += (sender, e) => this.UpdateVisionVerificationEditor();
+            verificationAdvancedContent.Controls.Add(this.chkVisionVerificationSeparateRegion);
+            this.bVisionSelectVerificationRegion = CreateVisionButton(UiText("Vision_SelectVerificationRegion"));
+            this.bVisionSelectVerificationRegion.Click += this.bVisionSelectVerificationRegion_Click;
+            verificationAdvancedContent.Controls.Add(this.bVisionSelectVerificationRegion);
+            this.lVisionVerificationHint = CreateVisionStatusLabel(string.Empty);
+            verificationAdvancedContent.Controls.Add(this.lVisionVerificationHint);
+            this.visionVerificationAdvancedPanel = CreateVisionCollapsiblePanel(
+                UiText("Vision_MoreVerificationSettings"),
+                UiText("Vision_LessVerificationSettings"),
+                verificationAdvancedContent);
+            this.visionVerificationAdvancedPanel.Controls[0].Visible = false;
+            verificationSettings.Controls.Add(this.visionVerificationAdvancedPanel);
+            assistantLayout.Controls.Add(verificationSettings, 0, 5);
+
+            FlowLayoutPanel confirmSettings = CreateVisionFlow();
+            this.bVisionConfirmAction = CreateVisionButton(UiText("Vision_ConfirmAction"));
+            this.bVisionConfirmAction.Name = "bVisionConfirmAction";
+            this.bVisionConfirmAction.Click += this.bConfirmVisionAction_Click;
+            this.bVisionConfirmAction.UseVisualStyleBackColor = false;
+            this.bVisionConfirmAction.BackColor = Color.FromArgb(0, 120, 215);
+            this.bVisionConfirmAction.ForeColor = Color.White;
+            this.bVisionConfirmAction.FlatStyle = FlatStyle.Flat;
+            this.bVisionConfirmAction.FlatAppearance.BorderColor = Color.FromArgb(0, 84, 153);
+            confirmSettings.Controls.Add(this.bVisionConfirmAction);
+            this.bVisionCancelAction = CreateVisionButton(UiText("Vision_CancelAction"));
+            this.bVisionCancelAction.Name = "bVisionCancelAction";
+            this.bVisionCancelAction.Click += this.bCancelVisionAction_Click;
+            confirmSettings.Controls.Add(this.bVisionCancelAction);
+            confirmSettings.Controls.Add(CreateVisionStatusLabel(UiText("Vision_ConfirmActionHint")));
+
+            FlowLayoutPanel stepActions = CreateVisionFlow();
+            stepActions.Controls.Add(CreateVisionLabel(UiText("Vision_Steps")));
+            this.cbbVisionSteps = new ListBox
+            {
+                Width = 210,
+                Height = 88,
+                IntegralHeight = false,
+                BorderStyle = BorderStyle.FixedSingle,
+                SelectionMode = SelectionMode.One,
+                DisplayMember = "Name",
+                AccessibleName = UiText("Vision_Steps"),
+                AccessibleRole = AccessibleRole.List,
+                Margin = new Padding(0, 2, 6, 2)
+            };
+            this.cbbVisionSteps.SelectedIndexChanged += this.cbbVisionSteps_SelectedIndexChanged;
+            stepActions.Controls.Add(this.cbbVisionSteps);
+            Button bRemoveVisionStep = CreateVisionButton(UiText("Vision_RemoveStep"));
+            bRemoveVisionStep.Click += this.bRemoveVisionStep_Click;
+            stepActions.Controls.Add(bRemoveVisionStep);
+            assistantLayout.Controls.Add(stepActions, 0, 7);
+            stepActions.Visible = false;
+
+            FlowLayoutPanel waitAdvancedContent = CreateVisionFlow();
+            waitAdvancedContent.Controls.Add(CreateVisionLabel(UiText("Vision_Confirmations")));
+            this.nudVisionConfirmations = CreateVisionNumber(1);
+            this.nudVisionConfirmations.Maximum = 10;
+            this.nudVisionConfirmations.Value = 2;
+            this.nudVisionConfirmations.Width = 52;
+            this.nudVisionConfirmations.Dock = DockStyle.None;
+            waitAdvancedContent.Controls.Add(this.nudVisionConfirmations);
+            waitAdvancedContent.Controls.Add(CreateVisionLabel(UiText("Vision_PollMilliseconds")));
+            this.nudVisionPollInterval = CreateVisionNumber(10);
+            this.nudVisionPollInterval.Maximum = 60000;
+            this.nudVisionPollInterval.Value = 150;
+            this.nudVisionPollInterval.Width = 72;
+            this.nudVisionPollInterval.Dock = DockStyle.None;
+            waitAdvancedContent.Controls.Add(this.nudVisionPollInterval);
+            waitAdvancedContent.Controls.Add(CreateVisionLabel(UiText("Vision_TimeoutMilliseconds")));
+            this.nudVisionTimeout = CreateVisionNumber(10);
+            this.nudVisionTimeout.Maximum = 3600000;
+            this.nudVisionTimeout.Value = 8000;
+            this.nudVisionTimeout.Width = 80;
+            this.nudVisionTimeout.Dock = DockStyle.None;
+            waitAdvancedContent.Controls.Add(this.nudVisionTimeout);
+            waitAdvancedContent.Controls.Add(CreateVisionLabel(UiText("Vision_Retries")));
+            this.nudVisionRetries = CreateVisionNumber(0);
+            this.nudVisionRetries.Maximum = 100;
+            this.nudVisionRetries.Value = 1;
+            this.nudVisionRetries.Width = 52;
+            this.nudVisionRetries.Dock = DockStyle.None;
+            waitAdvancedContent.Controls.Add(this.nudVisionRetries);
+            waitAdvancedContent.Controls.Add(CreateVisionLabel(UiText("Vision_FailurePolicy")));
+            this.cbbVisionFailurePolicy = new ComboBox
+            {
+                Width = 110,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                DisplayMember = "Text",
+                AccessibleName = UiText("Vision_FailurePolicy"),
+                Margin = new Padding(0, 2, 0, 2)
+            };
+            this.cbbVisionFailurePolicy.Items.Add(new VisionFailureChoice(VisionFailurePolicy.Stop, UiText("Vision_StopPolicy")));
+            this.cbbVisionFailurePolicy.Items.Add(new VisionFailureChoice(VisionFailurePolicy.Skip, UiText("Vision_SkipPolicy")));
+            this.cbbVisionFailurePolicy.SelectedIndex = 0;
+            waitAdvancedContent.Controls.Add(this.cbbVisionFailurePolicy);
+            TableLayoutPanel waitAdvancedPanel = CreateVisionCollapsiblePanel(
+                UiText("Vision_MoreWaitSettings"),
+                UiText("Vision_LessWaitSettings"),
+                waitAdvancedContent);
+            this.RegisterVisionAdvancedModule(waitAdvancedPanel);
+
+            FlowLayoutPanel assistantActions = CreateVisionFlow();
+            this.bVisionRunSteps = CreateVisionButton(UiText("Vision_RunSteps"));
+            this.bVisionRunSteps.Click += this.bRunVisionAssistant_Click;
+            assistantActions.Controls.Add(this.bVisionRunSteps);
+            this.bVisionStopSteps = CreateVisionButton(UiText("Vision_StopSteps"));
+            this.bVisionStopSteps.Enabled = false;
+            this.bVisionStopSteps.Click += this.bStopVisionAssistant_Click;
+            assistantActions.Controls.Add(this.bVisionStopSteps);
+            assistantLayout.Controls.Add(assistantActions, 0, 10);
+            assistantLayout.Controls.Add(confirmSettings, 0, 11);
+            this.lVisionAssistantStatus = CreateVisionStatusLabel(UiText("Vision_AssistantHint"));
+            assistantLayout.Controls.Add(this.lVisionAssistantStatus, 0, 12);
+            this.visionAssistantLogHost = CreateVisionGrid(1);
+            FlowLayoutPanel assistantLogHeader = CreateVisionFlow();
+            assistantLogHeader.Controls.Add(CreateVisionLabel(UiText("Vision_AssistantLog")));
+            this.bToggleVisionAssistantLog = CreateVisionButton(UiText("Vision_AssistantLogShow"));
+            this.bToggleVisionAssistantLog.Name = "bToggleVisionAssistantLog";
+            this.bToggleVisionAssistantLog.Click += this.bToggleVisionAssistantLog_Click;
+            assistantLogHeader.Controls.Add(this.bToggleVisionAssistantLog);
+            this.visionAssistantLogHost.Controls.Add(assistantLogHeader, 0, 0);
+            assistantLayout.Controls.Add(this.visionAssistantLogHost, 0, 13);
             this.txtVisionAssistantLog = new TextBox
             {
                 Dock = DockStyle.Fill,
+                Height = 64,
                 Multiline = true,
                 ReadOnly = true,
+                AccessibleName = UiText("Vision_AssistantLog"),
+                AccessibleRole = AccessibleRole.Text,
                 ScrollBars = ScrollBars.Vertical,
                 BackColor = SystemColors.Window,
-                ForeColor = SystemColors.GrayText,
+                ForeColor = Color.FromArgb(80, 80, 80),
                 BorderStyle = BorderStyle.FixedSingle,
-                TabStop = false
+                TabStop = false,
+                Margin = new Padding(0, 4, 0, 0)
             };
-            root.Controls.Add(this.txtVisionAssistantLog, 0, 14);
-            root.SetColumnSpan(this.txtVisionAssistantLog, 4);
+            this.SetVisionAssistantLogExpanded(false);
+            AttachVisionSectionContent(assistantSection, assistantLayout);
 
-            this.visionTextRecognizer = new VisionTesseractRecognizer("tesseract.exe");
+            GroupBox settingsSection = CreateVisionSection(UiText("Vision_SectionSettings"));
+            TableLayoutPanel settingsLayout = CreateVisionGrid(1);
+            FlowLayoutPanel settingsActions = CreateVisionFlow();
+            settingsActions.Controls.Add(this.bVisionAdvancedSettings);
+            settingsLayout.Controls.Add(settingsActions, 0, 0);
+            settingsLayout.Controls.Add(
+                CreateVisionStatusLabel(UiText("Vision_AdvancedSettingsHint")),
+                0,
+                1);
+            AttachVisionSectionContent(settingsSection, settingsLayout);
+
+            page.Controls.Add(recognitionSection);
+            page.Controls.Add(assistantSection);
+            settingsPage.Controls.Add(settingsSection);
+
+            this.cbbVisionConditionType.SelectedIndexChanged += (sender, e) =>
+            {
+                VisionConditionType type = this.ReadVisionConditionType();
+                bool isNumber = type == VisionConditionType.NumberInRange;
+                bool isTemplate = type == VisionConditionType.TemplateAppears ||
+                    type == VisionConditionType.TemplateDisappears;
+                bool isColor = type == VisionConditionType.ColorAppears ||
+                    type == VisionConditionType.ColorDisappears;
+                conditionRange.Visible = isNumber;
+                colorSettings.Visible = isColor;
+                conditionHint.Text = isTemplate
+                    ? UiText("Vision_TemplateConditionHint")
+                    : isColor
+                        ? UiText("Vision_ColorConditionHint")
+                    : UiText("Vision_ConditionHint");
+                conditionSourceHint.Visible = !isTemplate && !isColor;
+                assistantSection.PerformLayout();
+            };
+            this.cbbVisionConditionType.SelectedIndex = 0;
+            this.UpdateVisionActionEditor();
+            this.UpdateVisionVerificationEditor();
+
+            this.visionTextRecognizer = new VisionAutoTextRecognizer(
+                new VisionOnnxTextRecognizer(),
+                new VisionTesseractRecognizer("tesseract.exe"));
             this.RefreshVisionAssistantSteps();
+            this.tcRobotInstruction.TabPages.Add(visionTab);
+            this.tcRobotInstruction.TabPages.Add(visionSettingsTab);
+            FitVisionSections(page);
+            FitVisionSections(settingsPage);
+            this.FormClosed += this.Socket_RobotForm_FormClosed;
+        }
 
-            Panel visionScrollHost = new Panel
+        private void RegisterVisionAdvancedModule(Control module)
+        {
+            if (module == null || this.visionAdvancedStorage == null)
+            {
+                return;
+            }
+            this.visionAdvancedModules.Add(module);
+            this.visionAdvancedStorage.Controls.Add(module);
+        }
+
+        private void bVisionAdvancedSettings_Click(object sender, EventArgs e)
+        {
+            if (this.visionAdvancedStorage == null || this.visionAdvancedModules.Count == 0)
+            {
+                return;
+            }
+
+            using (Form settingsForm = new Form())
+            using (TableLayoutPanel root = new TableLayoutPanel())
+            using (Label hint = CreateVisionStatusLabel(UiText("Vision_AdvancedSettingsHint")))
+            using (FlowLayoutPanel settingsFlow = CreateVisionVerticalFlow())
+            using (Button closeButton = CreateVisionButton(UiText("UI_Close")))
+            {
+                settingsForm.Text = UiText("Vision_AdvancedSettings");
+                settingsForm.StartPosition = FormStartPosition.CenterParent;
+                settingsForm.Size = new Size(720, 620);
+                settingsForm.MinimumSize = new Size(560, 420);
+                settingsForm.MinimizeBox = false;
+                settingsForm.MaximizeBox = false;
+                settingsForm.ShowInTaskbar = false;
+                settingsForm.AutoScaleMode = AutoScaleMode.Dpi;
+                settingsForm.AutoScroll = true;
+                settingsForm.Font = this.Font;
+
+                root.Dock = DockStyle.Fill;
+                root.ColumnCount = 1;
+                root.RowCount = 3;
+                root.Padding = new Padding(8);
+                root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+                hint.Dock = DockStyle.Fill;
+                root.Controls.Add(hint, 0, 0);
+                settingsFlow.Dock = DockStyle.Fill;
+                settingsFlow.AutoScroll = true;
+                settingsFlow.WrapContents = false;
+                settingsFlow.Resize += (controlSender, resizeEvent) =>
+                {
+                    int width = Math.Max(1, settingsFlow.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 8);
+                    foreach (Control module in this.visionAdvancedModules)
+                    {
+                        module.Width = width;
+                    }
+                };
+
+                foreach (Control module in this.visionAdvancedModules)
+                {
+                    this.visionAdvancedStorage.Controls.Remove(module);
+                    settingsFlow.Controls.Add(module);
+                }
+                root.Controls.Add(settingsFlow, 0, 1);
+
+                FlowLayoutPanel actions = CreateVisionFlow();
+                closeButton.DialogResult = DialogResult.Cancel;
+                actions.FlowDirection = FlowDirection.RightToLeft;
+                actions.WrapContents = false;
+                actions.Controls.Add(closeButton);
+                root.Controls.Add(actions, 0, 2);
+                settingsForm.Controls.Add(root);
+                settingsForm.CancelButton = closeButton;
+
+                try
+                {
+                    settingsForm.ShowDialog(this);
+                }
+                finally
+                {
+                    foreach (Control module in this.visionAdvancedModules)
+                    {
+                        settingsFlow.Controls.Remove(module);
+                        this.visionAdvancedStorage.Controls.Add(module);
+                    }
+                }
+            }
+        }
+
+        private static GroupBox CreateVisionSection(string title)
+        {
+            return new GroupBox
+            {
+                Text = title,
+                AutoSize = false,
+                Dock = DockStyle.None,
+                Padding = new Padding(8, 20, 8, 8),
+                Margin = new Padding(0, 0, 0, 8)
+            };
+        }
+
+        private static TableLayoutPanel CreateVisionGrid(int columns)
+        {
+            TableLayoutPanel grid = new TableLayoutPanel
+            {
+                ColumnCount = columns,
+                RowCount = 0,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Dock = DockStyle.Top,
+                Margin = new Padding(0),
+                Padding = new Padding(0),
+                GrowStyle = TableLayoutPanelGrowStyle.AddRows
+            };
+            for (int index = 0; index < columns; index++)
+            {
+                grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F / columns));
+            }
+            return grid;
+        }
+
+        private static FlowLayoutPanel CreateVisionFlow()
+        {
+            return new FlowLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Dock = DockStyle.Top,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = true,
+                AutoScroll = false,
+                Padding = new Padding(0, 2, 0, 2),
+                Margin = new Padding(0)
+            };
+        }
+
+        private static FlowLayoutPanel CreateVisionVerticalFlow()
+        {
+            FlowLayoutPanel panel = CreateVisionFlow();
+            panel.FlowDirection = FlowDirection.TopDown;
+            panel.WrapContents = false;
+            return panel;
+        }
+
+        private static Button CreateVisionButton(string text)
+        {
+            return new Button
+            {
+                AutoSize = true,
+                Text = text,
+                AccessibleName = text,
+                AccessibleRole = AccessibleRole.PushButton,
+                UseVisualStyleBackColor = true,
+                Margin = new Padding(0, 2, 6, 2)
+            };
+        }
+
+        private static CheckBox CreateVisionCheckBox(string text)
+        {
+            return new CheckBox
+            {
+                AutoSize = true,
+                Text = text,
+                AccessibleName = text,
+                AccessibleRole = AccessibleRole.CheckButton,
+                Margin = new Padding(0, 4, 8, 2)
+            };
+        }
+
+        private static Label CreateVisionLabel(string text)
+        {
+            return new Label
+            {
+                AutoSize = true,
+                Text = text,
+                AccessibleName = text,
+                AccessibleRole = AccessibleRole.StaticText,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(0, 5, 6, 2)
+            };
+        }
+
+        private static Label CreateVisionStatusLabel(string text)
+        {
+            return new Label
+            {
+                AutoSize = true,
+                MaximumSize = new Size(0, 0),
+                AutoEllipsis = false,
+                AccessibleName = text,
+                AccessibleRole = AccessibleRole.StaticText,
+                Tag = "VisionStatusLabel",
+                Text = text,
+                ForeColor = Color.FromArgb(80, 80, 80),
+                Margin = new Padding(0, 4, 0, 4)
+            };
+        }
+
+        private static PictureBox CreateVisionPictureBox()
+        {
+            return new PictureBox
             {
                 Dock = DockStyle.Fill,
-                AutoScroll = true,
-                Padding = new Padding(0)
+                BackColor = Color.FromArgb(248, 248, 248),
+                AccessibleRole = AccessibleRole.Graphic,
+                BorderStyle = BorderStyle.FixedSingle,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Margin = new Padding(0, 2, 4, 4)
             };
-            visionScrollHost.Controls.Add(root);
-            visionTab.Controls.Add(visionScrollHost);
-            this.tcRobotInstruction.TabPages.Add(visionTab);
-            this.FormClosed += this.Socket_RobotForm_FormClosed;
+        }
+
+        private static TableLayoutPanel CreateVisionCollapsiblePanel(
+            string collapsedText,
+            string expandedText,
+            Control content)
+        {
+            TableLayoutPanel wrapper = CreateVisionGrid(1);
+            Button toggle = CreateVisionButton(collapsedText + "  ▶");
+            toggle.TextAlign = ContentAlignment.MiddleLeft;
+            content.Visible = false;
+            content.Margin = new Padding(8, 0, 0, 4);
+            wrapper.Controls.Add(toggle, 0, 0);
+            wrapper.Controls.Add(content, 0, 1);
+            toggle.Click += (sender, e) =>
+            {
+                content.Visible = !content.Visible;
+                toggle.Text = (content.Visible ? expandedText + "  ▼" : collapsedText + "  ▶");
+                wrapper.PerformLayout();
+            };
+            return wrapper;
+        }
+
+        private static void AttachVisionSectionContent(GroupBox section, Control content)
+        {
+            content.Dock = DockStyle.Top;
+            content.Margin = new Padding(0);
+            section.Controls.Add(content);
+            bool updating = false;
+            Action updateLayout = () =>
+            {
+                if (updating)
+                {
+                    return;
+                }
+                updating = true;
+                try
+                {
+                    content.Width = Math.Max(1, section.ClientSize.Width - section.Padding.Horizontal - 2);
+                    SetVisionStatusLabelWidths(content, content.Width);
+                    int contentHeight = content.GetPreferredSize(new Size(content.Width, 0)).Height;
+                    section.Height = section.Padding.Top + contentHeight + section.Padding.Bottom + 2;
+                }
+                finally
+                {
+                    updating = false;
+                }
+            };
+            section.Resize += (sender, e) => updateLayout();
+            content.Layout += (sender, e) => updateLayout();
+            updateLayout();
+        }
+
+        private static void SetVisionStatusLabelWidths(Control root, int width)
+        {
+            if (root == null)
+            {
+                return;
+            }
+
+            foreach (Control child in root.Controls)
+            {
+                Label label = child as Label;
+                if (label != null && string.Equals(
+                    label.Tag as string,
+                    "VisionStatusLabel",
+                    StringComparison.Ordinal))
+                {
+                    label.MaximumSize = new Size(Math.Max(1, width), 0);
+                }
+                if (child.HasChildren)
+                {
+                    SetVisionStatusLabelWidths(child, width);
+                }
+            }
+        }
+
+        private static void FitVisionSections(FlowLayoutPanel page)
+        {
+            int width = Math.Max(
+                1,
+                page.ClientSize.Width - page.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 4);
+            foreach (Control section in page.Controls)
+            {
+                section.Width = width;
+            }
         }
 
         private static NumericUpDown CreateVisionNumber(int minimum)
@@ -1031,7 +1487,10 @@ namespace WPELibrary
                 Minimum = minimum,
                 Maximum = 100000,
                 Increment = 1,
-                ThousandsSeparator = false
+                ThousandsSeparator = false,
+                AccessibleRole = AccessibleRole.SpinButton,
+                AccessibleName = "Numeric input",
+                TabStop = true
             };
         }
 
@@ -1048,7 +1507,10 @@ namespace WPELibrary
                 DecimalPlaces = 2,
                 Increment = 0.1M,
                 ThousandsSeparator = false,
-                Margin = new Padding(0, 2, 8, 0)
+                Margin = new Padding(0, 2, 8, 0),
+                AccessibleRole = AccessibleRole.SpinButton,
+                AccessibleName = "Decimal input",
+                TabStop = true
             };
             return editor;
         }
@@ -1060,12 +1522,16 @@ namespace WPELibrary
             int labelColumn,
             int row)
         {
-            root.Controls.Add(new Label
+            Label label = new Label
             {
                 Dock = DockStyle.Fill,
                 Text = labelText,
-                TextAlign = ContentAlignment.MiddleLeft
-            }, labelColumn, row);
+                TextAlign = ContentAlignment.MiddleLeft,
+                AccessibleName = labelText,
+                AccessibleRole = AccessibleRole.StaticText
+            };
+            editor.AccessibleName = labelText;
+            root.Controls.Add(label, labelColumn, row);
             root.Controls.Add(editor, labelColumn + 1, row);
         }
 
@@ -1081,6 +1547,13 @@ namespace WPELibrary
             this.SetVisionNumber(this.nudVisionHeight, Math.Max(1, profile.Region.Height));
             this.chkVisionNormalized.Checked = profile.Region.UseNormalizedCoordinates;
             VisionCaptureSettings captureSettings = profile.CaptureSettings ?? new VisionCaptureSettings();
+            this.chkVisionFixedClientSize.Checked = captureSettings.RequireExactClientSize;
+            this.SetVisionNumber(
+                this.nudVisionRequiredWidth,
+                captureSettings.RequiredClientWidth <= 0 ? 1280 : captureSettings.RequiredClientWidth);
+            this.SetVisionNumber(
+                this.nudVisionRequiredHeight,
+                captureSettings.RequiredClientHeight <= 0 ? 720 : captureSettings.RequiredClientHeight);
             this.SetVisionNumber(this.nudVisionCaptureInterval, captureSettings.MinimumIntervalMilliseconds);
             this.chkVisionSkipUnchanged.Checked = captureSettings.SkipUnchangedFrames;
             this.SetVisionNumber(this.nudVisionHistoryLimit, captureSettings.HistoryLimit);
@@ -1098,10 +1571,17 @@ namespace WPELibrary
             this.chkVisionOcrDenoise.Checked = ocrOptions.UseDenoise;
             this.chkVisionOcrSharpen.Checked = ocrOptions.UseSharpen;
             this.txtVisionOcrWhitelist.Text = ocrOptions.CharacterWhitelist ?? string.Empty;
+            this.SelectVisionOcrEngine(ocrOptions.Engine);
+            this.txtVisionOcrModelDirectory.Text = ocrOptions.OnnxModelDirectory ?? "models\\ocr";
+            this.SetVisionDecimal(this.nudVisionOcrDetectionThreshold, ocrOptions.OnnxDetectionThreshold);
+            this.SetVisionDecimal(this.nudVisionOcrRecognitionThreshold, ocrOptions.OnnxRecognitionThreshold);
+            this.SetVisionNumber(this.nudVisionOcrMaxImageSide, ocrOptions.OnnxMaxImageSide);
+            this.UpdateVisionOcrModelStatus();
             this.txtVisionOcrKeyword.Text = profile.OcrCondition == null
                 ? string.Empty
                 : profile.OcrCondition.ExpectedText ?? string.Empty;
             this.RefreshVisionAssistantSteps();
+            this.UpdateVisionFixedClientSizeUi();
         }
 
         private void RefreshVisionWindows()
@@ -1121,25 +1601,45 @@ namespace WPELibrary
                 ? string.Empty
                 : this.sriSelect.VisionProfile.ProcessName;
 
+            int injectedTargetWindowIndex = -1;
             this.cbbVisionWindows.BeginUpdate();
             try
             {
                 this.cbbVisionWindows.Items.Clear();
                 IList<VisionWindowInfo> windows = VisionWindowService.EnumerateVisibleWindows(
                     Process.GetCurrentProcess().Id);
+                VisionWindowInfo injectedTargetWindow = null;
+                using (Process currentProcess = Process.GetCurrentProcess())
+                {
+                    VisionWindowService.TryFindInjectedTargetWindow(
+                        windows,
+                        currentProcess.Id,
+                        currentProcess.ProcessName,
+                        out injectedTargetWindow);
+                }
                 int selectedIndex = -1;
+                int savedSelectionIndex = -1;
                 for (int i = 0; i < windows.Count; i++)
                 {
                     VisionWindowInfo window = windows[i];
                     this.cbbVisionWindows.Items.Add(window);
+                    if (injectedTargetWindow != null &&
+                        window.Handle == injectedTargetWindow.Handle)
+                    {
+                        injectedTargetWindowIndex = i;
+                    }
                     if ((selectedHandle != 0 && window.Handle.ToInt64() == selectedHandle) ||
-                        (selectedIndex < 0 &&
+                        (savedSelectionIndex < 0 &&
                          string.Equals(window.WindowTitle, selectedTitle, StringComparison.Ordinal) &&
                          string.Equals(window.ProcessName, selectedProcess, StringComparison.Ordinal)))
                     {
-                        selectedIndex = i;
+                        savedSelectionIndex = i;
                     }
                 }
+
+                selectedIndex = injectedTargetWindowIndex >= 0
+                    ? injectedTargetWindowIndex
+                    : savedSelectionIndex;
 
                 this.cbbVisionWindows.SelectedIndex = selectedIndex;
             }
@@ -1152,6 +1652,16 @@ namespace WPELibrary
             {
                 this.SetVisionStatus(UiText("Vision_SelectWindowHint"));
             }
+            else if (injectedTargetWindowIndex >= 0)
+            {
+                VisionWindowInfo window = this.cbbVisionWindows.SelectedItem as VisionWindowInfo;
+                if (window != null)
+                {
+                    this.SetVisionStatus(string.Format(
+                        UiText("Vision_WindowAutoBound"),
+                        window.DisplayName));
+                }
+            }
         }
 
         private void cbbVisionWindows_SelectedIndexChanged(object sender, EventArgs e)
@@ -1162,16 +1672,223 @@ namespace WPELibrary
                 return;
             }
 
+            Size selectedClientSize = GetVisionWindowClientSizeForDisplay(window);
             this.SetVisionStatus(string.Format(
                 UiText("Vision_WindowSelected"),
                 window.DisplayName,
-                window.ClientSize.Width,
-                window.ClientSize.Height));
+                selectedClientSize.Width,
+                selectedClientSize.Height));
+            this.UpdateVisionFixedClientSizeUi();
+        }
+
+        private void bVisionApplyFixedSize_Click(object sender, EventArgs e)
+        {
+            this.chkVisionFixedClientSize.Checked = true;
+            this.SetVisionNumber(this.nudVisionRequiredWidth, 1280);
+            this.SetVisionNumber(this.nudVisionRequiredHeight, 720);
+            this.chkVisionNormalized.Checked = false;
+            this.SetVisionStatus(UiText("Vision_Fixed1280Applied"));
+            this.UpdateVisionFixedClientSizeUi();
+        }
+
+        private void UpdateVisionFixedClientSizeUi()
+        {
+            if (this.chkVisionFixedClientSize == null ||
+                this.nudVisionRequiredWidth == null ||
+                this.nudVisionRequiredHeight == null)
+            {
+                return;
+            }
+
+            bool fixedSize = this.chkVisionFixedClientSize.Checked;
+            this.nudVisionRequiredWidth.Enabled = fixedSize;
+            this.nudVisionRequiredHeight.Enabled = fixedSize;
+            if (this.lVisionFixedClientSizeStatus == null)
+            {
+                return;
+            }
+
+            VisionWindowInfo window = this.cbbVisionWindows == null
+                ? null
+                : this.cbbVisionWindows.SelectedItem as VisionWindowInfo;
+            if (!fixedSize)
+            {
+                this.lVisionFixedClientSizeStatus.Text = UiText("Vision_ClientSizeAny");
+                return;
+            }
+            int requiredWidth = (int)this.nudVisionRequiredWidth.Value;
+            int requiredHeight = (int)this.nudVisionRequiredHeight.Value;
+            if (window == null)
+            {
+                this.lVisionFixedClientSizeStatus.Text = string.Format(
+                    UiText("Vision_ClientSizeRequiredOnly"),
+                    requiredWidth,
+                    requiredHeight);
+                return;
+            }
+            Size currentClientSize;
+            if (!TryGetVisionWindowClientSizeForDisplay(window, out currentClientSize))
+            {
+                this.lVisionFixedClientSizeStatus.Text = string.Format(
+                    "{0}；要求客户区：{1}×{2}",
+                    UiText("Vision_ClientSizeUnavailable"),
+                    requiredWidth,
+                    requiredHeight);
+                return;
+            }
+            this.lVisionFixedClientSizeStatus.Text = string.Format(
+                UiText("Vision_ClientSizeStatus"),
+                currentClientSize.Width,
+                currentClientSize.Height,
+                requiredWidth,
+                requiredHeight,
+                currentClientSize.Width == requiredWidth &&
+                    currentClientSize.Height == requiredHeight
+                    ? UiText("Vision_ClientSizeValid")
+                    : UiText("Vision_ClientSizeInvalid"));
+        }
+
+        private static Size GetVisionWindowClientSizeForDisplay(VisionWindowInfo window)
+        {
+            Size clientSize;
+            return TryGetVisionWindowClientSizeForDisplay(window, out clientSize)
+                ? clientSize
+                : (window == null ? Size.Empty : window.ClientSize);
+        }
+
+        private static bool TryGetVisionWindowClientSizeForDisplay(
+            VisionWindowInfo window,
+            out Size clientSize)
+        {
+            clientSize = Size.Empty;
+            if (window == null)
+            {
+                return false;
+            }
+            if (!VisionWindowService.IsWindowUsable(window.Handle))
+            {
+                return false;
+            }
+
+            Rectangle clientBounds;
+            return VisionWindowService.TryGetClientBounds(
+                window.Handle,
+                out clientBounds,
+                out clientSize);
         }
 
         private void bRefreshVisionWindows_Click(object sender, EventArgs e)
         {
             this.RefreshVisionWindows();
+        }
+
+        private void bVisionSelectRegion_Click(object sender, EventArgs e)
+        {
+            VisionWindowInfo window = this.cbbVisionWindows.SelectedItem as VisionWindowInfo;
+            if (window == null)
+            {
+                this.SetVisionStatus(UiText("Vision_SelectWindowHint"));
+                return;
+            }
+
+            Rectangle clientBounds;
+            Size clientSize;
+            if (!VisionWindowService.TryGetClientBounds(window.Handle, out clientBounds, out clientSize) ||
+                clientBounds.IsEmpty ||
+                !SystemInformation.VirtualScreen.Contains(clientBounds))
+            {
+                this.SetVisionStatus(UiText("Vision_RegionPickerNotVisible"));
+                return;
+            }
+
+            window.ClientBoundsScreen = clientBounds;
+            using (VisionRegionPickerForm picker = new VisionRegionPickerForm(
+                clientBounds,
+                UiText("Vision_RegionPickerHint")))
+            {
+                DialogResult result = picker.ShowDialog(this);
+                if (result != DialogResult.OK)
+                {
+                    this.SetVisionStatus(UiText("Vision_RegionSelectionCancelled"));
+                    return;
+                }
+
+                Rectangle selected = picker.SelectedRectangle;
+                if (selected.Width < 2 || selected.Height < 2 ||
+                    selected.Right > clientSize.Width || selected.Bottom > clientSize.Height)
+                {
+                    this.SetVisionStatus(UiText("Vision_RegionSelectionInvalid"));
+                    return;
+                }
+
+                this.chkVisionNormalized.Checked = false;
+                this.SetVisionNumber(this.nudVisionX, selected.X);
+                this.SetVisionNumber(this.nudVisionY, selected.Y);
+                this.SetVisionNumber(this.nudVisionWidth, selected.Width);
+                this.SetVisionNumber(this.nudVisionHeight, selected.Height);
+                this.SetVisionStatus(string.Format(
+                    UiText("Vision_RegionSelected"),
+                    selected.X,
+                    selected.Y,
+                    selected.Width,
+                    selected.Height));
+            }
+
+            // 选择层已关闭后再截图，避免选择层本身被捕获到预览中。
+            this.bCaptureVision_Click(this, EventArgs.Empty);
+        }
+
+        private void bVisionSelectVerificationRegion_Click(object sender, EventArgs e)
+        {
+            VisionWindowInfo window = this.cbbVisionWindows.SelectedItem as VisionWindowInfo;
+            if (window == null)
+            {
+                this.SetVisionStatus(UiText("Vision_SelectWindowHint"));
+                return;
+            }
+            Rectangle clientBounds;
+            Size clientSize;
+            if (!VisionWindowService.TryGetClientBounds(window.Handle, out clientBounds, out clientSize) ||
+                clientBounds.IsEmpty ||
+                !SystemInformation.VirtualScreen.Contains(clientBounds))
+            {
+                this.SetVisionStatus(UiText("Vision_RegionPickerNotVisible"));
+                return;
+            }
+            using (VisionRegionPickerForm picker = new VisionRegionPickerForm(
+                clientBounds,
+                UiText("Vision_RegionPickerHint")))
+            {
+                if (picker.ShowDialog(this) != DialogResult.OK)
+                {
+                    this.SetVisionStatus(UiText("Vision_RegionSelectionCancelled"));
+                    return;
+                }
+                Rectangle selected = picker.SelectedRectangle;
+                if (selected.Width < 2 || selected.Height < 2 ||
+                    selected.Right > clientSize.Width || selected.Bottom > clientSize.Height)
+                {
+                    this.SetVisionStatus(UiText("Vision_RegionSelectionInvalid"));
+                    return;
+                }
+                this.visionVerificationRegion = new VisionRegion
+                {
+                    X = selected.X,
+                    Y = selected.Y,
+                    Width = selected.Width,
+                    Height = selected.Height,
+                    UseNormalizedCoordinates = false,
+                    ReferenceWidth = clientSize.Width,
+                    ReferenceHeight = clientSize.Height
+                };
+                this.chkVisionVerificationSeparateRegion.Checked = true;
+                this.SetVisionStatus(string.Format(
+                    UiText("Vision_RegionSelected"),
+                    selected.X,
+                    selected.Y,
+                    selected.Width,
+                    selected.Height));
+            }
         }
 
         private void bCaptureVision_Click(object sender, EventArgs e)
@@ -1203,6 +1920,7 @@ namespace WPELibrary
                     };
                     this.visionPreviewSelection = Rectangle.Empty;
                     this.pbVisionPreview.Image = this.visionPreview;
+                    this.UpdateVisionPreviewEmptyState();
                     this.AddVisionHistory(
                         capture,
                         string.Format(
@@ -1220,6 +1938,9 @@ namespace WPELibrary
                         captureResult.Contrast,
                         captureResult.Warning));
                 }
+
+                // 截图完成后默认自动识别，并将结果填入可手动修改的关键词框。
+                this.bRecognizeVisionText_Click(this, EventArgs.Empty);
             }
             catch (Exception ex)
             {
@@ -1396,6 +2117,7 @@ namespace WPELibrary
             if (this.bVisionCancelMatch != null)
             {
                 this.bVisionCancelMatch.Enabled = running;
+                this.bVisionCancelMatch.Visible = running;
             }
         }
 
@@ -1443,6 +2165,11 @@ namespace WPELibrary
 
         private async void bRecognizeVisionText_Click(object sender, EventArgs e)
         {
+            await this.RecognizeVisionTextAsync(true);
+        }
+
+        private async Task RecognizeVisionTextAsync(bool fillKeyword)
+        {
             if (this.visionPreview == null || (this.visionOcrTask != null && !this.visionOcrTask.IsCompleted))
             {
                 this.SetVisionOcrStatus(UiText("Vision_NoPreview"));
@@ -1454,23 +2181,36 @@ namespace WPELibrary
                 VisionOcrOptions options = this.ReadVisionOcrOptions();
                 if (this.visionTextRecognizer == null)
                 {
-                    this.visionTextRecognizer = new VisionTesseractRecognizer(options.ExecutablePath);
+                    this.visionTextRecognizer = new VisionAutoTextRecognizer(
+                        new VisionOnnxTextRecognizer(),
+                        new VisionTesseractRecognizer(options.ExecutablePath));
                 }
+                IVisionTextRecognizer recognizer = this.visionTextRecognizer;
 
                 Bitmap input = new Bitmap(this.visionPreview);
                 this.visionOcrCancellation = new CancellationTokenSource();
                 CancellationToken cancellationToken = this.visionOcrCancellation.Token;
                 this.SetVisionOcrButtons(true);
                 this.SetVisionOcrStatus(UiText("Vision_OcrRunning"));
-                this.visionOcrTask = Task.Run(
-                    () =>
-                    {
-                        using (input)
+                try
+                {
+                    // Always run the delegate so the cloned bitmap is disposed even
+                    // when the caller cancelled before the worker was scheduled.
+                    this.visionOcrTask = Task.Run(
+                        () =>
                         {
-                            return this.visionTextRecognizer.Recognize(input, options, cancellationToken);
-                        }
-                    },
-                    cancellationToken);
+                            using (input)
+                            {
+                                return recognizer.Recognize(input, options, cancellationToken);
+                            }
+                        },
+                        CancellationToken.None);
+                }
+                catch
+                {
+                    input.Dispose();
+                    throw;
+                }
                 VisionOcrResult result = await this.visionOcrTask;
                 if (result.Cancelled)
                 {
@@ -1496,6 +2236,14 @@ namespace WPELibrary
                     UiText("Vision_OcrSuccess"),
                     result.Text,
                     result.Confidence);
+                if (fillKeyword && !string.IsNullOrWhiteSpace(result.Text))
+                {
+                    this.txtVisionOcrKeyword.Text = string.Join(
+                        " ",
+                        result.Text.Split(
+                            new[] { ' ', '\t', '\r', '\n' },
+                            StringSplitOptions.RemoveEmptyEntries));
+                }
                 string keyword = this.txtVisionOcrKeyword == null
                     ? string.Empty
                     : this.txtVisionOcrKeyword.Text.Trim();
@@ -1508,16 +2256,14 @@ namespace WPELibrary
                         MatchMode = VisionTextMatchMode.Contains
                     };
                     string reason;
-                    if (condition.Matches(result, out reason))
+                    if (!condition.Matches(result, out reason))
                     {
-                        status += " " + UiText("Vision_OcrConditionMatched");
-                    }
-                    else
-                    {
-                        status += " " + string.Format(
+                        this.SetVisionOcrStatus(string.Format(
                             UiText("Vision_OcrConditionNotMatched"),
-                            reason);
+                            reason));
+                        return;
                     }
+                    status += " " + UiText("Vision_OcrConditionMatched");
                 }
 
                 this.SetVisionOcrStatus(status);
@@ -1564,138 +2310,491 @@ namespace WPELibrary
             if (this.bVisionCancelOcr != null)
             {
                 this.bVisionCancelOcr.Enabled = running;
+                this.bVisionCancelOcr.Visible = running;
             }
         }
 
-        private void bAddVisionOcrStep_Click(object sender, EventArgs e)
+        private static bool IsVisionInstructionType(Socket_Cache.Robot.InstructionType instructionType)
         {
-            if (this.sriSelect == null)
+            return instructionType == Socket_Cache.Robot.InstructionType.VisionWait;
+        }
+
+        private static string BuildVisionInstructionContent(
+            int stepIndex,
+            VisionAssistantStep step)
+        {
+            return Socket_Cache.Robot.VisionInstructionContentPrefix +
+                stepIndex.ToString(CultureInfo.InvariantCulture) +
+                "|" +
+                (step == null ? string.Empty : step.Name ?? string.Empty);
+        }
+
+        private static bool TryGetVisionInstructionStepIndex(
+            string content,
+            out int stepIndex)
+        {
+            stepIndex = -1;
+            if (string.IsNullOrEmpty(content) ||
+                !content.StartsWith(
+                    Socket_Cache.Robot.VisionInstructionContentPrefix,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            string payload = content.Substring(Socket_Cache.Robot.VisionInstructionContentPrefix.Length);
+            int separator = payload.IndexOf('|');
+            string indexText = separator < 0 ? payload : payload.Substring(0, separator);
+            return int.TryParse(
+                indexText,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out stepIndex) && stepIndex >= 0;
+        }
+
+        private bool HasVisionInstructionRows()
+        {
+            if (this.dtRobotInstruction == null)
+            {
+                return false;
+            }
+
+            foreach (DataRow row in this.dtRobotInstruction.Rows)
+            {
+                if (IsVisionInstructionType((Socket_Cache.Robot.InstructionType)row["Type"]))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private void EnsureVisionInstructionRows()
+        {
+            Socket_VisionProfile profile = this.sriSelect == null
+                ? null
+                : this.sriSelect.VisionProfile;
+            if (profile == null || profile.AssistantSteps == null || this.dtRobotInstruction == null)
             {
                 return;
             }
 
+            HashSet<int> referencedIndexes = new HashSet<int>();
+            foreach (DataRow row in this.dtRobotInstruction.Rows)
+            {
+                Socket_Cache.Robot.InstructionType type =
+                    (Socket_Cache.Robot.InstructionType)row["Type"];
+                int stepIndex;
+                if (IsVisionInstructionType(type) &&
+                    TryGetVisionInstructionStepIndex(row["Content"].ToString(), out stepIndex) &&
+                    stepIndex < profile.AssistantSteps.Count)
+                {
+                    referencedIndexes.Add(stepIndex);
+                }
+            }
+
+            for (int stepIndex = 0; stepIndex < profile.AssistantSteps.Count; stepIndex++)
+            {
+                if (referencedIndexes.Contains(stepIndex))
+                {
+                    continue;
+                }
+
+                DataRow row = this.dtRobotInstruction.NewRow();
+                row["Type"] = Socket_Cache.Robot.InstructionType.VisionWait;
+                row["Content"] = BuildVisionInstructionContent(
+                    stepIndex,
+                    profile.AssistantSteps[stepIndex]);
+                this.dtRobotInstruction.Rows.Add(row);
+            }
+        }
+
+        private bool SyncVisionAssistantStepsFromInstructions(Socket_VisionProfile profile)
+        {
+            if (profile == null || profile.AssistantSteps == null || this.dtRobotInstruction == null)
+            {
+                return true;
+            }
+
+            List<VisionAssistantStep> previousSteps = profile.AssistantSteps.ToList();
+            List<VisionAssistantStep> orderedSteps = new List<VisionAssistantStep>();
+            HashSet<int> usedIndexes = new HashSet<int>();
+            List<DataRow> visionRows = new List<DataRow>();
+            foreach (DataRow row in this.dtRobotInstruction.Rows)
+            {
+                Socket_Cache.Robot.InstructionType type =
+                    (Socket_Cache.Robot.InstructionType)row["Type"];
+                if (!IsVisionInstructionType(type))
+                {
+                    continue;
+                }
+
+                int stepIndex;
+                if (!TryGetVisionInstructionStepIndex(row["Content"].ToString(), out stepIndex) ||
+                    stepIndex >= previousSteps.Count ||
+                    !usedIndexes.Add(stepIndex))
+                {
+                    this.SetVisionStatus(string.Format(
+                        UiText("Vision_ProfileInvalid"),
+                        "右侧指令集中的视觉等待步骤引用无效。"));
+                    return false;
+                }
+
+                visionRows.Add(row);
+                orderedSteps.Add(previousSteps[stepIndex]);
+            }
+
+            foreach (VisionAssistantStep previousStep in previousSteps)
+            {
+                if (!orderedSteps.Contains(previousStep))
+                {
+                    this.DisposeVisionConditionTemplates(previousStep.Condition);
+                    this.DisposeVisionConditionTemplates(previousStep.Verification);
+                }
+            }
+
+            profile.AssistantSteps.Clear();
+            profile.AssistantSteps.AddRange(orderedSteps);
+            for (int index = 0; index < visionRows.Count; index++)
+            {
+                visionRows[index]["Content"] = BuildVisionInstructionContent(
+                    index,
+                    orderedSteps[index]);
+            }
+            return true;
+        }
+
+        private void AddVisionInstructionRow(int stepIndex, VisionAssistantStep step)
+        {
+            if (this.dtRobotInstruction == null)
+            {
+                return;
+            }
+
+            DataRow row = this.dtRobotInstruction.NewRow();
+            row["Type"] = Socket_Cache.Robot.InstructionType.VisionWait;
+            row["Content"] = BuildVisionInstructionContent(stepIndex, step);
+            if (this.dgvRobotInstruction.CurrentCell != null)
+            {
+                this.dtRobotInstruction.Rows.InsertAt(
+                    row,
+                    this.dgvRobotInstruction.CurrentCell.RowIndex + 1);
+            }
+            else
+            {
+                this.dtRobotInstruction.Rows.Add(row);
+            }
+        }
+
+        private VisionAssistantStep BuildVisionAssistantStepFromEditors()
+        {
             VisionConditionType conditionType = this.ReadVisionConditionType();
-            if (conditionType != VisionConditionType.TextAppears &&
-                conditionType != VisionConditionType.TextDisappears &&
-                conditionType != VisionConditionType.NumberInRange)
+            bool isTemplate = conditionType == VisionConditionType.TemplateAppears ||
+                conditionType == VisionConditionType.TemplateDisappears;
+            bool isColor = conditionType == VisionConditionType.ColorAppears ||
+                conditionType == VisionConditionType.ColorDisappears;
+            bool isOcr = conditionType == VisionConditionType.TextAppears ||
+                conditionType == VisionConditionType.TextDisappears ||
+                conditionType == VisionConditionType.NumberInRange ||
+                isColor;
+            if (!isOcr && !isTemplate)
             {
-                this.SetVisionOcrStatus(UiText("Vision_SelectOcrCondition"));
-                return;
+                this.SetVisionAssistantStatus(UiText("Vision_SelectOcrCondition"));
+                return null;
             }
 
-            string keyword = this.txtVisionOcrKeyword.Text.Trim();
-            if (conditionType != VisionConditionType.NumberInRange && string.IsNullOrEmpty(keyword))
-            {
-                this.SetVisionOcrStatus(UiText("Vision_NoKeyword"));
-                return;
-            }
-
+            VisionWindowInfo window = this.cbbVisionWindows.SelectedItem as VisionWindowInfo;
             VisionRegion region = this.ReadVisionRegion();
-            if (!region.IsValid)
+            VisionCaptureSettings captureSettings = this.ReadVisionCaptureSettings();
+            Size clientSize = Size.Empty;
+            string clientSizeError = string.Empty;
+            if (window == null || !VisionWindowService.TryValidateClientSize(
+                window.Handle,
+                captureSettings,
+                out clientSize,
+                out clientSizeError))
             {
-                this.SetVisionOcrStatus(string.Format(
+                this.SetVisionAssistantStatus(string.Format(
                     UiText("Vision_ProfileInvalid"),
-                    "The region must be positive."));
-                return;
+                    window == null
+                        ? "Select a target window first."
+                        : clientSizeError));
+                return null;
+            }
+            if (!region.FitsWithin(clientSize))
+            {
+                this.SetVisionAssistantStatus(string.Format(
+                    UiText("Vision_ProfileInvalid"),
+                    "The region must stay inside the target client area."));
+                return null;
+            }
+            if (captureSettings.RequireExactClientSize && region.UseNormalizedCoordinates)
+            {
+                this.SetVisionAssistantStatus(string.Format(
+                    UiText("Vision_ProfileInvalid"),
+                    UiText("Vision_FixedCoordinatesRequired")));
+                return null;
             }
 
-            Socket_VisionProfile profile = this.sriSelect.VisionProfile;
-            profile.OcrOptions = this.ReadVisionOcrOptions();
-            VisionTextCondition textCondition = profile.OcrCondition == null
-                ? new VisionTextCondition()
-                : profile.OcrCondition.Clone();
-            textCondition.ExpectedText = conditionType == VisionConditionType.NumberInRange
-                ? string.Empty
-                : keyword;
-            textCondition.MatchMode = conditionType == VisionConditionType.NumberInRange
-                ? VisionTextMatchMode.NumberRange
-                : VisionTextMatchMode.Contains;
-            textCondition.MinimumNumber = (double)this.nudVisionNumberMinimum.Value;
-            textCondition.MaximumNumber = (double)this.nudVisionNumberMaximum.Value;
-            profile.OcrCondition = textCondition;
-            string stepName = conditionType == VisionConditionType.NumberInRange
-                ? string.Format(
-                    "{0}: {1} - {2}",
-                    UiText("Vision_NumberRange"),
-                    textCondition.MinimumNumber,
-                    textCondition.MaximumNumber)
-                : keyword;
-            profile.AssistantSteps.Add(new VisionAssistantStep
+            if (isTemplate && this.visionTemplate == null)
             {
-                Name = stepName,
+                this.SetVisionAssistantStatus(UiText("Vision_NoTemplate"));
+                return null;
+            }
+
+            Socket_VisionProfile profile = this.sriSelect.VisionProfile ?? new Socket_VisionProfile();
+            VisionConditionDefinition verification = this.ReadVisionVerificationCondition();
+            if (this.chkVisionActionVerification.Checked && verification == null)
+            {
+                this.SetVisionAssistantStatus(UiText("Vision_VerificationIncomplete"));
+                return null;
+            }
+            if (verification != null && !verification.Region.FitsWithin(clientSize))
+            {
+                this.DisposeVisionConditionTemplates(verification);
+                this.SetVisionAssistantStatus(string.Format(
+                    UiText("Vision_ProfileInvalid"),
+                    "The verification region must stay inside the target client area."));
+                return null;
+            }
+            if (verification != null && captureSettings.RequireExactClientSize &&
+                verification.Region.UseNormalizedCoordinates)
+            {
+                this.DisposeVisionConditionTemplates(verification);
+                this.SetVisionAssistantStatus(string.Format(
+                    UiText("Vision_ProfileInvalid"),
+                    UiText("Vision_FixedCoordinatesRequired")));
+                return null;
+            }
+
+            VisionAssistantStep step = new VisionAssistantStep
+            {
+                ActionDefinition = this.ReadVisionActionDefinition(),
+                VerificationEnabled = verification != null,
+                Verification = verification,
+                VerificationUsesSeparateRegion = verification != null &&
+                    this.chkVisionVerificationSeparateRegion.Checked,
                 Condition = new VisionConditionDefinition
                 {
-                    Name = stepName,
                     Type = conditionType,
                     Region = region.Clone(),
-                    TextCondition = textCondition.Clone(),
                     RequiredConfirmations = (int)this.nudVisionConfirmations.Value,
                     PollIntervalMilliseconds = (int)this.nudVisionPollInterval.Value,
                     TimeoutMilliseconds = (int)this.nudVisionTimeout.Value,
                     MaxRetries = (int)this.nudVisionRetries.Value,
                     FailurePolicy = this.ReadVisionFailurePolicy()
                 }
-            });
-            this.RefreshVisionAssistantSteps();
-            this.SetVisionOcrStatus(UiText("Vision_StepAdded"));
+            };
+
+            if (isTemplate)
+            {
+                string stepName = conditionType == VisionConditionType.TemplateDisappears
+                    ? UiText("Vision_TemplateDisappearStepName")
+                    : UiText("Vision_TemplateStepName");
+                step.Name = stepName;
+                step.Condition.Name = stepName;
+                step.Condition.Template = new Bitmap(this.visionTemplate);
+                step.Condition.MinimumSimilarity = (double)this.nudVisionThreshold.Value / 100D;
+                step.Condition.NormalizeTemplateBrightness = this.chkVisionTemplateNormalize.Checked;
+                step.Condition.AllowTemplateScaleVariation = this.chkVisionTemplateScale.Checked;
+                VisionTemplateMatchOptions templateOptions = this.ReadVisionTemplateMatchOptions();
+                step.Condition.TemplateMinimumScale = templateOptions.MinimumScale;
+                step.Condition.TemplateMaximumScale = templateOptions.MaximumScale;
+                step.Condition.TemplateScaleStep = templateOptions.ScaleStep;
+            }
+            else
+            {
+                string keyword = this.txtVisionOcrKeyword.Text.Trim();
+                if (!isColor && conditionType != VisionConditionType.NumberInRange &&
+                    string.IsNullOrEmpty(keyword))
+                {
+                    this.DisposeVisionConditionTemplates(step.Verification);
+                    this.SetVisionAssistantStatus(UiText("Vision_NoKeyword"));
+                    return null;
+                }
+
+                VisionColorCondition colorCondition = isColor
+                    ? this.ReadVisionColorCondition()
+                    : null;
+                if (isColor && colorCondition == null)
+                {
+                    this.DisposeVisionConditionTemplates(step.Verification);
+                    this.SetVisionAssistantStatus(UiText("Vision_ColorInvalid"));
+                    return null;
+                }
+                profile.OcrOptions = this.ReadVisionOcrOptions();
+                VisionTextCondition textCondition = profile.OcrCondition == null
+                    ? new VisionTextCondition()
+                    : profile.OcrCondition.Clone();
+                textCondition.ExpectedText = isColor || conditionType == VisionConditionType.NumberInRange
+                    ? string.Empty
+                    : keyword;
+                textCondition.MatchMode = isColor || conditionType == VisionConditionType.NumberInRange
+                    ? VisionTextMatchMode.NumberRange
+                    : VisionTextMatchMode.Contains;
+                textCondition.MinimumNumber = (double)this.nudVisionNumberMinimum.Value;
+                textCondition.MaximumNumber = (double)this.nudVisionNumberMaximum.Value;
+                profile.OcrCondition = textCondition;
+                step.Name = isColor
+                    ? UiText(conditionType == VisionConditionType.ColorDisappears
+                        ? "Vision_ColorDisappearStepName"
+                        : "Vision_ColorStepName")
+                    : conditionType == VisionConditionType.NumberInRange
+                    ? string.Format(
+                        "{0}: {1} - {2}",
+                        UiText("Vision_NumberRange"),
+                        textCondition.MinimumNumber,
+                        textCondition.MaximumNumber)
+                    : keyword;
+                step.Condition.Name = step.Name;
+                step.Condition.TextCondition = textCondition.Clone();
+                step.Condition.ColorCondition = colorCondition == null
+                    ? null
+                    : colorCondition.Clone();
+            }
+
+            return step;
         }
 
-        private void bAddVisionTemplateStep_Click(object sender, EventArgs e)
+        private void bCancelVisionAction_Click(object sender, EventArgs e)
+        {
+            if (this.updatingVisionStepEditor)
+            {
+                return;
+            }
+
+            this.updatingVisionStepEditor = true;
+            try
+            {
+                this.cbbVisionConditionType.SelectedIndex = 0;
+                this.txtVisionOcrKeyword.Clear();
+                this.SetVisionNumber(this.nudVisionNumberMinimum, 0);
+                this.SetVisionNumber(this.nudVisionNumberMaximum, 1000000000);
+                if (this.txtVisionColorRgb != null)
+                {
+                    this.txtVisionColorRgb.Text = "255,255,255";
+                }
+                this.SetVisionNumber(this.nudVisionColorTolerance, 16);
+                this.SetVisionNumber(this.nudVisionColorMinimumPixels, 10);
+                this.SetVisionDecimal(this.nudVisionColorMinimumRatio, 0D);
+                this.SetVisionNumber(this.nudVisionX, 0);
+                this.SetVisionNumber(this.nudVisionY, 0);
+                this.SetVisionNumber(this.nudVisionWidth, 1);
+                this.SetVisionNumber(this.nudVisionHeight, 1);
+                if (this.chkVisionNormalized != null)
+                {
+                    this.chkVisionNormalized.Checked = true;
+                }
+
+                this.ApplyVisionActionDefinition(new VisionActionDefinition());
+                if (this.cbbVisionVerificationType != null)
+                {
+                    this.cbbVisionVerificationType.SelectedIndex = 0;
+                }
+                this.ApplyVisionVerificationCondition(null);
+                this.DisposeVisionPreview();
+                this.visionPreviewOriginRegion = null;
+                this.visionPreviewSelection = Rectangle.Empty;
+                this.visionPreviewSelecting = false;
+                if (this.cbbVisionHistory != null)
+                {
+                    this.cbbVisionHistory.Items.Clear();
+                }
+                if (this.cbbVisionSteps != null && this.cbbVisionSteps.Items.Count > 0)
+                {
+                    this.cbbVisionSteps.SelectedIndex = 0;
+                }
+            }
+            finally
+            {
+                this.updatingVisionStepEditor = false;
+            }
+
+            this.SetVisionAssistantStatus(UiText("Vision_ActionCancelled"));
+        }
+
+        private void bConfirmVisionAction_Click(object sender, EventArgs e)
         {
             if (this.sriSelect == null)
             {
                 return;
             }
-            if (this.visionTemplate == null)
+
+            Socket_VisionProfile profile = this.sriSelect.VisionProfile ?? new Socket_VisionProfile();
+            VisionAssistantStep draft = this.BuildVisionAssistantStepFromEditors();
+            if (draft == null)
             {
-                this.SetVisionMatchStatus(UiText("Vision_NoTemplate"));
                 return;
             }
 
-            VisionConditionType conditionType = this.ReadVisionConditionType();
-            if (conditionType != VisionConditionType.TemplateAppears &&
-                conditionType != VisionConditionType.TemplateDisappears)
+            VisionAssistantStep selectedStep = this.cbbVisionSteps == null
+                ? null
+                : this.cbbVisionSteps.SelectedItem as VisionAssistantStep;
+            if (selectedStep == this.visionNewStep)
             {
-                this.SetVisionMatchStatus(UiText("Vision_SelectTemplateCondition"));
-                return;
+                selectedStep = null;
             }
 
-            VisionRegion region = this.ReadVisionRegion();
-            if (!region.IsValid)
+            if (selectedStep == null)
             {
-                this.SetVisionMatchStatus(string.Format(
-                    UiText("Vision_ProfileInvalid"),
-                    "The region must be positive."));
-                return;
+                profile.AssistantSteps.Add(draft);
+                this.AddVisionInstructionRow(profile.AssistantSteps.Count - 1, draft);
             }
-
-            string stepName = conditionType == VisionConditionType.TemplateDisappears
-                ? UiText("Vision_TemplateDisappearStepName")
-                : UiText("Vision_TemplateStepName");
-            this.sriSelect.VisionProfile.AssistantSteps.Add(new VisionAssistantStep
+            else
             {
-                Name = stepName,
-                Condition = new VisionConditionDefinition
+                int stepIndex = profile.AssistantSteps.IndexOf(selectedStep);
+                if (stepIndex < 0)
                 {
-                    Name = stepName,
-                    Type = conditionType,
-                    Region = region.Clone(),
-                    Template = new Bitmap(this.visionTemplate),
-                    MinimumSimilarity = (double)this.nudVisionThreshold.Value / 100D,
-                    NormalizeTemplateBrightness = this.chkVisionTemplateNormalize.Checked,
-                    AllowTemplateScaleVariation = this.chkVisionTemplateScale.Checked,
-                    TemplateMinimumScale = this.ReadVisionTemplateMatchOptions().MinimumScale,
-                    TemplateMaximumScale = this.ReadVisionTemplateMatchOptions().MaximumScale,
-                    TemplateScaleStep = this.ReadVisionTemplateMatchOptions().ScaleStep,
-                    RequiredConfirmations = (int)this.nudVisionConfirmations.Value,
-                    PollIntervalMilliseconds = (int)this.nudVisionPollInterval.Value,
-                    TimeoutMilliseconds = (int)this.nudVisionTimeout.Value,
-                    MaxRetries = (int)this.nudVisionRetries.Value,
-                    FailurePolicy = this.ReadVisionFailurePolicy()
+                    this.DisposeVisionConditionTemplates(draft.Condition);
+                    this.DisposeVisionConditionTemplates(draft.Verification);
+                    this.SetVisionAssistantStatus(UiText("Vision_SelectStep"));
+                    return;
                 }
-            });
-            this.RefreshVisionAssistantSteps();
-            this.SetVisionMatchStatus(UiText("Vision_StepAdded"));
+
+                this.DisposeVisionConditionTemplates(selectedStep.Condition);
+                this.DisposeVisionConditionTemplates(selectedStep.Verification);
+                selectedStep.Name = draft.Name;
+                selectedStep.Condition = draft.Condition;
+                selectedStep.Action = null;
+                selectedStep.ActionDefinition = draft.ActionDefinition;
+                selectedStep.VerificationEnabled = draft.VerificationEnabled;
+                selectedStep.Verification = draft.Verification;
+                selectedStep.VerificationUsesSeparateRegion = draft.VerificationUsesSeparateRegion;
+                this.UpdateVisionInstructionRow(stepIndex, selectedStep);
+            }
+
+            if (!this.SyncVisionAssistantStepsFromInstructions(profile))
+            {
+                return;
+            }
+            this.sriSelect.VisionProfile = profile;
+            VisionAssistantStep committedStep = selectedStep ?? draft;
+            this.RefreshVisionAssistantSteps(committedStep);
+            this.SetVisionAssistantStatus(selectedStep == null
+                ? UiText("Vision_StepAdded")
+                : UiText("Vision_StepUpdated"));
+        }
+
+        private void UpdateVisionInstructionRow(int stepIndex, VisionAssistantStep step)
+        {
+            if (this.dtRobotInstruction == null)
+            {
+                return;
+            }
+
+            foreach (DataRow row in this.dtRobotInstruction.Rows)
+            {
+                int referencedIndex;
+                if (IsVisionInstructionType((Socket_Cache.Robot.InstructionType)row["Type"]) &&
+                    TryGetVisionInstructionStepIndex(row["Content"].ToString(), out referencedIndex) &&
+                    referencedIndex == stepIndex)
+                {
+                    row["Content"] = BuildVisionInstructionContent(stepIndex, step);
+                    return;
+                }
+            }
+
+            this.AddVisionInstructionRow(stepIndex, step);
         }
 
         private void bRemoveVisionStep_Click(object sender, EventArgs e)
@@ -1706,20 +2805,49 @@ namespace WPELibrary
             }
 
             VisionAssistantStep step = this.cbbVisionSteps.SelectedItem as VisionAssistantStep;
-            if (step != null)
+            if (step != null && step != this.visionNewStep)
             {
-                this.sriSelect.VisionProfile.AssistantSteps.Remove(step);
-                if (step.Condition != null && step.Condition.Template != null)
+                int stepIndex = this.sriSelect.VisionProfile.AssistantSteps.IndexOf(step);
+                if (stepIndex >= 0 && this.dtRobotInstruction != null)
                 {
-                    step.Condition.Template.Dispose();
-                    step.Condition.Template = null;
+                    foreach (DataRow row in this.dtRobotInstruction.Rows.Cast<DataRow>().ToList())
+                    {
+                        int referencedIndex;
+                        if (IsVisionInstructionType((Socket_Cache.Robot.InstructionType)row["Type"]) &&
+                            TryGetVisionInstructionStepIndex(row["Content"].ToString(), out referencedIndex) &&
+                            referencedIndex == stepIndex)
+                        {
+                            this.dtRobotInstruction.Rows.Remove(row);
+                            break;
+                        }
+                    }
+                }
+                this.sriSelect.VisionProfile.AssistantSteps.Remove(step);
+                this.DisposeVisionConditionTemplates(step.Condition);
+                this.DisposeVisionConditionTemplates(step.Verification);
+                foreach (DataRow row in this.dtRobotInstruction.Rows)
+                {
+                    int referencedIndex;
+                    if (!IsVisionInstructionType((Socket_Cache.Robot.InstructionType)row["Type"]) ||
+                        !TryGetVisionInstructionStepIndex(row["Content"].ToString(), out referencedIndex) ||
+                        referencedIndex <= stepIndex ||
+                        referencedIndex >= this.sriSelect.VisionProfile.AssistantSteps.Count + 1)
+                    {
+                        continue;
+                    }
+
+                    int newIndex = referencedIndex - 1;
+                    row["Content"] = BuildVisionInstructionContent(
+                        newIndex,
+                        this.sriSelect.VisionProfile.AssistantSteps[newIndex]);
                 }
             }
+            this.SyncVisionAssistantStepsFromInstructions(this.sriSelect.VisionProfile);
             this.RefreshVisionAssistantSteps();
             this.SetVisionOcrStatus(UiText("Vision_StepRemoved"));
         }
 
-        private void RefreshVisionAssistantSteps()
+        private void RefreshVisionAssistantSteps(VisionAssistantStep selectedStep = null)
         {
             if (this.cbbVisionSteps == null)
             {
@@ -1730,6 +2858,8 @@ namespace WPELibrary
             try
             {
                 this.cbbVisionSteps.Items.Clear();
+                this.visionNewStep.Name = UiText("Vision_NewStep");
+                this.cbbVisionSteps.Items.Add(this.visionNewStep);
                 if (this.sriSelect != null && this.sriSelect.VisionProfile != null &&
                     this.sriSelect.VisionProfile.AssistantSteps != null)
                 {
@@ -1741,14 +2871,47 @@ namespace WPELibrary
                         }
                     }
                 }
-                if (this.cbbVisionSteps.Items.Count > 0)
+                int selectedIndex = selectedStep == null
+                    ? 0
+                    : this.cbbVisionSteps.Items.IndexOf(selectedStep);
+                this.cbbVisionSteps.SelectedIndex = selectedIndex < 0 ? 0 : selectedIndex;
+                if (selectedStep == null)
                 {
-                    this.cbbVisionSteps.SelectedIndex = this.cbbVisionSteps.Items.Count - 1;
+                    this.ResetVisionStepEditorForNewStep();
                 }
             }
             finally
             {
                 this.cbbVisionSteps.EndUpdate();
+            }
+        }
+
+        private void ResetVisionStepEditorForNewStep()
+        {
+            if (this.updatingVisionStepEditor)
+            {
+                return;
+            }
+
+            this.updatingVisionStepEditor = true;
+            try
+            {
+                this.cbbVisionConditionType.SelectedIndex = 0;
+                this.txtVisionOcrKeyword.Clear();
+                this.SetVisionNumber(this.nudVisionNumberMinimum, 0);
+                this.SetVisionNumber(this.nudVisionNumberMaximum, 0);
+                this.ApplyVisionActionDefinition(new VisionActionDefinition());
+                this.ApplyVisionVerificationCondition(null);
+                this.DisposeVisionPreprocessedPreview();
+                this.DisposeVisionTemplate();
+                if (this.pbVisionTemplate != null)
+                {
+                    this.pbVisionTemplate.Image = null;
+                }
+            }
+            finally
+            {
+                this.updatingVisionStepEditor = false;
             }
         }
 
@@ -1758,6 +2921,309 @@ namespace WPELibrary
                 ? null
                 : this.cbbVisionConditionType.SelectedItem as VisionConditionChoice;
             return choice == null ? VisionConditionType.TextAppears : choice.Type;
+        }
+
+        private VisionColorCondition ReadVisionColorCondition()
+        {
+            if (this.txtVisionColorRgb == null)
+            {
+                return null;
+            }
+            string[] parts = this.txtVisionColorRgb.Text.Split(
+                new[] { ',', ';', ' ', '\t' },
+                StringSplitOptions.RemoveEmptyEntries);
+            int red;
+            int green;
+            int blue;
+            if (parts.Length != 3 ||
+                !int.TryParse(parts[0], out red) ||
+                !int.TryParse(parts[1], out green) ||
+                !int.TryParse(parts[2], out blue) ||
+                red < 0 || red > 255 ||
+                green < 0 || green > 255 ||
+                blue < 0 || blue > 255)
+            {
+                return null;
+            }
+
+            VisionColorCondition condition = new VisionColorCondition
+            {
+                Red = (byte)red,
+                Green = (byte)green,
+                Blue = (byte)blue,
+                Tolerance = this.nudVisionColorTolerance == null
+                    ? 16
+                    : (int)this.nudVisionColorTolerance.Value,
+                MinimumPixelCount = this.nudVisionColorMinimumPixels == null
+                    ? 10
+                    : (int)this.nudVisionColorMinimumPixels.Value,
+                MinimumMatchRatio = this.nudVisionColorMinimumRatio == null
+                    ? 0D
+                    : (double)this.nudVisionColorMinimumRatio.Value
+            };
+            try
+            {
+                condition.Validate();
+                return condition;
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                return null;
+            }
+        }
+
+        private VisionActionDefinition ReadVisionActionDefinition()
+        {
+            VisionActionChoice action = this.cbbVisionActionType == null
+                ? null
+                : this.cbbVisionActionType.SelectedItem as VisionActionChoice;
+            VisionScrollChoice direction = this.cbbVisionScrollDirection == null
+                ? null
+                : this.cbbVisionScrollDirection.SelectedItem as VisionScrollChoice;
+            return new VisionActionDefinition
+            {
+                Type = action == null ? VisionActionType.None : action.Type,
+                ScrollDirection = direction == null ? VisionScrollDirection.Down : direction.Direction,
+                ScrollAmount = this.nudVisionScrollAmount == null ? 3 : (int)this.nudVisionScrollAmount.Value,
+                DelayMilliseconds = 300
+            };
+        }
+
+        private void ApplyVisionActionDefinition(VisionActionDefinition definition)
+        {
+            VisionActionDefinition value = definition == null
+                ? new VisionActionDefinition()
+                : definition;
+            for (int i = 0; i < this.cbbVisionActionType.Items.Count; i++)
+            {
+                VisionActionChoice choice = this.cbbVisionActionType.Items[i] as VisionActionChoice;
+                if (choice != null && choice.Type == value.Type)
+                {
+                    this.cbbVisionActionType.SelectedIndex = i;
+                    break;
+                }
+            }
+            for (int i = 0; i < this.cbbVisionScrollDirection.Items.Count; i++)
+            {
+                VisionScrollChoice choice = this.cbbVisionScrollDirection.Items[i] as VisionScrollChoice;
+                if (choice != null && choice.Direction == value.ScrollDirection)
+                {
+                    this.cbbVisionScrollDirection.SelectedIndex = i;
+                    break;
+                }
+            }
+            this.SetVisionNumber(this.nudVisionScrollAmount, value.ScrollAmount);
+            this.UpdateVisionActionEditor();
+        }
+
+        private void UpdateVisionActionEditor()
+        {
+            if (this.cbbVisionActionType == null || this.cbbVisionScrollDirection == null ||
+                this.nudVisionScrollAmount == null)
+            {
+                return;
+            }
+            VisionActionChoice choice = this.cbbVisionActionType.SelectedItem as VisionActionChoice;
+            bool isScroll = choice != null && choice.Type == VisionActionType.Scroll;
+            this.cbbVisionScrollDirection.Visible = isScroll;
+            this.nudVisionScrollAmount.Visible = isScroll;
+        }
+
+        private VisionConditionDefinition ReadVisionVerificationCondition()
+        {
+            if (this.chkVisionActionVerification == null || !this.chkVisionActionVerification.Checked)
+            {
+                return null;
+            }
+            VisionVerificationChoice choice = this.cbbVisionVerificationType.SelectedItem as VisionVerificationChoice;
+            VisionConditionType type = choice == null ? VisionConditionType.TextAppears : choice.Type;
+            VisionRegion region = this.ReadVisionRegion();
+            if (!region.IsValid)
+            {
+                return null;
+            }
+            if (this.chkVisionVerificationSeparateRegion.Checked)
+            {
+                if (this.visionVerificationRegion == null || !this.visionVerificationRegion.IsValid)
+                {
+                    return null;
+                }
+                region = this.visionVerificationRegion.Clone();
+            }
+
+            VisionConditionDefinition condition = new VisionConditionDefinition
+            {
+                Name = UiText("Vision_ActionVerification"),
+                Type = type,
+                Region = region.Clone(),
+                RequiredConfirmations = (int)this.nudVisionConfirmations.Value,
+                PollIntervalMilliseconds = (int)this.nudVisionPollInterval.Value,
+                TimeoutMilliseconds = (int)this.nudVisionTimeout.Value,
+                MaxRetries = (int)this.nudVisionRetries.Value,
+                FailurePolicy = this.ReadVisionFailurePolicy(),
+                MinimumSimilarity = (double)this.nudVisionThreshold.Value / 100D,
+                NormalizeTemplateBrightness = this.chkVisionTemplateNormalize.Checked,
+                AllowTemplateScaleVariation = this.chkVisionTemplateScale.Checked,
+                TemplateMinimumScale = this.ReadVisionTemplateMatchOptions().MinimumScale,
+                TemplateMaximumScale = this.ReadVisionTemplateMatchOptions().MaximumScale,
+                TemplateScaleStep = this.ReadVisionTemplateMatchOptions().ScaleStep
+            };
+            if (type == VisionConditionType.TextAppears)
+            {
+                string expectedText = this.txtVisionVerificationKeyword.Text.Trim();
+                if (string.IsNullOrEmpty(expectedText))
+                {
+                    return null;
+                }
+                VisionTextCondition source = this.sriSelect == null || this.sriSelect.VisionProfile == null
+                    ? null
+                    : this.sriSelect.VisionProfile.OcrCondition;
+                condition.TextCondition = source == null ? new VisionTextCondition() : source.Clone();
+                condition.TextCondition.ExpectedText = expectedText;
+                condition.TextCondition.MatchMode = VisionTextMatchMode.Contains;
+            }
+            else
+            {
+                Bitmap template = this.GetVisionVerificationTemplate();
+                if (template == null)
+                {
+                    return null;
+                }
+                condition.Template = template;
+            }
+            return condition;
+        }
+
+        private Bitmap GetVisionVerificationTemplate()
+        {
+            if (this.visionTemplate != null)
+            {
+                return new Bitmap(this.visionTemplate);
+            }
+            VisionAssistantStep step = this.cbbVisionSteps == null
+                ? null
+                : this.cbbVisionSteps.SelectedItem as VisionAssistantStep;
+            if (step != null && step.Verification != null && step.Verification.Template != null)
+            {
+                return new Bitmap(step.Verification.Template);
+            }
+            if (step != null && step.Condition != null && step.Condition.Template != null)
+            {
+                return new Bitmap(step.Condition.Template);
+            }
+            return null;
+        }
+
+        private void SetVisionVerificationMode(VisionConditionType? type)
+        {
+            if (this.chkVisionActionVerification == null)
+            {
+                return;
+            }
+
+            this.chkVisionActionVerification.Checked = type.HasValue;
+            if (type.HasValue)
+            {
+                for (int i = 0; i < this.cbbVisionVerificationType.Items.Count; i++)
+                {
+                    VisionVerificationChoice choice =
+                        this.cbbVisionVerificationType.Items[i] as VisionVerificationChoice;
+                    if (choice != null && choice.Type == type.Value)
+                    {
+                        this.cbbVisionVerificationType.SelectedIndex = i;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                this.txtVisionVerificationKeyword.Clear();
+                this.chkVisionVerificationSeparateRegion.Checked = false;
+                this.visionVerificationRegion = null;
+            }
+
+            if (this.bVisionActionVerificationMenu != null &&
+                this.bVisionActionVerificationMenu.ContextMenuStrip != null)
+            {
+                for (int i = 0; i < this.bVisionActionVerificationMenu.ContextMenuStrip.Items.Count; i++)
+                {
+                    ToolStripMenuItem item = this.bVisionActionVerificationMenu.ContextMenuStrip.Items[i]
+                        as ToolStripMenuItem;
+                    if (item != null)
+                    {
+                        item.Checked = type.HasValue
+                            ? i == (type.Value == VisionConditionType.TemplateAppears ? 2 : 1)
+                            : i == 0;
+                    }
+                }
+            }
+            this.UpdateVisionVerificationEditor();
+        }
+
+        private void ApplyVisionVerificationCondition(VisionAssistantStep step)
+        {
+            VisionConditionDefinition condition = step == null || !step.VerificationEnabled
+                ? null
+                : step.Verification;
+            this.SetVisionVerificationMode(condition == null ? (VisionConditionType?)null : condition.Type);
+            this.chkVisionVerificationSeparateRegion.Checked = step != null &&
+                step.VerificationEnabled && step.VerificationUsesSeparateRegion;
+            this.visionVerificationRegion = this.chkVisionVerificationSeparateRegion.Checked && condition != null &&
+                condition.Region != null
+                ? condition.Region.Clone()
+                : null;
+            if (condition == null)
+            {
+                this.txtVisionVerificationKeyword.Clear();
+                this.UpdateVisionVerificationEditor();
+                return;
+            }
+            for (int i = 0; i < this.cbbVisionVerificationType.Items.Count; i++)
+            {
+                VisionVerificationChoice choice = this.cbbVisionVerificationType.Items[i] as VisionVerificationChoice;
+                if (choice != null && choice.Type == condition.Type)
+                {
+                    this.cbbVisionVerificationType.SelectedIndex = i;
+                    break;
+                }
+            }
+            this.txtVisionVerificationKeyword.Text = condition.TextCondition == null
+                ? string.Empty
+                : condition.TextCondition.ExpectedText ?? string.Empty;
+            this.UpdateVisionVerificationEditor();
+        }
+
+        private void UpdateVisionVerificationEditor()
+        {
+            if (this.chkVisionActionVerification == null ||
+                this.cbbVisionVerificationType == null ||
+                this.txtVisionVerificationKeyword == null)
+            {
+                return;
+            }
+            VisionVerificationChoice choice = this.cbbVisionVerificationType.SelectedItem as VisionVerificationChoice;
+            bool isText = choice == null || choice.Type == VisionConditionType.TextAppears;
+            this.cbbVisionVerificationType.Visible = this.chkVisionActionVerification.Checked;
+            this.txtVisionVerificationKeyword.Visible = this.chkVisionActionVerification.Checked && isText;
+            this.visionVerificationAdvancedPanel.Visible = this.chkVisionActionVerification.Checked;
+            this.lVisionVerificationKeyword.Visible = this.chkVisionActionVerification.Checked && isText;
+            this.chkVisionVerificationSeparateRegion.Visible = this.chkVisionActionVerification.Checked;
+            this.bVisionSelectVerificationRegion.Visible = this.chkVisionActionVerification.Checked &&
+                this.chkVisionVerificationSeparateRegion.Checked;
+            this.lVisionVerificationHint.Visible = this.chkVisionActionVerification.Checked;
+            this.lVisionVerificationHint.Text = isText
+                ? UiText("Vision_VerificationTextHint")
+                : UiText("Vision_VerificationImageHint");
+            if (this.bVisionActionVerificationMenu != null)
+            {
+                string verificationMode = !this.chkVisionActionVerification.Checked
+                    ? UiText("Vision_ActionVerificationOff")
+                    : isText
+                        ? UiText("Vision_ActionVerificationText")
+                        : UiText("Vision_ActionVerificationImage");
+                this.bVisionActionVerificationMenu.Text = verificationMode + "  ▼";
+                this.bVisionActionVerificationMenu.AccessibleName = verificationMode;
+            }
         }
 
         private VisionFailurePolicy ReadVisionFailurePolicy()
@@ -1776,6 +3242,11 @@ namespace WPELibrary
             }
 
             VisionAssistantStep step = this.cbbVisionSteps.SelectedItem as VisionAssistantStep;
+            if (step == this.visionNewStep)
+            {
+                this.ResetVisionStepEditorForNewStep();
+                return;
+            }
             if (step == null || step.Condition == null)
             {
                 return;
@@ -1785,6 +3256,8 @@ namespace WPELibrary
             try
             {
                 VisionConditionDefinition condition = step.Condition;
+                this.ApplyVisionRegionToEditors(condition.Region);
+                this.LoadVisionTemplateForStep(step);
                 for (int i = 0; i < this.cbbVisionConditionType.Items.Count; i++)
                 {
                     VisionConditionChoice choice = this.cbbVisionConditionType.Items[i] as VisionConditionChoice;
@@ -1806,10 +3279,26 @@ namespace WPELibrary
                         this.nudVisionNumberMaximum,
                         textCondition.MaximumNumber);
                 }
+                if ((condition.Type == VisionConditionType.ColorAppears ||
+                     condition.Type == VisionConditionType.ColorDisappears) &&
+                    condition.ColorCondition != null)
+                {
+                    this.txtVisionColorRgb.Text = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0},{1},{2}",
+                        condition.ColorCondition.Red,
+                        condition.ColorCondition.Green,
+                        condition.ColorCondition.Blue);
+                    this.SetVisionNumber(this.nudVisionColorTolerance, condition.ColorCondition.Tolerance);
+                    this.SetVisionNumber(this.nudVisionColorMinimumPixels, condition.ColorCondition.MinimumPixelCount);
+                    this.SetVisionDecimal(this.nudVisionColorMinimumRatio, condition.ColorCondition.MinimumMatchRatio);
+                }
                 this.SetVisionNumber(this.nudVisionConfirmations, condition.RequiredConfirmations);
                 this.SetVisionNumber(this.nudVisionPollInterval, condition.PollIntervalMilliseconds);
                 this.SetVisionNumber(this.nudVisionTimeout, condition.TimeoutMilliseconds);
                 this.SetVisionNumber(this.nudVisionRetries, condition.MaxRetries);
+                this.ApplyVisionActionDefinition(step.ActionDefinition);
+                this.ApplyVisionVerificationCondition(step);
                 for (int i = 0; i < this.cbbVisionFailurePolicy.Items.Count; i++)
                 {
                     VisionFailureChoice choice = this.cbbVisionFailurePolicy.Items[i] as VisionFailureChoice;
@@ -1836,6 +3325,146 @@ namespace WPELibrary
             }
         }
 
+        private void ApplyVisionRegionToEditors(VisionRegion region)
+        {
+            VisionRegion value = region == null ? new VisionRegion() : region;
+            this.SetVisionNumber(this.nudVisionX, value.X);
+            this.SetVisionNumber(this.nudVisionY, value.Y);
+            this.SetVisionNumber(this.nudVisionWidth, Math.Max(1, value.Width));
+            this.SetVisionNumber(this.nudVisionHeight, Math.Max(1, value.Height));
+            if (this.chkVisionNormalized != null)
+            {
+                this.chkVisionNormalized.Checked = value.UseNormalizedCoordinates;
+            }
+        }
+
+        private void LoadVisionTemplateForStep(VisionAssistantStep step)
+        {
+            Bitmap selectedTemplate = null;
+            if (step != null && step.Condition != null && step.Condition.Template != null)
+            {
+                selectedTemplate = new Bitmap(step.Condition.Template);
+            }
+            else if (step != null && step.VerificationEnabled && step.Verification != null &&
+                (step.Verification.Type == VisionConditionType.TemplateAppears ||
+                 step.Verification.Type == VisionConditionType.TemplateDisappears) &&
+                step.Verification.Template != null)
+            {
+                selectedTemplate = new Bitmap(step.Verification.Template);
+            }
+
+            this.DisposeVisionPreprocessedPreview();
+            this.DisposeVisionTemplate();
+            this.visionTemplate = selectedTemplate;
+            if (this.pbVisionTemplate != null)
+            {
+                this.pbVisionTemplate.Image = this.visionTemplate;
+            }
+        }
+
+        private void ApplyVisionConditionEditors(
+            VisionAssistantStep step,
+            VisionRegion region)
+        {
+            if (step == null || region == null)
+            {
+                throw new ArgumentNullException("step");
+            }
+
+            VisionConditionDefinition previous = step.Condition;
+            VisionConditionDefinition condition = previous == null
+                ? new VisionConditionDefinition()
+                : previous.Clone();
+            bool committed = false;
+            try
+            {
+                VisionConditionType type = this.ReadVisionConditionType();
+                condition.Name = string.IsNullOrWhiteSpace(step.Name)
+                    ? condition.Name
+                    : step.Name;
+                condition.Type = type;
+                condition.Region = region.Clone();
+                condition.RequiredConfirmations = (int)this.nudVisionConfirmations.Value;
+                condition.PollIntervalMilliseconds = (int)this.nudVisionPollInterval.Value;
+                condition.TimeoutMilliseconds = (int)this.nudVisionTimeout.Value;
+                condition.MaxRetries = (int)this.nudVisionRetries.Value;
+                condition.FailurePolicy = this.ReadVisionFailurePolicy();
+                condition.MinimumSimilarity = (double)this.nudVisionThreshold.Value / 100D;
+                condition.NormalizeTemplateBrightness = this.chkVisionTemplateNormalize.Checked;
+                condition.AllowTemplateScaleVariation = this.chkVisionTemplateScale.Checked;
+                VisionTemplateMatchOptions templateOptions = this.ReadVisionTemplateMatchOptions();
+                condition.TemplateMinimumScale = templateOptions.MinimumScale;
+                condition.TemplateMaximumScale = templateOptions.MaximumScale;
+                condition.TemplateScaleStep = templateOptions.ScaleStep;
+
+                if (type == VisionConditionType.TextAppears ||
+                    type == VisionConditionType.TextDisappears ||
+                    type == VisionConditionType.NumberInRange)
+                {
+                    VisionTextCondition textCondition = condition.TextCondition == null
+                        ? new VisionTextCondition()
+                        : condition.TextCondition.Clone();
+                    bool isNumber = type == VisionConditionType.NumberInRange;
+                    textCondition.ExpectedText = isNumber
+                        ? string.Empty
+                        : this.txtVisionOcrKeyword.Text.Trim();
+                    textCondition.MatchMode = isNumber
+                        ? VisionTextMatchMode.NumberRange
+                        : VisionTextMatchMode.Contains;
+                    textCondition.MinimumNumber = (double)this.nudVisionNumberMinimum.Value;
+                    textCondition.MaximumNumber = (double)this.nudVisionNumberMaximum.Value;
+                    condition.TextCondition = textCondition;
+                }
+
+                if (type == VisionConditionType.ColorAppears ||
+                    type == VisionConditionType.ColorDisappears)
+                {
+                    VisionColorCondition colorCondition = this.ReadVisionColorCondition();
+                    if (colorCondition == null)
+                    {
+                        throw new InvalidOperationException(UiText("Vision_ColorInvalid"));
+                    }
+                    condition.ColorCondition = colorCondition;
+                }
+
+                bool isTemplate = type == VisionConditionType.TemplateAppears ||
+                    type == VisionConditionType.TemplateDisappears;
+                if (isTemplate)
+                {
+                    if (this.visionTemplate == null)
+                    {
+                        throw new InvalidOperationException(UiText("Vision_NoTemplate"));
+                    }
+                    if (condition.Template != null)
+                    {
+                        condition.Template.Dispose();
+                    }
+                    condition.Template = new Bitmap(this.visionTemplate);
+                }
+                else
+                {
+                    if (condition.Template != null)
+                    {
+                        condition.Template.Dispose();
+                        condition.Template = null;
+                    }
+                    condition.DisposeTemplateVariants();
+                }
+
+                condition.Validate();
+                this.DisposeVisionConditionTemplates(previous);
+                step.Condition = condition;
+                committed = true;
+            }
+            finally
+            {
+                if (!committed)
+                {
+                    this.DisposeVisionConditionTemplates(condition);
+                }
+            }
+        }
+
         private void bRunVisionAssistant_Click(object sender, EventArgs e)
         {
             if (this.visionAssistantTask != null && !this.visionAssistantTask.IsCompleted)
@@ -1854,10 +3483,40 @@ namespace WPELibrary
                 return;
             }
 
+            IVisionTextRecognizer recognizer = this.visionTextRecognizer;
+            if (recognizer == null)
+            {
+                this.SetVisionAssistantStatus(string.Format(
+                    UiText("Vision_OcrUnavailable"),
+                    "recognizer is unavailable."));
+                return;
+            }
+
             Socket_VisionProfile runProfile = this.sriSelect.VisionProfile.Clone();
+            bool hasSystemInputAction = runProfile.AssistantSteps.Any(
+                step => step != null && step.ActionDefinition != null &&
+                    step.ActionDefinition.Type != VisionActionType.None);
+            if (hasSystemInputAction)
+            {
+                DialogResult confirmation = MessageBox.Show(
+                    this,
+                    UiText("Vision_ActionSafetyPrompt"),
+                    UiText("Vision_ActionSafetyTitle"),
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2);
+                if (confirmation != DialogResult.Yes)
+                {
+                    this.DisposeVisionProfileTemplates(runProfile);
+                    this.SetVisionAssistantStatus(UiText("Vision_ActionSafetyCancelled"));
+                    return;
+                }
+                runProfile.AllowSystemInput = true;
+            }
             this.visionAssistantCancellation = new CancellationTokenSource();
             CancellationToken cancellationToken = this.visionAssistantCancellation.Token;
             this.ClearVisionAssistantLog();
+            this.SetVisionAssistantLogExpanded(true);
             this.SetVisionAssistantButtons(true);
             this.SetVisionAssistantStatus(UiText("Vision_AssistantRunning"));
             this.AppendVisionAssistantLog(UiText("Vision_AssistantRunning"));
@@ -1867,7 +3526,7 @@ namespace WPELibrary
                 this.visionAssistantTask = Task.Run(
                     () => VisionAssistantRunner.Run(
                         runProfile,
-                        this.visionTextRecognizer,
+                        recognizer,
                         cancellationToken,
                         this.VisionAssistantLogEmitted));
                 this.visionAssistantTask.ContinueWith(
@@ -1995,6 +3654,47 @@ namespace WPELibrary
             }
         }
 
+        private void bToggleVisionAssistantLog_Click(object sender, EventArgs e)
+        {
+            this.SetVisionAssistantLogExpanded(!this.visionAssistantLogExpanded);
+        }
+
+        private void SetVisionAssistantLogExpanded(bool expanded)
+        {
+            if (this.visionAssistantLogHost == null || this.bToggleVisionAssistantLog == null ||
+                this.txtVisionAssistantLog == null)
+            {
+                return;
+            }
+
+            this.visionAssistantLogExpanded = expanded;
+            this.visionAssistantLogHost.SuspendLayout();
+            this.visionAssistantLogHost.Controls.Remove(this.txtVisionAssistantLog);
+            this.visionAssistantLogHost.RowStyles.Clear();
+
+            if (expanded)
+            {
+                this.visionAssistantLogHost.RowCount = 2;
+                this.visionAssistantLogHost.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                this.visionAssistantLogHost.RowStyles.Add(new RowStyle(SizeType.Absolute, 64F));
+                this.visionAssistantLogHost.Controls.Add(this.txtVisionAssistantLog, 0, 1);
+                this.txtVisionAssistantLog.Visible = true;
+                this.bToggleVisionAssistantLog.Text = UiText("Vision_AssistantLogHide");
+                this.bToggleVisionAssistantLog.AccessibleName = UiText("Vision_AssistantLogHide");
+            }
+            else
+            {
+                this.visionAssistantLogHost.RowCount = 1;
+                this.visionAssistantLogHost.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                this.txtVisionAssistantLog.Visible = false;
+                this.bToggleVisionAssistantLog.Text = UiText("Vision_AssistantLogShow");
+                this.bToggleVisionAssistantLog.AccessibleName = UiText("Vision_AssistantLogShow");
+            }
+
+            this.visionAssistantLogHost.ResumeLayout(true);
+            this.PerformLayout();
+        }
+
         private void SetVisionAssistantStatus(string status)
         {
             if (this.lVisionAssistantStatus == null || this.IsDisposed)
@@ -2004,13 +3704,7 @@ namespace WPELibrary
 
             if (this.InvokeRequired)
             {
-                try
-                {
-                    this.BeginInvoke(new Action(() => this.SetVisionAssistantStatus(status)));
-                }
-                catch (InvalidOperationException)
-                {
-                }
+                this.QueueVisionAssistantUiUpdate(status, null);
                 return;
             }
 
@@ -2035,6 +3729,12 @@ namespace WPELibrary
                 return;
             }
 
+            lock (this.visionAssistantUiSync)
+            {
+                this.pendingVisionAssistantLogs.Clear();
+                this.pendingVisionAssistantStatus = null;
+            }
+
             this.txtVisionAssistantLog.Clear();
         }
 
@@ -2047,13 +3747,7 @@ namespace WPELibrary
             }
             if (this.InvokeRequired)
             {
-                try
-                {
-                    this.BeginInvoke(new Action(() => this.AppendVisionAssistantLog(message)));
-                }
-                catch (InvalidOperationException)
-                {
-                }
+                this.QueueVisionAssistantUiUpdate(null, message);
                 return;
             }
 
@@ -2069,6 +3763,86 @@ namespace WPELibrary
                 this.txtVisionAssistantLog.SelectionStart = this.txtVisionAssistantLog.TextLength;
             }
             this.txtVisionAssistantLog.ScrollToCaret();
+        }
+
+        private void QueueVisionAssistantUiUpdate(string status, string logMessage)
+        {
+            if (this.IsDisposed || !this.IsHandleCreated)
+            {
+                return;
+            }
+
+            bool schedule;
+            lock (this.visionAssistantUiSync)
+            {
+                if (status != null)
+                {
+                    this.pendingVisionAssistantStatus = status;
+                }
+                if (!string.IsNullOrWhiteSpace(logMessage))
+                {
+                    if (this.pendingVisionAssistantLogs.Count >= 128)
+                    {
+                        this.pendingVisionAssistantLogs.Dequeue();
+                    }
+                    this.pendingVisionAssistantLogs.Enqueue(logMessage);
+                }
+                schedule = !this.visionAssistantUiUpdateScheduled;
+                this.visionAssistantUiUpdateScheduled = true;
+            }
+
+            if (!schedule)
+            {
+                return;
+            }
+
+            try
+            {
+                this.BeginInvoke(new Action(this.FlushVisionAssistantUiUpdates));
+            }
+            catch (ObjectDisposedException)
+            {
+                lock (this.visionAssistantUiSync)
+                {
+                    this.visionAssistantUiUpdateScheduled = false;
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                lock (this.visionAssistantUiSync)
+                {
+                    this.visionAssistantUiUpdateScheduled = false;
+                }
+            }
+        }
+
+        private void FlushVisionAssistantUiUpdates()
+        {
+            string status;
+            List<string> logs = new List<string>();
+            lock (this.visionAssistantUiSync)
+            {
+                status = this.pendingVisionAssistantStatus;
+                this.pendingVisionAssistantStatus = null;
+                while (this.pendingVisionAssistantLogs.Count > 0)
+                {
+                    logs.Add(this.pendingVisionAssistantLogs.Dequeue());
+                }
+                this.visionAssistantUiUpdateScheduled = false;
+            }
+
+            if (this.IsDisposed)
+            {
+                return;
+            }
+            if (status != null)
+            {
+                this.SetVisionAssistantStatus(status);
+            }
+            foreach (string message in logs)
+            {
+                this.AppendVisionAssistantLog(message);
+            }
         }
 
         private void DisposeVisionAssistantCancellation()
@@ -2089,16 +3863,27 @@ namespace WPELibrary
 
             foreach (VisionAssistantStep step in profile.AssistantSteps)
             {
-                if (step != null && step.Condition != null && step.Condition.Template != null)
+                if (step == null)
                 {
-                    step.Condition.Template.Dispose();
-                    step.Condition.Template = null;
+                    continue;
                 }
-                if (step != null && step.Condition != null)
-                {
-                    step.Condition.DisposeTemplateVariants();
-                }
+                this.DisposeVisionConditionTemplates(step.Condition);
+                this.DisposeVisionConditionTemplates(step.Verification);
             }
+        }
+
+        private void DisposeVisionConditionTemplates(VisionConditionDefinition condition)
+        {
+            if (condition == null)
+            {
+                return;
+            }
+            if (condition.Template != null)
+            {
+                condition.Template.Dispose();
+                condition.Template = null;
+            }
+            condition.DisposeTemplateVariants();
         }
 
         private VisionOcrOptions ReadVisionOcrOptions()
@@ -2119,6 +3904,22 @@ namespace WPELibrary
             options.UseDenoise = this.chkVisionOcrDenoise.Checked;
             options.UseSharpen = this.chkVisionOcrSharpen.Checked;
             options.CharacterWhitelist = this.txtVisionOcrWhitelist.Text.Trim();
+            VisionOcrEngineChoice engine = this.cbbVisionOcrEngine == null
+                ? null
+                : this.cbbVisionOcrEngine.SelectedItem as VisionOcrEngineChoice;
+            options.Engine = engine == null ? VisionOcrEngine.Auto : engine.Engine;
+            options.OnnxModelDirectory = this.txtVisionOcrModelDirectory == null
+                ? "models\\ocr"
+                : this.txtVisionOcrModelDirectory.Text.Trim();
+            options.OnnxDetectionThreshold = this.nudVisionOcrDetectionThreshold == null
+                ? 0.3D
+                : (double)this.nudVisionOcrDetectionThreshold.Value;
+            options.OnnxRecognitionThreshold = this.nudVisionOcrRecognitionThreshold == null
+                ? 0.5D
+                : (double)this.nudVisionOcrRecognitionThreshold.Value;
+            options.OnnxMaxImageSide = this.nudVisionOcrMaxImageSide == null
+                ? 960
+                : (int)this.nudVisionOcrMaxImageSide.Value;
             return options;
         }
 
@@ -2137,6 +3938,42 @@ namespace WPELibrary
                 MaximumScale = Math.Min(2D, 1D + tolerance),
                 ScaleStep = 0.05D
             };
+        }
+
+        private void SelectVisionOcrEngine(VisionOcrEngine engine)
+        {
+            if (this.cbbVisionOcrEngine == null)
+            {
+                return;
+            }
+            for (int i = 0; i < this.cbbVisionOcrEngine.Items.Count; i++)
+            {
+                VisionOcrEngineChoice choice = this.cbbVisionOcrEngine.Items[i] as VisionOcrEngineChoice;
+                if (choice != null && choice.Engine == engine)
+                {
+                    this.cbbVisionOcrEngine.SelectedIndex = i;
+                    return;
+                }
+            }
+            this.cbbVisionOcrEngine.SelectedIndex = 0;
+        }
+
+        private void UpdateVisionOcrModelStatus()
+        {
+            if (this.lVisionOcrModelStatus == null || this.txtVisionOcrModelDirectory == null)
+            {
+                return;
+            }
+            VisionOcrEngineChoice choice = this.cbbVisionOcrEngine == null
+                ? null
+                : this.cbbVisionOcrEngine.SelectedItem as VisionOcrEngineChoice;
+            if (choice != null && choice.Engine == VisionOcrEngine.Tesseract)
+            {
+                this.lVisionOcrModelStatus.Text = UiText("Vision_OcrTesseractStatus");
+                return;
+            }
+            this.lVisionOcrModelStatus.Text = VisionOnnxTextRecognizer.DescribeModelDirectory(
+                this.txtVisionOcrModelDirectory.Text.Trim());
         }
 
         private void bSaveVisionProfile_Click(object sender, EventArgs e)
@@ -2161,17 +3998,80 @@ namespace WPELibrary
 
             try
             {
+                VisionCaptureSettings captureSettings = this.ReadVisionCaptureSettings();
+                captureSettings.Validate();
+                Size clientSize;
+                string clientSizeError;
+                if (!VisionWindowService.TryValidateClientSize(
+                    window.Handle,
+                    captureSettings,
+                    out clientSize,
+                    out clientSizeError))
+                {
+                    throw new InvalidOperationException(clientSizeError);
+                }
                 VisionRegion region = this.ReadVisionRegion();
-                if (!region.FitsWithin(window.ClientSize))
+                if (!region.FitsWithin(clientSize))
                 {
                     throw new InvalidOperationException(
                         string.Format(
                             "The region must stay inside the client area ({0}x{1}).",
-                            window.ClientSize.Width,
-                            window.ClientSize.Height));
+                            clientSize.Width,
+                            clientSize.Height));
+                }
+                if (captureSettings.RequireExactClientSize && region.UseNormalizedCoordinates)
+                {
+                    throw new InvalidOperationException(UiText("Vision_FixedCoordinatesRequired"));
                 }
 
                 Socket_VisionProfile profile = this.sriSelect.VisionProfile ?? new Socket_VisionProfile();
+                VisionAssistantStep selectedStep = this.cbbVisionSteps == null
+                    ? null
+                    : this.cbbVisionSteps.SelectedItem as VisionAssistantStep;
+                if (selectedStep != null && !this.updatingVisionStepEditor)
+                {
+                    this.ApplyVisionConditionEditors(selectedStep, region);
+                    selectedStep.ActionDefinition = this.ReadVisionActionDefinition();
+                    VisionConditionDefinition verification = null;
+                    try
+                    {
+                        verification = this.ReadVisionVerificationCondition();
+                        if (this.chkVisionActionVerification.Checked && verification == null)
+                        {
+                            this.SetVisionStatus(UiText("Vision_VerificationIncomplete"));
+                            return false;
+                        }
+                        if (verification != null && !verification.Region.FitsWithin(clientSize))
+                        {
+                            this.SetVisionStatus(
+                                string.Format(
+                                    UiText("Vision_ProfileInvalid"),
+                                    "The verification region must stay inside the target client area."));
+                            return false;
+                        }
+                        if (verification != null && captureSettings.RequireExactClientSize &&
+                            verification.Region.UseNormalizedCoordinates)
+                        {
+                            this.SetVisionStatus(string.Format(
+                                UiText("Vision_ProfileInvalid"),
+                                UiText("Vision_FixedCoordinatesRequired")));
+                            return false;
+                        }
+                        this.DisposeVisionConditionTemplates(selectedStep.Verification);
+                        selectedStep.VerificationEnabled = verification != null;
+                        selectedStep.Verification = verification;
+                        selectedStep.VerificationUsesSeparateRegion = verification != null &&
+                            this.chkVisionVerificationSeparateRegion.Checked;
+                        verification = null;
+                    }
+                    finally
+                    {
+                        if (verification != null)
+                        {
+                            this.DisposeVisionConditionTemplates(verification);
+                        }
+                    }
+                }
                 profile.WindowHandle = window.Handle.ToInt64();
                 profile.ProcessId = window.ProcessId;
                 profile.ProcessName = window.ProcessName;
@@ -2179,11 +4079,16 @@ namespace WPELibrary
                 profile.ProcessStartTimeUtcTicks = window.ProcessStartTimeUtcTicks;
                 profile.WindowTitle = window.WindowTitle;
                 profile.Region = region;
-                profile.CaptureSettings = this.ReadVisionCaptureSettings();
+                profile.CaptureSettings = captureSettings;
                 profile.OcrOptions = this.ReadVisionOcrOptions();
                 profile.OcrCondition = profile.OcrCondition ?? new VisionTextCondition();
                 profile.OcrCondition.ExpectedText = this.txtVisionOcrKeyword.Text.Trim();
                 profile.OcrCondition.MatchMode = VisionTextMatchMode.Contains;
+                if (!this.SyncVisionAssistantStepsFromInstructions(profile))
+                {
+                    return false;
+                }
+                this.ValidateVisionProfileRegions(profile, captureSettings, clientSize);
                 this.sriSelect.VisionProfile = profile;
                 return true;
             }
@@ -2226,7 +4131,97 @@ namespace WPELibrary
             settings.HistoryLimit = (int)this.nudVisionHistoryLimit.Value;
             settings.SaveFailureSnapshots = this.chkVisionSaveFailureSnapshots != null &&
                 this.chkVisionSaveFailureSnapshots.Checked;
+            settings.RequireExactClientSize = this.chkVisionFixedClientSize != null &&
+                this.chkVisionFixedClientSize.Checked;
+            settings.RequiredClientWidth = this.nudVisionRequiredWidth == null
+                ? 0
+                : (int)this.nudVisionRequiredWidth.Value;
+            settings.RequiredClientHeight = this.nudVisionRequiredHeight == null
+                ? 0
+                : (int)this.nudVisionRequiredHeight.Value;
             return settings;
+        }
+
+        private void ValidateVisionProfileRegions(
+            Socket_VisionProfile profile,
+            VisionCaptureSettings captureSettings,
+            Size clientSize)
+        {
+            if (profile == null || captureSettings == null)
+            {
+                throw new ArgumentNullException("profile");
+            }
+            if (profile.Region == null || !profile.Region.FitsWithin(clientSize))
+            {
+                throw new InvalidOperationException(
+                    string.Format(
+                        "The profile region must stay inside the target client area ({0}x{1}).",
+                        clientSize.Width,
+                        clientSize.Height));
+            }
+            if (captureSettings.RequireExactClientSize && profile.Region.UseNormalizedCoordinates)
+            {
+                throw new InvalidOperationException(UiText("Vision_FixedCoordinatesRequired"));
+            }
+            if (profile.AssistantSteps == null)
+            {
+                return;
+            }
+            foreach (VisionAssistantStep step in profile.AssistantSteps)
+            {
+                if (step == null)
+                {
+                    throw new InvalidOperationException("A vision assistant step is missing.");
+                }
+                if (step.Condition == null)
+                {
+                    throw new InvalidOperationException(
+                        string.Format("Step '{0}' has no vision condition.", step.Name));
+                }
+                if (step.ActionDefinition != null)
+                {
+                    step.ActionDefinition.Validate();
+                }
+                string error;
+                if (!step.Condition.FitsWithin(clientSize, out error))
+                {
+                    throw new InvalidOperationException(
+                        string.Format("Step '{0}' has an invalid region: {1}", step.Name, error));
+                }
+                if (captureSettings.RequireExactClientSize &&
+                    step.Condition.Region != null &&
+                    step.Condition.Region.UseNormalizedCoordinates)
+                {
+                    throw new InvalidOperationException(
+                        string.Format(
+                            UiText("Vision_ProfileInvalid"),
+                            UiText("Vision_FixedCoordinatesRequired")));
+                }
+                if (step.VerificationEnabled)
+                {
+                    if (step.Verification == null)
+                    {
+                        throw new InvalidOperationException(
+                            string.Format(
+                                UiText("Vision_ProfileInvalid"),
+                                UiText("Vision_VerificationIncomplete")));
+                    }
+                    if (!step.Verification.FitsWithin(clientSize, out error))
+                    {
+                        throw new InvalidOperationException(
+                            string.Format("Step '{0}' has an invalid verification region: {1}", step.Name, error));
+                    }
+                    if (captureSettings.RequireExactClientSize &&
+                        step.Verification.Region != null &&
+                        step.Verification.Region.UseNormalizedCoordinates)
+                    {
+                        throw new InvalidOperationException(
+                            string.Format(
+                                UiText("Vision_ProfileInvalid"),
+                                UiText("Vision_FixedCoordinatesRequired")));
+                    }
+                }
+            }
         }
 
         private void SelectVisionCaptureSource(VisionCaptureSourceMode mode)
@@ -2361,6 +4356,7 @@ namespace WPELibrary
             this.DisposeVisionCapture();
             this.visionPreview = new Bitmap(entry.Image);
             this.pbVisionPreview.Image = this.visionPreview;
+            this.UpdateVisionPreviewEmptyState();
             this.visionPreviewSelection = Rectangle.Empty;
             this.SetVisionStatus(string.Format(UiText("Vision_HistoryLoaded"), entry.DisplayName));
         }
@@ -2512,7 +4508,9 @@ namespace WPELibrary
         {
             if (this.lVisionOcrStatus != null)
             {
-                this.lVisionOcrStatus.Text = status ?? string.Empty;
+                string text = status ?? string.Empty;
+                this.lVisionOcrStatus.Text = text;
+                this.lVisionOcrStatus.Visible = !string.IsNullOrWhiteSpace(text);
             }
         }
 
@@ -2565,6 +4563,15 @@ namespace WPELibrary
                 this.visionPreview.Dispose();
                 this.visionPreview = null;
             }
+            this.UpdateVisionPreviewEmptyState();
+        }
+
+        private void UpdateVisionPreviewEmptyState()
+        {
+            if (this.lVisionPreviewEmpty != null)
+            {
+                this.lVisionPreviewEmpty.Visible = this.visionPreview == null;
+            }
         }
 
         private void DisposeVisionTemplate()
@@ -2600,6 +4607,11 @@ namespace WPELibrary
 
         private void Socket_RobotForm_FormClosed(object sender, FormClosedEventArgs e)
         {
+            this.visionRobotClosing = true;
+            if (this.sr.Worker.IsBusy)
+            {
+                this.sr.StopRobot();
+            }
             if (this.visionAssistantCancellation != null)
             {
                 this.visionAssistantCancellation.Cancel();
@@ -2612,7 +4624,42 @@ namespace WPELibrary
             {
                 this.visionMatchCancellation.Cancel();
             }
+            if (!this.sr.Worker.IsBusy)
+            {
+                this.DisposeVisionTextRecognizerWhenIdle();
+            }
             this.DisposeVisionPreview();
+        }
+
+        private void DisposeVisionTextRecognizerWhenIdle()
+        {
+            IDisposable disposableRecognizer = this.visionTextRecognizer as IDisposable;
+            this.visionTextRecognizer = null;
+            if (disposableRecognizer == null)
+            {
+                return;
+            }
+
+            List<Task> runningTasks = new List<Task>();
+            if (this.visionAssistantTask != null && !this.visionAssistantTask.IsCompleted)
+            {
+                runningTasks.Add(this.visionAssistantTask);
+            }
+            if (this.visionOcrTask != null && !this.visionOcrTask.IsCompleted)
+            {
+                runningTasks.Add(this.visionOcrTask);
+            }
+            if (runningTasks.Count == 0)
+            {
+                disposableRecognizer.Dispose();
+                return;
+            }
+
+            Task.WhenAll(runningTasks).ContinueWith(
+                task => disposableRecognizer.Dispose(),
+                CancellationToken.None,
+                TaskContinuationOptions.None,
+                TaskScheduler.Default);
         }
 
         private void dgvRobotInstruction_Paint(object sender, PaintEventArgs e)
@@ -2777,6 +4824,34 @@ namespace WPELibrary
             }
         }        
 
+        private void dgvRobotInstruction_CellToolTipTextNeeded(
+            object sender,
+            DataGridViewCellToolTipTextNeededEventArgs e)
+        {
+            try
+            {
+                if (e.RowIndex < 0 || e.ColumnIndex < 0 ||
+                    e.RowIndex >= this.dgvRobotInstruction.Rows.Count ||
+                    e.ColumnIndex >= this.dgvRobotInstruction.Columns.Count)
+                {
+                    return;
+                }
+
+                DataGridViewColumn column = this.dgvRobotInstruction.Columns[e.ColumnIndex];
+                if (column.Name == "cRobotInstruction_Content")
+                {
+                    DataGridViewCell cell = this.dgvRobotInstruction.Rows[e.RowIndex].Cells[e.ColumnIndex];
+                    e.ToolTipText = cell.FormattedValue == null
+                        ? string.Empty
+                        : cell.FormattedValue.ToString();
+                }
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
         #endregion
 
         #region//保存按钮
@@ -2806,8 +4881,9 @@ namespace WPELibrary
                     }
                 }
 
-                if (this.cbbVisionWindows != null && this.cbbVisionWindows.SelectedItem != null &&
-                    !this.TryApplyVisionProfile())
+                bool hasVisionConfiguration = this.HasVisionInstructionRows() ||
+                    (this.cbbVisionWindows != null && this.cbbVisionWindows.SelectedItem != null);
+                if (hasVisionConfiguration && !this.TryApplyVisionProfile())
                 {
                     return;
                 }
@@ -2841,6 +4917,11 @@ namespace WPELibrary
             {
                 if (this.dtRobotInstruction.Rows.Count > 0)
                 {
+                    if (this.HasVisionInstructionRows() && !this.TryApplyVisionProfile())
+                    {
+                        return;
+                    }
+
                     int iReturn = Socket_Cache.Robot.CheckRobotInstruction(this.dtRobotInstruction, false);
 
                     if (iReturn > -1 && iReturn < dgvRobotInstruction.Rows.Count)
@@ -2863,7 +4944,19 @@ namespace WPELibrary
                             this.dgvRobotInstruction.ContextMenuStrip.Enabled = false;
                         }
 
-                        sr.StartRobot(sriSelect.RName, this.dtRobotInstruction, null);
+                        Dictionary<string, object> parameters;
+                        if (!this.TryBuildRobotExecutionParameters(out parameters))
+                        {
+                            this.bExecute.Enabled = true;
+                            this.bStop.Enabled = false;
+                            this.tcRobotInstruction.Enabled = true;
+                            if (this.dgvRobotInstruction.ContextMenuStrip != null)
+                            {
+                                this.dgvRobotInstruction.ContextMenuStrip.Enabled = true;
+                            }
+                            return;
+                        }
+                        sr.StartRobot(sriSelect.RName, this.dtRobotInstruction, parameters);
                     }
                 }                
             }
@@ -2871,6 +4964,42 @@ namespace WPELibrary
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
+        }
+
+        private bool TryBuildRobotExecutionParameters(out Dictionary<string, object> parameters)
+        {
+            parameters = new Dictionary<string, object>();
+            if (!this.HasVisionInstructionRows())
+            {
+                return true;
+            }
+
+            Socket_VisionProfile runProfile = this.sriSelect.VisionProfile.Clone();
+            bool hasSystemInputAction = runProfile.AssistantSteps.Any(
+                step => step != null && step.ActionDefinition != null &&
+                    step.ActionDefinition.Type != VisionActionType.None);
+            if (hasSystemInputAction)
+            {
+                DialogResult confirmation = MessageBox.Show(
+                    this,
+                    UiText("Vision_ActionSafetyPrompt"),
+                    UiText("Vision_ActionSafetyTitle"),
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2);
+                if (confirmation != DialogResult.Yes)
+                {
+                    this.DisposeVisionProfileTemplates(runProfile);
+                    this.SetVisionAssistantStatus(UiText("Vision_ActionSafetyCancelled"));
+                    return false;
+                }
+                runProfile.AllowSystemInput = true;
+            }
+
+            this.robotExecutionVisionProfile = runProfile;
+            parameters["VisionProfile"] = runProfile;
+            parameters["VisionTextRecognizer"] = this.visionTextRecognizer;
+            return true;
         }
 
         private void Worker_RunWorkerCompleted(object sender, System.ComponentModel.RunWorkerCompletedEventArgs e)
@@ -2901,10 +5030,33 @@ namespace WPELibrary
                 {
                     this.dgvRobotInstruction.ContextMenuStrip.Enabled = true;
                 }
+
+                if (this.robotExecutionVisionProfile != null)
+                {
+                    this.DisposeVisionProfileTemplates(this.robotExecutionVisionProfile);
+                    this.robotExecutionVisionProfile = null;
+                }
+
+                if (this.visionRobotClosing)
+                {
+                    this.DisposeVisionTextRecognizerWhenIdle();
+                }
             }
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+            finally
+            {
+                if (this.robotExecutionVisionProfile != null)
+                {
+                    this.DisposeVisionProfileTemplates(this.robotExecutionVisionProfile);
+                    this.robotExecutionVisionProfile = null;
+                }
+                if (this.visionRobotClosing)
+                {
+                    this.DisposeVisionTextRecognizerWhenIdle();
+                }
             }
         }
 
@@ -3061,6 +5213,12 @@ namespace WPELibrary
                             case "cmsRobotInstruction_CleanUp":
                                 iIndex = this.UpdateInstruction_ByListAction(Socket_Cache.System.ListAction.CleanUp, iInstructionIndex);
                                 break;
+                        }
+
+                        if (this.sriSelect != null)
+                        {
+                            this.SyncVisionAssistantStepsFromInstructions(this.sriSelect.VisionProfile);
+                            this.RefreshVisionAssistantSteps();
                         }
 
                         if (iIndex > -1 && iIndex < dgvRobotInstruction.RowCount)
@@ -3540,6 +5698,135 @@ namespace WPELibrary
 
         #endregion        
 
+        private static Rectangle CalculateVisionSelectionRectangle(Point start, Point end)
+        {
+            return Rectangle.FromLTRB(
+                Math.Min(start.X, end.X),
+                Math.Min(start.Y, end.Y),
+                Math.Max(start.X, end.X),
+                Math.Max(start.Y, end.Y));
+        }
+
+        private sealed class VisionRegionPickerForm : Form
+        {
+            private readonly string hint;
+            private bool selecting;
+            private Point selectionStart;
+
+            public Rectangle SelectedRectangle { get; private set; }
+
+            public VisionRegionPickerForm(Rectangle clientBoundsScreen, string hint)
+            {
+                this.hint = hint ?? string.Empty;
+                this.FormBorderStyle = FormBorderStyle.None;
+                this.StartPosition = FormStartPosition.Manual;
+                this.ShowInTaskbar = false;
+                this.TopMost = true;
+                this.DoubleBuffered = true;
+                this.KeyPreview = true;
+                this.Cursor = Cursors.Cross;
+                this.BackColor = Color.Black;
+                this.Opacity = 0.28D;
+                this.Location = clientBoundsScreen.Location;
+                this.ClientSize = clientBoundsScreen.Size;
+                this.SetStyle(
+                    ControlStyles.AllPaintingInWmPaint |
+                    ControlStyles.UserPaint |
+                    ControlStyles.OptimizedDoubleBuffer,
+                    true);
+            }
+
+            protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+            {
+                if ((keyData & Keys.KeyCode) == Keys.Escape)
+                {
+                    this.SelectedRectangle = Rectangle.Empty;
+                    this.DialogResult = DialogResult.Cancel;
+                    return true;
+                }
+                return base.ProcessCmdKey(ref msg, keyData);
+            }
+
+            protected override void OnMouseDown(MouseEventArgs e)
+            {
+                base.OnMouseDown(e);
+                if (e.Button != MouseButtons.Left)
+                {
+                    return;
+                }
+
+                this.selecting = true;
+                this.selectionStart = e.Location;
+                this.SelectedRectangle = new Rectangle(e.Location, Size.Empty);
+                this.Capture = true;
+                this.Invalidate();
+            }
+
+            protected override void OnMouseMove(MouseEventArgs e)
+            {
+                base.OnMouseMove(e);
+                if (!this.selecting)
+                {
+                    return;
+                }
+
+                this.SelectedRectangle = CalculateVisionSelectionRectangle(
+                    this.selectionStart,
+                    new Point(
+                        Math.Max(0, Math.Min(this.ClientSize.Width, e.X)),
+                        Math.Max(0, Math.Min(this.ClientSize.Height, e.Y))));
+                this.Invalidate();
+            }
+
+            protected override void OnMouseUp(MouseEventArgs e)
+            {
+                base.OnMouseUp(e);
+                if (!this.selecting || e.Button != MouseButtons.Left)
+                {
+                    return;
+                }
+
+                this.selecting = false;
+                this.Capture = false;
+                this.SelectedRectangle = CalculateVisionSelectionRectangle(
+                    this.selectionStart,
+                    new Point(
+                        Math.Max(0, Math.Min(this.ClientSize.Width, e.X)),
+                        Math.Max(0, Math.Min(this.ClientSize.Height, e.Y))));
+                if (this.SelectedRectangle.Width >= 2 && this.SelectedRectangle.Height >= 2)
+                {
+                    this.DialogResult = DialogResult.OK;
+                }
+                else
+                {
+                    this.SelectedRectangle = Rectangle.Empty;
+                }
+                this.Invalidate();
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+                using (SolidBrush brush = new SolidBrush(Color.White))
+                using (Font font = new Font(SystemFonts.DefaultFont, FontStyle.Bold))
+                {
+                    e.Graphics.DrawString(this.hint, font, brush, new PointF(12F, 12F));
+                }
+
+                if (this.SelectedRectangle.Width <= 0 || this.SelectedRectangle.Height <= 0)
+                {
+                    return;
+                }
+
+                using (Pen pen = new Pen(Color.Red, 2F))
+                using (SolidBrush fill = new SolidBrush(Color.FromArgb(45, Color.DeepSkyBlue)))
+                {
+                    e.Graphics.FillRectangle(fill, this.SelectedRectangle);
+                    e.Graphics.DrawRectangle(pen, this.SelectedRectangle);
+                }
+            }
+        }
+
         private sealed class VisionCaptureSourceChoice
         {
             public VisionCaptureSourceMode Mode { get; private set; }
@@ -3597,6 +5884,74 @@ namespace WPELibrary
                 this.Text = text;
             }
 
+            public override string ToString()
+            {
+                return this.Text;
+            }
+        }
+
+        private sealed class VisionOcrEngineChoice
+        {
+            public VisionOcrEngine Engine { get; private set; }
+
+            public string Text { get; private set; }
+
+            public VisionOcrEngineChoice(VisionOcrEngine engine, string text)
+            {
+                this.Engine = engine;
+                this.Text = text;
+            }
+
+            public override string ToString()
+            {
+                return this.Text;
+            }
+        }
+
+        private sealed class VisionActionChoice
+        {
+            public VisionActionType Type { get; private set; }
+
+            public string Text { get; private set; }
+
+            public VisionActionChoice(VisionActionType type, string text)
+            {
+                this.Type = type;
+                this.Text = text;
+            }
+
+            public override string ToString()
+            {
+                return this.Text;
+            }
+        }
+
+        private sealed class VisionScrollChoice
+        {
+            public VisionScrollDirection Direction { get; private set; }
+
+            public string Text { get; private set; }
+
+            public VisionScrollChoice(VisionScrollDirection direction, string text)
+            {
+                this.Direction = direction;
+                this.Text = text;
+            }
+
+            public override string ToString()
+            {
+                return this.Text;
+            }
+        }
+        private sealed class VisionVerificationChoice
+        {
+            public VisionConditionType Type { get; private set; }
+            public string Text { get; private set; }
+            public VisionVerificationChoice(VisionConditionType type, string text)
+            {
+                this.Type = type;
+                this.Text = text;
+            }
             public override string ToString()
             {
                 return this.Text;

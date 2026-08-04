@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Threading;
 using System.Windows.Forms;
 using WindowsInput.Native;
+using WPELibrary.Lib.Vision;
 
 namespace WPELibrary.Lib
 {
@@ -18,6 +19,7 @@ namespace WPELibrary.Lib
 
         private CancellationTokenSource cts;
         private DataTable RobotInstruction = new DataTable();
+        private readonly ManualResetEventSlim robotStopped = new ManualResetEventSlim(true);
         public BackgroundWorker Worker = new BackgroundWorker();
         private readonly WindowsInput.InputSimulator sim = new WindowsInput.InputSimulator();        
 
@@ -73,7 +75,16 @@ namespace WPELibrary.Lib
                         else
                         {
                             this.cts = new CancellationTokenSource();
-                            this.Worker.RunWorkerAsync();
+                            this.robotStopped.Reset();
+                            try
+                            {
+                                this.Worker.RunWorkerAsync();
+                            }
+                            catch
+                            {
+                                this.robotStopped.Set();
+                                throw;
+                            }
 
                             string sLog = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_109), this.RobotName);
                             Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, sLog);
@@ -109,6 +120,11 @@ namespace WPELibrary.Lib
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
+        }
+
+        public bool WaitForCompletion(int millisecondsTimeout)
+        {
+            return this.robotStopped.Wait(Math.Max(0, millisecondsTimeout));
         }
 
         #endregion
@@ -457,6 +473,27 @@ namespace WPELibrary.Lib
                                     }
 
                                     break;
+
+                                case Socket_Cache.Robot.InstructionType.VisionWait:
+
+                                    VisionAssistantRunResult visionResult = this.RunVisionInstruction(sContent);
+                                    if (visionResult == null || visionResult.Cancelled)
+                                    {
+                                        e.Cancel = true;
+                                        return;
+                                    }
+                                    if (!visionResult.Succeeded)
+                                    {
+                                        Socket_Operation.DoLog(
+                                            MethodBase.GetCurrentMethod().Name,
+                                            string.IsNullOrWhiteSpace(visionResult.Error)
+                                                ? "Vision instruction failed."
+                                                : visionResult.Error);
+                                        e.Cancel = true;
+                                        return;
+                                    }
+
+                                    break;
                             }
 
                             if (instructionType != Socket_Cache.Robot.InstructionType.LoopStart && instructionType != Socket_Cache.Robot.InstructionType.LoopEnd)
@@ -470,10 +507,64 @@ namespace WPELibrary.Lib
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                if (this.Worker.CancellationPending ||
+                    (this.cts != null && this.cts.IsCancellationRequested))
+                {
+                    e.Cancel = true;
+                    return;
+                }
+                throw;
             }
         }
 
         #endregion
+
+        private VisionAssistantRunResult RunVisionInstruction(string content)
+        {
+            Socket_VisionProfile profile = this.GetParameter("VisionProfile") as Socket_VisionProfile;
+            IVisionTextRecognizer recognizer = this.GetParameter("VisionTextRecognizer") as IVisionTextRecognizer;
+            if (profile == null || recognizer == null)
+            {
+                return new VisionAssistantRunResult
+                {
+                    Error = "Vision instruction requires a configured vision profile and OCR recognizer."
+                };
+            }
+
+            if (string.IsNullOrEmpty(content) ||
+                !content.StartsWith(
+                    Socket_Cache.Robot.VisionInstructionContentPrefix,
+                    StringComparison.Ordinal))
+            {
+                return new VisionAssistantRunResult
+                {
+                    Error = "Vision instruction content is invalid."
+                };
+            }
+
+            string payload = content.Substring(Socket_Cache.Robot.VisionInstructionContentPrefix.Length);
+            int separator = payload.IndexOf('|');
+            string indexText = separator >= 0 ? payload.Substring(0, separator) : payload;
+            int stepIndex;
+            if (!int.TryParse(indexText, out stepIndex) ||
+                stepIndex < 0 ||
+                profile.AssistantSteps == null ||
+                stepIndex >= profile.AssistantSteps.Count ||
+                profile.AssistantSteps[stepIndex] == null)
+            {
+                return new VisionAssistantRunResult
+                {
+                    Error = "Vision instruction references a missing assistant step."
+                };
+            }
+
+            return VisionAssistantRunner.Run(
+                profile,
+                new[] { profile.AssistantSteps[stepIndex] },
+                recognizer,
+                this.cts == null ? CancellationToken.None : this.cts.Token,
+                null);
+        }
 
         #region//汇报进度
 
@@ -509,6 +600,10 @@ namespace WPELibrary.Lib
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+            finally
+            {
+                this.robotStopped.Set();
             }
         }
 

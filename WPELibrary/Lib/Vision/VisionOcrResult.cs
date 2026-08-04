@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace WPELibrary.Lib.Vision
 {
@@ -36,24 +37,42 @@ namespace WPELibrary.Lib.Vision
 
         public int ExitCode { get; private set; }
 
+        public IList<VisionOcrTextBox> TextBoxes { get; private set; }
+
         public static VisionOcrResult Succeeded(string text, double confidence)
         {
-            return new VisionOcrResult(true, true, false, text, confidence, string.Empty, 0);
+            return Succeeded(text, confidence, null);
+        }
+
+        public static VisionOcrResult Succeeded(
+            string text,
+            double confidence,
+            IList<VisionOcrTextBox> textBoxes)
+        {
+            VisionOcrResult result = new VisionOcrResult(true, true, false, text, confidence, string.Empty, 0);
+            result.TextBoxes = textBoxes ?? new List<VisionOcrTextBox>();
+            return result;
         }
 
         public static VisionOcrResult Failed(string error, string text, double confidence, int exitCode)
         {
-            return new VisionOcrResult(false, true, false, text, confidence, error, exitCode);
+            VisionOcrResult result = new VisionOcrResult(false, true, false, text, confidence, error, exitCode);
+            result.TextBoxes = new List<VisionOcrTextBox>();
+            return result;
         }
 
         public static VisionOcrResult Unavailable(string error)
         {
-            return new VisionOcrResult(false, false, false, string.Empty, 0D, error, -1);
+            VisionOcrResult result = new VisionOcrResult(false, false, false, string.Empty, 0D, error, -1);
+            result.TextBoxes = new List<VisionOcrTextBox>();
+            return result;
         }
 
         public static VisionOcrResult CancelledResult()
         {
-            return new VisionOcrResult(false, true, true, string.Empty, 0D, "OCR cancelled.", -1);
+            VisionOcrResult result = new VisionOcrResult(false, true, true, string.Empty, 0D, "OCR cancelled.", -1);
+            result.TextBoxes = new List<VisionOcrTextBox>();
+            return result;
         }
     }
 }

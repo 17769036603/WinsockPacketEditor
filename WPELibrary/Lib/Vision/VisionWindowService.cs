@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace WPELibrary.Lib.Vision
 {
@@ -53,9 +54,93 @@ namespace WPELibrary.Lib.Vision
         private static extern bool ClientToScreen(IntPtr hWnd, ref NativePoint point);
 
         [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool BringWindowToTop(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr SetActiveWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetCurrentThreadId();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool ShowWindowAsync(IntPtr hWnd, int command);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll", SetLastError = true)]
         private static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint flags);
 
         private const uint PrintWindowClientOnly = 1;
+        private const int ShowWindowRestore = 9;
+
+        public static bool TryActivateWindow(IntPtr hWnd)
+        {
+            if (hWnd == IntPtr.Zero || !IsWindow(hWnd) || !IsWindowVisible(hWnd))
+            {
+                return false;
+            }
+            if (IsIconic(hWnd))
+            {
+                ShowWindowAsync(hWnd, ShowWindowRestore);
+            }
+            if (GetForegroundWindow() == hWnd)
+            {
+                return true;
+            }
+
+            uint currentThreadId = GetCurrentThreadId();
+            IntPtr foregroundWindow = GetForegroundWindow();
+            uint ignoredProcessId;
+            uint foregroundThreadId = foregroundWindow == IntPtr.Zero
+                ? 0
+                : GetWindowThreadProcessId(foregroundWindow, out ignoredProcessId);
+            bool attachedToForegroundThread = false;
+            try
+            {
+                // The assistant runs on a worker thread. Temporarily joining the
+                // current foreground input queue allows Windows to honor this
+                // activation request without weakening the final verification.
+                if (foregroundThreadId != 0 && foregroundThreadId != currentThreadId)
+                {
+                    attachedToForegroundThread = AttachThreadInput(
+                        currentThreadId,
+                        foregroundThreadId,
+                        true);
+                }
+
+                for (int attempt = 0; attempt < 4; attempt++)
+                {
+                    if (IsIconic(hWnd))
+                    {
+                        ShowWindowAsync(hWnd, ShowWindowRestore);
+                    }
+                    BringWindowToTop(hWnd);
+                    SetActiveWindow(hWnd);
+                    SetForegroundWindow(hWnd);
+                    if (GetForegroundWindow() == hWnd)
+                    {
+                        return true;
+                    }
+                    Thread.Sleep(25);
+                }
+
+                return GetForegroundWindow() == hWnd;
+            }
+            finally
+            {
+                if (attachedToForegroundThread)
+                {
+                    AttachThreadInput(currentThreadId, foregroundThreadId, false);
+                }
+            }
+        }
 
         public static IList<VisionWindowInfo> EnumerateVisibleWindows(int excludedProcessId)
         {
@@ -133,6 +218,69 @@ namespace WPELibrary.Lib.Vision
             return windows;
         }
 
+        public static bool TryFindInjectedTargetWindow(
+            IList<VisionWindowInfo> windows,
+            int injectedProcessId,
+            string injectedProcessName,
+            out VisionWindowInfo targetWindow)
+        {
+            targetWindow = null;
+            if (windows == null || windows.Count == 0 || injectedProcessId <= 0)
+            {
+                return false;
+            }
+
+            VisionWindowInfo sameProcessWindow = null;
+            for (int i = 0; i < windows.Count; i++)
+            {
+                VisionWindowInfo window = windows[i];
+                if (window.ProcessId != injectedProcessId)
+                {
+                    continue;
+                }
+
+                if (sameProcessWindow != null)
+                {
+                    return false;
+                }
+
+                sameProcessWindow = window;
+            }
+
+            if (sameProcessWindow != null)
+            {
+                targetWindow = sameProcessWindow;
+                return true;
+            }
+
+            if (!IsLdPlayerEngineProcess(injectedProcessName))
+            {
+                return false;
+            }
+
+            VisionWindowInfo ldPlayerWindow = null;
+            int ldPlayerWindowCount = 0;
+            for (int i = 0; i < windows.Count; i++)
+            {
+                VisionWindowInfo window = windows[i];
+                if (!IsLdPlayerFrontendProcess(window.ProcessName))
+                {
+                    continue;
+                }
+
+                ldPlayerWindow = window;
+                ldPlayerWindowCount++;
+            }
+
+            if (ldPlayerWindowCount != 1)
+            {
+                return false;
+            }
+
+            targetWindow = ldPlayerWindow;
+            return true;
+        }
+
         public static bool TryGetClientBounds(
             IntPtr hWnd,
             out Rectangle clientBoundsScreen,
@@ -200,11 +348,26 @@ namespace WPELibrary.Lib.Vision
                 throw new InvalidOperationException("The target window is not visible or is minimized.");
             }
 
+            VisionCaptureSettings effectiveSettings = settings == null
+                ? new VisionCaptureSettings()
+                : settings.Clone();
+            effectiveSettings.Validate();
+
             Rectangle clientBounds;
             Size clientSize;
             if (!TryGetClientBounds(hWnd, out clientBounds, out clientSize))
             {
                 throw new InvalidOperationException("The target window client area is unavailable.");
+            }
+
+            string clientSizeError;
+            if (!TryValidateClientSize(clientSize, effectiveSettings, out clientSizeError))
+            {
+                throw new VisionClientSizeMismatchException(
+                    clientSize,
+                    new Size(
+                        effectiveSettings.RequiredClientWidth,
+                        effectiveSettings.RequiredClientHeight));
             }
 
             if (!region.FitsWithin(clientSize))
@@ -214,10 +377,6 @@ namespace WPELibrary.Lib.Vision
                     "The vision region must stay inside the current client area.");
             }
 
-            VisionCaptureSettings effectiveSettings = settings == null
-                ? new VisionCaptureSettings()
-                : settings.Clone();
-            effectiveSettings.Validate();
             Rectangle effectiveRegion = region.Resolve(clientSize);
 
             Rectangle screenRegion = new Rectangle(
@@ -227,6 +386,22 @@ namespace WPELibrary.Lib.Vision
                 effectiveRegion.Height);
 
             Exception screenCaptureFailure = null;
+            if (effectiveSettings.SourceMode == VisionCaptureSourceMode.Auto &&
+                GetForegroundWindow() != hWnd)
+            {
+                VisionCaptureResult backgroundRender = CaptureWindowRender(
+                    hWnd,
+                    clientSize,
+                    effectiveRegion,
+                    effectiveSettings);
+                if (backgroundRender != null)
+                {
+                    return backgroundRender;
+                }
+                throw new InvalidOperationException(
+                    "The target window is in the background and could not be rendered safely.");
+            }
+
             if (effectiveSettings.SourceMode != VisionCaptureSourceMode.WindowRender)
             {
                 Bitmap bitmap = new Bitmap(effectiveRegion.Width, effectiveRegion.Height, PixelFormat.Format32bppArgb);
@@ -240,7 +415,15 @@ namespace WPELibrary.Lib.Vision
                             screenRegion.Size,
                             CopyPixelOperation.SourceCopy);
                     }
-                    return CreateCaptureResult(bitmap, VisionCaptureSourceMode.Screen, effectiveSettings);
+                    VisionCaptureResult screenResult = CreateCaptureResult(
+                        bitmap,
+                        VisionCaptureSourceMode.Screen,
+                        effectiveSettings);
+                    if (!screenResult.IsBlank || effectiveSettings.SourceMode == VisionCaptureSourceMode.Screen)
+                    {
+                        return screenResult;
+                    }
+                    screenResult.Dispose();
                 }
                 catch (Exception ex)
                 {
@@ -255,23 +438,98 @@ namespace WPELibrary.Lib.Vision
                 }
             }
 
-            Bitmap clientCapture = TryPrintWindowClient(hWnd, clientSize);
-            if (clientCapture != null)
+            VisionCaptureResult windowRender = CaptureWindowRender(
+                hWnd,
+                clientSize,
+                effectiveRegion,
+                effectiveSettings);
+            if (windowRender != null)
             {
-                try
-                {
-                    Bitmap bitmap = clientCapture.Clone(effectiveRegion, PixelFormat.Format32bppArgb);
-                    return CreateCaptureResult(bitmap, VisionCaptureSourceMode.WindowRender, effectiveSettings);
-                }
-                finally
-                {
-                    clientCapture.Dispose();
-                }
+                return windowRender;
             }
 
             throw new InvalidOperationException(
                 "The target client area could not be captured by screen or window rendering.",
                 screenCaptureFailure);
+        }
+
+        public static bool TryValidateClientSize(
+            IntPtr hWnd,
+            VisionCaptureSettings settings,
+            out Size clientSize,
+            out string error)
+        {
+            clientSize = Size.Empty;
+            error = string.Empty;
+            if (hWnd == IntPtr.Zero || !IsWindow(hWnd))
+            {
+                error = "The target window is unavailable.";
+                return false;
+            }
+            if (!IsWindowVisible(hWnd) || IsIconic(hWnd))
+            {
+                error = "The target window is not visible or is minimized.";
+                return false;
+            }
+
+            Rectangle clientBounds;
+            if (!TryGetClientBounds(hWnd, out clientBounds, out clientSize))
+            {
+                error = "The target window client area is unavailable.";
+                return false;
+            }
+
+            VisionCaptureSettings effectiveSettings = settings == null
+                ? new VisionCaptureSettings()
+                : settings;
+            try
+            {
+                effectiveSettings.Validate();
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+            return TryValidateClientSize(clientSize, effectiveSettings, out error);
+        }
+
+        private static bool TryValidateClientSize(
+            Size clientSize,
+            VisionCaptureSettings settings,
+            out string error)
+        {
+            error = string.Empty;
+            if (settings == null || !settings.RequireExactClientSize ||
+                settings.IsClientSizeMatch(clientSize))
+            {
+                return true;
+            }
+
+            error = settings.DescribeClientSizeMismatch(clientSize);
+            return false;
+        }
+
+        private static VisionCaptureResult CaptureWindowRender(
+            IntPtr hWnd,
+            Size clientSize,
+            Rectangle effectiveRegion,
+            VisionCaptureSettings settings)
+        {
+            Bitmap clientCapture = TryPrintWindowClient(hWnd, clientSize);
+            if (clientCapture == null)
+            {
+                return null;
+            }
+            try
+            {
+                Bitmap bitmap = clientCapture.Clone(effectiveRegion, PixelFormat.Format32bppArgb);
+                return CreateCaptureResult(bitmap, VisionCaptureSourceMode.WindowRender, settings);
+            }
+            finally
+            {
+                clientCapture.Dispose();
+            }
         }
 
         public static bool IsWindowUsable(IntPtr hWnd)
@@ -283,6 +541,11 @@ namespace WPELibrary.Lib.Vision
                 IsWindowVisible(hWnd) &&
                 !IsIconic(hWnd) &&
                 TryGetClientBounds(hWnd, out bounds, out size);
+        }
+
+        public static bool IsForegroundWindow(IntPtr hWnd)
+        {
+            return hWnd != IntPtr.Zero && GetForegroundWindow() == hWnd;
         }
 
         public static bool TryResolveWindow(
@@ -315,36 +578,30 @@ namespace WPELibrary.Lib.Vision
                 }
             }
 
-            VisionWindowInfo fallback = null;
+            List<VisionWindowInfo> identityMatches = new List<VisionWindowInfo>();
             for (int i = 0; i < windows.Count; i++)
             {
                 VisionWindowInfo candidate = windows[i];
-                bool pathMatches = !string.IsNullOrWhiteSpace(processPath) &&
-                    string.Equals(candidate.ProcessPath, processPath, StringComparison.OrdinalIgnoreCase);
-                bool startMatches = processStartTimeUtcTicks <= 0L ||
-                    candidate.ProcessStartTimeUtcTicks == processStartTimeUtcTicks;
-                bool titleMatches = !string.IsNullOrWhiteSpace(windowTitle) &&
-                    string.Equals(candidate.WindowTitle, windowTitle, StringComparison.Ordinal);
-                bool nameMatches = !string.IsNullOrWhiteSpace(processName) &&
-                    string.Equals(candidate.ProcessName, processName, StringComparison.OrdinalIgnoreCase);
-                if (pathMatches && startMatches && titleMatches)
+                if (MatchesProcessIdentity(
+                    candidate,
+                    processId,
+                    processName,
+                    processPath,
+                    processStartTimeUtcTicks,
+                    windowTitle))
                 {
-                    resolved = candidate;
-                    reason = "rebound by process identity";
-                    return true;
-                }
-                if (fallback == null && nameMatches && titleMatches)
-                {
-                    fallback = candidate;
+                    identityMatches.Add(candidate);
                 }
             }
-            if (fallback != null)
+            if (identityMatches.Count == 1)
             {
-                resolved = fallback;
-                reason = "rebound by process name and window title";
+                resolved = identityMatches[0];
+                reason = "rebound by unique process identity";
                 return true;
             }
-            reason = "the configured window is unavailable; reopen it or refresh the window list";
+            reason = identityMatches.Count > 1
+                ? "multiple windows match the configured process identity; select the target window again"
+                : "the configured window is unavailable; reopen it or refresh the window list";
             return false;
         }
 
@@ -404,6 +661,18 @@ namespace WPELibrary.Lib.Vision
             return text.ToString().Trim();
         }
 
+        private static bool IsLdPlayerEngineProcess(string processName)
+        {
+            return string.Equals(processName, "Ld9BoxHeadless", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(processName, "LdVBoxHeadless", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsLdPlayerFrontendProcess(string processName)
+        {
+            return string.Equals(processName, "dnplayer", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(processName, "dnmultiplayer", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static VisionCaptureResult CreateCaptureResult(
             Bitmap bitmap,
             VisionCaptureSourceMode sourceMode,
@@ -433,7 +702,6 @@ namespace WPELibrary.Lib.Vision
         {
             long sum = 0L;
             long sumSquared = 0L;
-            uint hash = 2166136261U;
             int count = 0;
             int sampleStepX = Math.Max(1, bitmap.Width / 64);
             int sampleStepY = Math.Max(1, bitmap.Height / 64);
@@ -445,8 +713,6 @@ namespace WPELibrary.Lib.Vision
                     int value = (color.R * 299 + color.G * 587 + color.B * 114) / 1000;
                     sum += value;
                     sumSquared += value * value;
-                    hash ^= (uint)value;
-                    hash *= 16777619U;
                     count++;
                 }
             }
@@ -455,7 +721,7 @@ namespace WPELibrary.Lib.Vision
                 ? 0D
                 : sumSquared / (double)count - mean * mean;
             contrast = Math.Sqrt(Math.Max(0D, variance));
-            fingerprint = hash;
+            fingerprint = VisionBitmapFingerprint.Compute(bitmap);
         }
 
         private static Bitmap TryPrintWindowClient(IntPtr hWnd, Size clientSize)

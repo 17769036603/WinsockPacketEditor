@@ -79,6 +79,10 @@
     <Reference Include="Microsoft.Owin.StaticFiles, Version=4.2.2.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
       <HintPath>..\packages\Microsoft.Owin.StaticFiles.4.2.2\lib\net45\Microsoft.Owin.StaticFiles.dll</HintPath>
     </Reference>
+    <Reference Include="Microsoft.ML.OnnxRuntime, Version=1.27.1.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\Microsoft.ML.OnnxRuntime.Managed.1.27.1\lib\netstandard2.0\Microsoft.ML.OnnxRuntime.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
       <HintPath>..\packages\Newtonsoft.Json.13.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
     </Reference>
@@ -161,11 +165,17 @@
     <Compile Include="Lib\Vision\VisionMatchResult.cs" />
     <Compile Include="Lib\Vision\VisionTemplateMatcher.cs" />
     <Compile Include="Lib\Vision\VisionOcrOptions.cs" />
+    <Compile Include="Lib\Vision\VisionOcrEngine.cs" />
     <Compile Include="Lib\Vision\VisionOcrResult.cs" />
     <Compile Include="Lib\Vision\IVisionTextRecognizer.cs" />
     <Compile Include="Lib\Vision\VisionImagePreprocessor.cs" />
     <Compile Include="Lib\Vision\VisionTesseractRecognizer.cs" />
+    <Compile Include="Lib\Vision\VisionOnnxTextRecognizer.cs" />
+    <Compile Include="Lib\Vision\VisionAutoTextRecognizer.cs" />
     <Compile Include="Lib\Vision\VisionTextCondition.cs" />
+    <Compile Include="Lib\Vision\VisionColorCondition.cs" />
+    <Compile Include="Lib\Vision\VisionColorMatchResult.cs" />
+    <Compile Include="Lib\Vision\VisionColorMatcher.cs" />
     <Compile Include="Lib\Vision\VisionConditionType.cs" />
     <Compile Include="Lib\Vision\VisionFailurePolicy.cs" />
     <Compile Include="Lib\Vision\VisionConditionDefinition.cs" />
@@ -186,8 +196,15 @@
     <Compile Include="Lib\Vision\VisionWindowService.cs" />
     <Compile Include="Lib\Vision\VisionCaptureSourceMode.cs" />
     <Compile Include="Lib\Vision\VisionCaptureSettings.cs" />
+    <Compile Include="Lib\Vision\VisionClientSizeMismatchException.cs" />
     <Compile Include="Lib\Vision\VisionCaptureResult.cs" />
     <Compile Include="Lib\Vision\VisionTemplateMatchOptions.cs" />
+    <Compile Include="Lib\Vision\VisionActionType.cs" />
+    <Compile Include="Lib\Vision\VisionScrollDirection.cs" />
+    <Compile Include="Lib\Vision\VisionActionDefinition.cs" />
+    <Compile Include="Lib\Vision\VisionOcrTextBox.cs" />
+    <Compile Include="Lib\Vision\VisionMouseAction.cs" />
+    <Compile Include="Lib\Vision\VisionBitmapFingerprint.cs" />
     <Compile Include="Lib\NativeMethods\User32.cs" />
     <Compile Include="Lib\NativeMethods\WS2_32.cs" />
     <Compile Include="Lib\NativeMethods\WSock32.cs" />

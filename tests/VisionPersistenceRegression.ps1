@@ -34,6 +34,7 @@ $tempConnection = "Data Source=$tempDatabase;Version=3;"
 $sourceTemplate = $null
 $sourceVariant = $null
 $loadedTemplate = $null
+$loadedXmlProfile = $null
 
 try {
     $connectionField.SetValue($null, $tempConnection)
@@ -64,6 +65,9 @@ try {
     $robot.VisionProfile.CaptureSettings.HistoryLimit = 12
     $robot.VisionProfile.CaptureSettings.SaveFailureSnapshots = $true
     $robot.VisionProfile.CaptureSettings.FailureSnapshotDirectory = "C:\vision\diagnostics"
+    $robot.VisionProfile.CaptureSettings.RequireExactClientSize = $true
+    $robot.VisionProfile.CaptureSettings.RequiredClientWidth = 1280
+    $robot.VisionProfile.CaptureSettings.RequiredClientHeight = 720
     $robot.VisionProfile.OcrOptions.ScaleFactor = 3
     $robot.VisionProfile.OcrOptions.UseBinaryThreshold = $true
     $robot.VisionProfile.OcrOptions.UseAdaptiveThreshold = $true
@@ -73,6 +77,11 @@ try {
     $robot.VisionProfile.OcrOptions.UseDenoise = $true
     $robot.VisionProfile.OcrOptions.UseSharpen = $true
     $robot.VisionProfile.OcrOptions.CharacterWhitelist = "0123456789"
+    $robot.VisionProfile.OcrOptions.Engine = [WPELibrary.Lib.Vision.VisionOcrEngine]::Onnx
+    $robot.VisionProfile.OcrOptions.OnnxModelDirectory = "models\ocr-test"
+    $robot.VisionProfile.OcrOptions.OnnxDetectionThreshold = 0.35
+    $robot.VisionProfile.OcrOptions.OnnxRecognitionThreshold = 0.72
+    $robot.VisionProfile.OcrOptions.OnnxMaxImageSide = 1280
     $robot.VisionProfile.OcrCondition.ExpectedText = "任务完成"
     $robot.VisionProfile.OcrCondition.MinimumConfidence = 0.8
 
@@ -85,6 +94,12 @@ try {
     $step.Condition.TemplateMinimumScale = 0.8
     $step.Condition.TemplateMaximumScale = 1.2
     $step.Condition.TemplateScaleStep = 0.1
+    $step.Condition.ColorCondition.Red = 24
+    $step.Condition.ColorCondition.Green = 128
+    $step.Condition.ColorCondition.Blue = 240
+    $step.Condition.ColorCondition.Tolerance = 9
+    $step.Condition.ColorCondition.MinimumPixelCount = 18
+    $step.Condition.ColorCondition.MinimumMatchRatio = 0.25
     $step.Condition.Region.X = 1
     $step.Condition.Region.Y = 2
     $step.Condition.Region.Width = 8
@@ -110,7 +125,53 @@ try {
         $variantGraphics.Dispose()
     }
     $step.Condition.TemplateVariants.Add($sourceVariant)
+    $step.VerificationEnabled = $true
+    $step.Verification = [WPELibrary.Lib.Vision.VisionConditionDefinition]::new()
+    $step.Verification.Type = [WPELibrary.Lib.Vision.VisionConditionType]::TextAppears
+    $step.Verification.Region = $step.Condition.Region.Clone()
+    $step.Verification.Region.X = 3
+    $step.Verification.Region.Y = 4
+    $step.Verification.Region.Width = 5
+    $step.Verification.Region.Height = 6
+    $step.VerificationUsesSeparateRegion = $true
+    $step.Verification.TextCondition.ExpectedText = "成功"
     $robot.VisionProfile.AssistantSteps.Add($step)
+
+    $databaseFlags = [System.Reflection.BindingFlags]::Static -bor
+        [System.Reflection.BindingFlags]::NonPublic
+    $robotListType = [WPELibrary.Lib.Socket_Cache+RobotList]
+    $buildProfileXml = $robotListType.GetMethod("BuildVisionProfileXml", $databaseFlags)
+    $parseProfileXml = $robotListType.GetMethod("ParseVisionProfile", $databaseFlags)
+    $xmlProfile = $buildProfileXml.Invoke($null, @($robot.VisionProfile))
+    $loadedXmlProfile = $parseProfileXml.Invoke($null, @($xmlProfile))
+    Assert-True ($loadedXmlProfile.OcrOptions.Engine -eq [WPELibrary.Lib.Vision.VisionOcrEngine]::Onnx -and
+        $loadedXmlProfile.OcrOptions.OnnxModelDirectory -eq "models\ocr-test" -and
+        [double]$loadedXmlProfile.OcrOptions.OnnxDetectionThreshold -eq 0.35 -and
+        [double]$loadedXmlProfile.OcrOptions.OnnxRecognitionThreshold -eq 0.72 -and
+        $loadedXmlProfile.OcrOptions.OnnxMaxImageSide -eq 1280) `
+        "XML load must restore ONNX OCR settings."
+    Assert-True ($loadedXmlProfile.AssistantSteps[0].Condition.ColorCondition.Red -eq 24 -and
+        $loadedXmlProfile.AssistantSteps[0].Condition.ColorCondition.Green -eq 128 -and
+        $loadedXmlProfile.AssistantSteps[0].Condition.ColorCondition.Blue -eq 240 -and
+        $loadedXmlProfile.AssistantSteps[0].Condition.ColorCondition.Tolerance -eq 9 -and
+        $loadedXmlProfile.AssistantSteps[0].Condition.ColorCondition.MinimumPixelCount -eq 18 -and
+        [double]$loadedXmlProfile.AssistantSteps[0].Condition.ColorCondition.MinimumMatchRatio -eq 0.25) `
+        "XML load must restore color condition settings."
+    Assert-True ($loadedXmlProfile.CaptureSettings.RequireExactClientSize -and
+        $loadedXmlProfile.CaptureSettings.RequiredClientWidth -eq 1280 -and
+        $loadedXmlProfile.CaptureSettings.RequiredClientHeight -eq 720) `
+        "XML load must restore the exact 1280x720 client-size settings."
+
+    $legacyXmlProfile = [System.Xml.Linq.XElement]::new($xmlProfile)
+    $legacyCaptureSettings = $legacyXmlProfile.Element("CaptureSettings")
+    $legacyCaptureSettings.Element("RequireExactClientSize").Remove()
+    $legacyCaptureSettings.Element("RequiredClientWidth").Remove()
+    $legacyCaptureSettings.Element("RequiredClientHeight").Remove()
+    $legacyLoadedProfile = $parseProfileXml.Invoke($null, @($legacyXmlProfile))
+    Assert-True (-not $legacyLoadedProfile.CaptureSettings.RequireExactClientSize -and
+        $legacyLoadedProfile.CaptureSettings.RequiredClientWidth -eq 0 -and
+        $legacyLoadedProfile.CaptureSettings.RequiredClientHeight -eq 0) `
+        "XML profiles without exact client-size fields must retain legacy behavior."
 
     [WPELibrary.Lib.Socket_Cache+DataBase]::InsertTable_Robot($robot)
     $profileRows = [WPELibrary.Lib.Socket_Cache+DataBase]::SelectTable_RobotVisionProfile($robot.RID)
@@ -125,17 +186,41 @@ try {
         [int]$profileRows.Rows[0]["CaptureInterval"] -eq 80 -and
         [bool]$profileRows.Rows[0]["CaptureSaveFailures"] -and
         $profileRows.Rows[0]["CaptureFailureDirectory"].ToString() -eq "C:\vision\diagnostics" -and
+        [bool]$profileRows.Rows[0]["CaptureRequireExactClientSize"] -and
+        [int]$profileRows.Rows[0]["CaptureRequiredClientWidth"] -eq 1280 -and
+        [int]$profileRows.Rows[0]["CaptureRequiredClientHeight"] -eq 720 -and
         [bool]$profileRows.Rows[0]["OcrAdaptive"] -and
         [int]$profileRows.Rows[0]["OcrAdaptiveWindow"] -eq 21 -and
         $profileRows.Rows[0]["OcrWhitelist"].ToString() -eq "0123456789") `
         "Window identity, normalized region, and capture settings must survive SQLite persistence."
+
+    Assert-True ([int]$profileRows.Rows[0]["OcrEngine"] -eq 1 -and
+        $profileRows.Rows[0]["OcrModelDirectory"].ToString() -eq "models\ocr-test" -and
+        [double]$profileRows.Rows[0]["OcrDetectionThreshold"] -eq 0.35 -and
+        [double]$profileRows.Rows[0]["OcrRecognitionThreshold"] -eq 0.72 -and
+        [int]$profileRows.Rows[0]["OcrMaxImageSide"] -eq 1280) `
+        "ONNX OCR settings must survive SQLite persistence."
 
     $conditionRows = [WPELibrary.Lib.Socket_Cache+DataBase]::SelectTable_RobotVisionCondition($robot.RID)
     Assert-True ($conditionRows.Rows.Count -eq 1) `
         "Assistant vision conditions must be stored separately from RobotInstruction."
     Assert-True (($conditionRows.Rows[0]["TemplatePng"] -as [byte[]]).Length -gt 0) `
         "Assistant template bytes must survive SQLite persistence."
+    Assert-True ([int]$conditionRows.Rows[0]["ColorR"] -eq 24 -and
+        [int]$conditionRows.Rows[0]["ColorG"] -eq 128 -and
+        [int]$conditionRows.Rows[0]["ColorB"] -eq 240 -and
+        [int]$conditionRows.Rows[0]["ColorTolerance"] -eq 9 -and
+        [int]$conditionRows.Rows[0]["ColorMinimumPixels"] -eq 18 -and
+        [double]$conditionRows.Rows[0]["ColorMinimumRatio"] -eq 0.25) `
+        "Color condition settings must survive SQLite persistence."
     Assert-True ($conditionRows.Rows[0]["TemplateVariants"].ToString().Length -gt 0 -and
+        [bool]$conditionRows.Rows[0]["VerificationEnabled"] -and
+        $conditionRows.Rows[0]["VerificationKeyword"].ToString() -eq "成功" -and
+        [bool]$conditionRows.Rows[0]["VerificationSeparateRegion"] -and
+        [int]$conditionRows.Rows[0]["VerificationRegionX"] -eq 3 -and
+        [int]$conditionRows.Rows[0]["VerificationRegionY"] -eq 4 -and
+        [int]$conditionRows.Rows[0]["VerificationRegionWidth"] -eq 5 -and
+        [int]$conditionRows.Rows[0]["VerificationRegionHeight"] -eq 6 -and
         [bool]$conditionRows.Rows[0]["RegionNormalized"] -and
         -not [bool]$conditionRows.Rows[0]["TemplateNormalize"] -and
         [bool]$conditionRows.Rows[0]["TemplateScaleVariation"] -and
@@ -148,6 +233,12 @@ try {
     Assert-True ($loadedRobot.VisionProfile.OcrOptions.ScaleFactor -eq 3 -and
         $loadedRobot.VisionProfile.OcrCondition.ExpectedText -eq "任务完成") `
         "SQLite load must restore OCR settings."
+    Assert-True ($loadedRobot.VisionProfile.OcrOptions.Engine -eq [WPELibrary.Lib.Vision.VisionOcrEngine]::Onnx -and
+        $loadedRobot.VisionProfile.OcrOptions.OnnxModelDirectory -eq "models\ocr-test" -and
+        [double]$loadedRobot.VisionProfile.OcrOptions.OnnxDetectionThreshold -eq 0.35 -and
+        [double]$loadedRobot.VisionProfile.OcrOptions.OnnxRecognitionThreshold -eq 0.72 -and
+        $loadedRobot.VisionProfile.OcrOptions.OnnxMaxImageSide -eq 1280) `
+        "SQLite load must restore ONNX OCR settings."
     Assert-True ($loadedRobot.VisionProfile.ProcessPath -eq "C:\vision\vision-target.exe" -and
         $loadedRobot.VisionProfile.ProcessStartTimeUtcTicks -eq 638900000000000000 -and
         $loadedRobot.VisionProfile.Region.UseNormalizedCoordinates -and
@@ -155,12 +246,28 @@ try {
         -not $loadedRobot.VisionProfile.CaptureSettings.SkipUnchangedFrames -and
         $loadedRobot.VisionProfile.CaptureSettings.SaveFailureSnapshots -and
         $loadedRobot.VisionProfile.CaptureSettings.FailureSnapshotDirectory -eq "C:\vision\diagnostics" -and
+        $loadedRobot.VisionProfile.CaptureSettings.RequireExactClientSize -and
+        $loadedRobot.VisionProfile.CaptureSettings.RequiredClientWidth -eq 1280 -and
+        $loadedRobot.VisionProfile.CaptureSettings.RequiredClientHeight -eq 720 -and
         $loadedRobot.VisionProfile.OcrOptions.UseAdaptiveThreshold -and
         $loadedRobot.VisionProfile.OcrOptions.AdaptiveThresholdWindowSize -eq 21 -and
         $loadedRobot.VisionProfile.OcrOptions.CharacterWhitelist -eq "0123456789") `
         "SQLite load must restore window identity, normalized region, and capture settings."
     Assert-True ($loadedRobot.VisionProfile.AssistantSteps.Count -eq 1) `
         "SQLite load must restore assistant conditions."
+    Assert-True ($loadedRobot.VisionProfile.AssistantSteps[0].VerificationEnabled -and
+        $loadedRobot.VisionProfile.AssistantSteps[0].Verification.TextCondition.ExpectedText -eq "成功" -and
+        $loadedRobot.VisionProfile.AssistantSteps[0].VerificationUsesSeparateRegion -and
+        $loadedRobot.VisionProfile.AssistantSteps[0].Verification.Region.X -eq 3 -and
+        $loadedRobot.VisionProfile.AssistantSteps[0].Verification.Region.Height -eq 6) `
+        "SQLite load must restore optional action verification."
+    Assert-True ($loadedRobot.VisionProfile.AssistantSteps[0].Condition.ColorCondition.Red -eq 24 -and
+        $loadedRobot.VisionProfile.AssistantSteps[0].Condition.ColorCondition.Green -eq 128 -and
+        $loadedRobot.VisionProfile.AssistantSteps[0].Condition.ColorCondition.Blue -eq 240 -and
+        $loadedRobot.VisionProfile.AssistantSteps[0].Condition.ColorCondition.Tolerance -eq 9 -and
+        $loadedRobot.VisionProfile.AssistantSteps[0].Condition.ColorCondition.MinimumPixelCount -eq 18 -and
+        [double]$loadedRobot.VisionProfile.AssistantSteps[0].Condition.ColorCondition.MinimumMatchRatio -eq 0.25) `
+        "SQLite load must restore color condition settings."
     $loadedTemplate = $loadedRobot.VisionProfile.AssistantSteps[0].Condition.Template
     Assert-True ($null -ne $loadedTemplate -and $loadedTemplate.Width -eq 5) `
         "SQLite load must restore template resources."
@@ -172,6 +279,19 @@ try {
         "SQLite load must restore normalized condition regions and template variants."
 }
 finally {
+    if ($null -ne $loadedXmlProfile) {
+        foreach ($xmlStep in $loadedXmlProfile.AssistantSteps) {
+            if ($null -ne $xmlStep.Condition) {
+                if ($null -ne $xmlStep.Condition.Template) {
+                    $xmlStep.Condition.Template.Dispose()
+                }
+                $xmlStep.Condition.DisposeTemplateVariants()
+            }
+            if ($null -ne $xmlStep.Verification -and $null -ne $xmlStep.Verification.Template) {
+                $xmlStep.Verification.Template.Dispose()
+            }
+        }
+    }
     if ($null -ne $loadedTemplate) { $loadedTemplate.Dispose() }
     if ($null -ne $sourceTemplate) { $sourceTemplate.Dispose() }
     if ($null -ne $sourceVariant) { $sourceVariant.Dispose() }

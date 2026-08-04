@@ -59,17 +59,17 @@ namespace Be.Windows.Forms
 		/// <summary>
 		/// Returns a value if the WriteByte methods is supported by the provider.
 		/// </summary>
-		/// <returns>True, when it´s supported.</returns>
+		/// <returns>True, when it's supported.</returns>
 		bool SupportsWriteByte();
 		/// <summary>
 		/// Returns a value if the InsertBytes methods is supported by the provider.
 		/// </summary>
-		/// <returns>True, when it´s supported.</returns>
+		/// <returns>True, when it's supported.</returns>
 		bool SupportsInsertBytes();
 		/// <summary>
 		/// Returns a value if the DeleteBytes methods is supported by the provider.
 		/// </summary>
-		/// <returns>True, when it´s supported.</returns>
+		/// <returns>True, when it's supported.</returns>
 		bool SupportsDeleteBytes();
 	}
 }

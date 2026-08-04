@@ -10,6 +10,8 @@ namespace WPELibrary.Lib.Vision
 {
     public static class VisionTemplateMatcher
     {
+        private const long MaxTemplateComparisons = 200000000L;
+
         public static VisionMatchResult FindBestMatch(
             Bitmap source,
             IEnumerable<Bitmap> templates,
@@ -169,8 +171,24 @@ namespace WPELibrary.Lib.Vision
             int templateWidth = template.Width;
             int templateHeight = template.Height;
             long templatePixelCount = (long)templateWidth * templateHeight;
+            if (templatePixelCount > 1000000L)
+            {
+                throw new ArgumentException(
+                    "The template is too large; reduce its pixel area before matching.",
+                    "template");
+            }
+            long candidateCount = (long)(sourceWidth - templateWidth + 1) *
+                (source.Height - templateHeight + 1);
+            if (candidateCount > MaxTemplateComparisons / templatePixelCount)
+            {
+                throw new VisionTemplateWorkloadException(
+                    "Template matching workload is too large; reduce the recognition region or template size.");
+            }
             double templateMean = Mean(templateGray);
             bool useNormalizedComparison = normalizeBrightness && HasContrast(templateGray);
+            long[] sourceIntegral = useNormalizedComparison
+                ? BuildIntegralImage(sourceGray, sourceWidth, source.Height)
+                : null;
             double maximumDifference = (useNormalizedComparison ? 510D : 255D) * templatePixelCount;
             double bestSimilarity = double.MinValue;
             Point bestLocation = Point.Empty;
@@ -187,15 +205,13 @@ namespace WPELibrary.Lib.Vision
                     double sourceMean = 0D;
                     if (useNormalizedComparison)
                     {
-                        long sourceSum = 0L;
-                        for (int templateY = 0; templateY < templateHeight; templateY++)
-                        {
-                            int sourceOffset = (y + templateY) * sourceWidth + x;
-                            for (int templateX = 0; templateX < templateWidth; templateX++)
-                            {
-                                sourceSum += sourceGray[sourceOffset + templateX];
-                            }
-                        }
+                        long sourceSum = GetIntegralRegionSum(
+                            sourceIntegral,
+                            sourceWidth,
+                            x,
+                            y,
+                            templateWidth,
+                            templateHeight);
                         sourceMean = sourceSum / (double)templatePixelCount;
                     }
 
@@ -206,6 +222,11 @@ namespace WPELibrary.Lib.Vision
                         int templateOffset = templateY * templateWidth;
                         for (int templateX = 0; templateX < templateWidth; templateX++)
                         {
+                            if ((templateX & 4095) == 0 &&
+                                cancellationToken.IsCancellationRequested)
+                            {
+                                return VisionMatchResult.CancelledResult();
+                            }
                             double sourceValue = sourceGray[sourceOffset + templateX];
                             double templateValue = templateGray[templateOffset + templateX];
                             if (useNormalizedComparison)
@@ -231,6 +252,44 @@ namespace WPELibrary.Lib.Vision
                 return VisionMatchResult.FoundAt(bestLocation, template.Size, bestSimilarity);
             }
             return VisionMatchResult.NotFound(bestLocation, template.Size, bestSimilarity);
+        }
+
+        private static long[] BuildIntegralImage(byte[] values, int width, int height)
+        {
+            long[] integral = new long[(width + 1) * (height + 1)];
+            for (int y = 1; y <= height; y++)
+            {
+                long rowSum = 0L;
+                int sourceOffset = (y - 1) * width;
+                int integralRow = y * (width + 1);
+                int previousIntegralRow = (y - 1) * (width + 1);
+                for (int x = 1; x <= width; x++)
+                {
+                    rowSum += values[sourceOffset + x - 1];
+                    integral[integralRow + x] =
+                        integral[previousIntegralRow + x] + rowSum;
+                }
+            }
+            return integral;
+        }
+
+        private static long GetIntegralRegionSum(
+            long[] integral,
+            int width,
+            int x,
+            int y,
+            int regionWidth,
+            int regionHeight)
+        {
+            int stride = width + 1;
+            int left = x;
+            int top = y;
+            int right = x + regionWidth;
+            int bottom = y + regionHeight;
+            return integral[bottom * stride + right] -
+                integral[top * stride + right] -
+                integral[bottom * stride + left] +
+                integral[top * stride + left];
         }
 
         private static Bitmap ResizeTemplate(Bitmap template, double scale)
@@ -323,6 +382,14 @@ namespace WPELibrary.Lib.Vision
                     normalized.UnlockBits(data);
                 }
             }
+        }
+    }
+
+    internal sealed class VisionTemplateWorkloadException : InvalidOperationException
+    {
+        public VisionTemplateWorkloadException(string message)
+            : base(message)
+        {
         }
     }
 }

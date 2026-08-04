@@ -191,18 +191,15 @@ namespace WinsockPacketEditor
                     {
                         if (!ProcessList_Form.IsSupportedInjectionProcess(targetProcess.ProcessName))
                         {
-                            throw new InvalidOperationException(MultiLanguage.DefaultLanguage == "en-US"
-                                ? "The selected process is no longer an approved injection target. Refresh the process list."
-                                : "当前进程已不再是允许注入的目标，请刷新进程列表后重试。");
+                            throw new InvalidOperationException(
+                                Socket_Operation.GetUiText("Injector_TargetNotApproved"));
                         }
                     }
 
                     if (!File.Exists(injectionLibrary_x86) || !File.Exists(injectionLibrary_x64))
                     {
                         throw new FileNotFoundException(
-                            MultiLanguage.DefaultLanguage == "en-US"
-                                ? "WPELibrary.dll is missing from the application directory."
-                                : "程序目录中缺少 WPELibrary.dll。",
+                            Socket_Operation.GetUiText("Injector_LibraryMissing"),
                             injectionLibrary_x64);
                     }
 

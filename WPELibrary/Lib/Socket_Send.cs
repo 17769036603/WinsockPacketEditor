@@ -148,6 +148,11 @@ namespace WPELibrary.Lib
             return this.sendStopped.Wait(Math.Max(0, millisecondsTimeout));
         }
 
+        public bool WaitForCompletion(int millisecondsTimeout)
+        {
+            return this.sendStopped.Wait(Math.Max(0, millisecondsTimeout));
+        }
+
         private static List<Socket_PacketInfo> CreateSendSnapshot(BindingList<Socket_PacketInfo> source)
         {
             List<Socket_PacketInfo> snapshot = new List<Socket_PacketInfo>(source.Count);

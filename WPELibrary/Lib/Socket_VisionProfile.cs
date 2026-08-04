@@ -17,6 +17,12 @@ namespace WPELibrary.Lib
 
         public string WindowTitle { get; set; }
 
+        /// <summary>
+        /// Grants the current run permission to move the real system mouse.
+        /// This is intentionally run-scoped and is not persisted with the profile.
+        /// </summary>
+        public bool AllowSystemInput { get; set; }
+
         public VisionRegion Region { get; set; }
 
         public VisionOcrOptions OcrOptions { get; set; }
@@ -31,12 +37,13 @@ namespace WPELibrary.Lib
         {
             get
             {
-                return this.WindowHandle != 0 &&
+                bool hasTarget = this.WindowHandle != 0 &&
                     this.Region != null &&
-                    this.Region.IsValid ||
-                    (this.AssistantSteps != null && this.AssistantSteps.Count > 0) ||
-                    (this.OcrCondition != null &&
-                     !string.IsNullOrWhiteSpace(this.OcrCondition.ExpectedText));
+                    this.Region.IsValid;
+                bool hasAssistant = this.AssistantSteps != null && this.AssistantSteps.Count > 0;
+                bool hasOcrCondition = this.OcrCondition != null &&
+                    !string.IsNullOrWhiteSpace(this.OcrCondition.ExpectedText);
+                return hasTarget || hasAssistant || hasOcrCondition;
             }
         }
 
@@ -45,6 +52,7 @@ namespace WPELibrary.Lib
             this.ProcessName = string.Empty;
             this.ProcessPath = string.Empty;
             this.WindowTitle = string.Empty;
+            this.AllowSystemInput = false;
             this.Region = new VisionRegion();
             this.Region.UseNormalizedCoordinates = true;
             this.OcrOptions = new VisionOcrOptions();
@@ -63,6 +71,7 @@ namespace WPELibrary.Lib
                 ProcessPath = this.ProcessPath,
                 ProcessStartTimeUtcTicks = this.ProcessStartTimeUtcTicks,
                 WindowTitle = this.WindowTitle,
+                AllowSystemInput = this.AllowSystemInput,
                 Region = this.Region == null ? new VisionRegion() : this.Region.Clone(),
                 OcrOptions = this.OcrOptions == null
                     ? new VisionOcrOptions()
@@ -102,7 +111,13 @@ namespace WPELibrary.Lib
                 {
                     Name = step.Name,
                     Condition = step.Condition == null ? null : step.Condition.Clone(),
-                    Action = null
+                    Action = null,
+                    ActionDefinition = step.ActionDefinition == null
+                        ? new VisionActionDefinition()
+                        : step.ActionDefinition.Clone(),
+                    VerificationEnabled = step.VerificationEnabled,
+                    Verification = step.Verification == null ? null : step.Verification.Clone(),
+                    VerificationUsesSeparateRegion = step.VerificationUsesSeparateRegion
                 });
             }
         }

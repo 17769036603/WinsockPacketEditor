@@ -88,6 +88,40 @@ namespace WPELibrary.Lib.Vision
             }
         }
 
+        public bool TryGetFirstMatchBounds(VisionOcrResult result, out System.Drawing.Rectangle bounds)
+        {
+            bounds = System.Drawing.Rectangle.Empty;
+            string expected = NormalizeForMatch(this.ExpectedText);
+            if (result == null || string.IsNullOrEmpty(expected) || result.TextBoxes == null)
+            {
+                return false;
+            }
+
+            for (int start = 0; start < result.TextBoxes.Count; start++)
+            {
+                string combined = string.Empty;
+                System.Drawing.Rectangle combinedBounds = System.Drawing.Rectangle.Empty;
+                for (int index = start; index < result.TextBoxes.Count; index++)
+                {
+                    VisionOcrTextBox token = result.TextBoxes[index];
+                    combined += NormalizeForMatch(token.Text);
+                    combinedBounds = combinedBounds.IsEmpty
+                        ? token.Bounds
+                        : System.Drawing.Rectangle.Union(combinedBounds, token.Bounds);
+                    if (combined.IndexOf(expected, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        bounds = combinedBounds;
+                        return !bounds.IsEmpty;
+                    }
+                    if (combined.Length >= expected.Length)
+                    {
+                        break;
+                    }
+                }
+            }
+            return false;
+        }
+
         public VisionTextCondition Clone()
         {
             return new VisionTextCondition

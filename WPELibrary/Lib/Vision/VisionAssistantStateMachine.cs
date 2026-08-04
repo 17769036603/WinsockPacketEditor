@@ -33,7 +33,7 @@ namespace WPELibrary.Lib.Vision
                 if (cancellationToken.IsCancellationRequested)
                 {
                     result.Cancelled = true;
-                    result.Error = "Assistant cancelled.";
+                    result.Error = Text("Vision_LogAssistantCancelled");
                     this.Emit(stepIndex, VisionAssistantLogLevel.Warning, result.Error);
                     return result;
                 }
@@ -42,7 +42,7 @@ namespace WPELibrary.Lib.Vision
                 if (step == null || step.Condition == null)
                 {
                     result.FailedStepIndex = stepIndex;
-                    result.Error = "A state-machine step has no condition.";
+                    result.Error = Text("Vision_LogStepMissingCondition");
                     this.Emit(stepIndex, VisionAssistantLogLevel.Error, result.Error);
                     return result;
                 }
@@ -50,6 +50,14 @@ namespace WPELibrary.Lib.Vision
                 try
                 {
                     step.Condition.Validate();
+                    if (step.VerificationEnabled)
+                    {
+                        if (step.Verification == null)
+                        {
+                            throw new InvalidOperationException(Text("Vision_LogVerificationMissingCondition"));
+                        }
+                        step.Verification.Validate();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -67,7 +75,7 @@ namespace WPELibrary.Lib.Vision
                     this.Emit(
                         stepIndex,
                         VisionAssistantLogLevel.Info,
-                        string.Format("Waiting for step '{0}', attempt {1}.", step.Name, attempt));
+                        Format("Vision_LogWaitingStep", step.Name, attempt));
                     VisionWaitResult waitResult = this.WaitForCondition(
                         stepIndex,
                         step.Condition,
@@ -75,7 +83,16 @@ namespace WPELibrary.Lib.Vision
                     if (waitResult.Cancelled)
                     {
                         result.Cancelled = true;
-                        result.Error = "Assistant cancelled while waiting for a vision condition.";
+                        result.Error = Text("Vision_LogCancelledWaiting");
+                        return result;
+                    }
+                    if (waitResult.TerminalFailure)
+                    {
+                        result.FailedStepIndex = stepIndex;
+                        result.Error = waitResult.LastObservation == null
+                            ? Text("Vision_LogObservationNoResult")
+                            : waitResult.LastObservation.Error;
+                        this.Emit(stepIndex, VisionAssistantLogLevel.Error, result.Error);
                         return result;
                     }
                     if (waitResult.Matched)
@@ -83,7 +100,7 @@ namespace WPELibrary.Lib.Vision
                         this.Emit(
                             stepIndex,
                             VisionAssistantLogLevel.Info,
-                            string.Format("Step '{0}' condition confirmed.", step.Name));
+                            Format("Vision_LogStepConfirmed", step.Name));
                         if (step.Action != null)
                         {
                             VisionAssistantActionResult actionResult;
@@ -113,11 +130,53 @@ namespace WPELibrary.Lib.Vision
 
                                 result.FailedStepIndex = stepIndex;
                                 result.Error = actionResult == null
-                                    ? "Vision action returned no result."
+                                    ? Text("Vision_LogActionNoResult")
                                     : actionResult.Error;
                                 this.Emit(stepIndex, VisionAssistantLogLevel.Error, result.Error);
                                 return result;
                             }
+                        }
+
+                        if (step.VerificationEnabled)
+                        {
+                            VisionWaitResult verificationResult = this.WaitForVerification(
+                                stepIndex,
+                                step.Verification,
+                                cancellationToken);
+                            if (verificationResult.Cancelled)
+                            {
+                                result.Cancelled = true;
+                                result.Error = Text("Vision_LogCancelledVerifying");
+                                return result;
+                            }
+                            if (verificationResult.TerminalFailure)
+                            {
+                                result.FailedStepIndex = stepIndex;
+                                result.Error = verificationResult.LastObservation == null
+                                    ? Text("Vision_LogObservationNoResult")
+                                    : verificationResult.LastObservation.Error;
+                                this.Emit(stepIndex, VisionAssistantLogLevel.Error, result.Error);
+                                return result;
+                            }
+                            if (!verificationResult.Matched)
+                            {
+                                if (verificationResult.Skipped)
+                                {
+                                    result.SkippedStep = true;
+                                    stepCompleted = true;
+                                    continue;
+                                }
+                                result.FailedStepIndex = stepIndex;
+                                result.Error = Format(
+                                    "Vision_LogVerificationTimeout",
+                                    step.Name);
+                                this.Emit(stepIndex, VisionAssistantLogLevel.Error, result.Error);
+                                return result;
+                            }
+                            this.Emit(
+                                stepIndex,
+                                VisionAssistantLogLevel.Info,
+                                Format("Vision_LogVerificationConfirmed", step.Name));
                         }
 
                         stepCompleted = true;
@@ -130,7 +189,7 @@ namespace WPELibrary.Lib.Vision
                         this.Emit(
                             stepIndex,
                             VisionAssistantLogLevel.Warning,
-                            string.Format("Step '{0}' timed out; retrying.", step.Name));
+                            Format("Vision_LogStepRetry", step.Name));
                         continue;
                     }
 
@@ -140,20 +199,20 @@ namespace WPELibrary.Lib.Vision
                         this.Emit(
                             stepIndex,
                             VisionAssistantLogLevel.Warning,
-                            string.Format("Step '{0}' timed out; skipped.", step.Name));
+                            Format("Vision_LogStepSkipped", step.Name));
                         stepCompleted = true;
                         continue;
                     }
 
                     result.FailedStepIndex = stepIndex;
-                    result.Error = string.Format("Step '{0}' timed out.", step.Name);
+                    result.Error = Format("Vision_LogStepTimeout", step.Name);
                     this.Emit(stepIndex, VisionAssistantLogLevel.Error, result.Error);
                     return result;
                 }
             }
 
             result.Succeeded = true;
-            this.Emit(-1, VisionAssistantLogLevel.Info, "Assistant state machine completed.");
+            this.Emit(-1, VisionAssistantLogLevel.Info, Text("Vision_LogCompleted"));
             return result;
         }
 
@@ -180,6 +239,10 @@ namespace WPELibrary.Lib.Vision
                     stepIndex,
                     VisionAssistantLogLevel.Info,
                     this.DescribeObservation(condition, observation));
+                if (observation != null && observation.IsTerminalFailure)
+                {
+                    return VisionWaitResult.TerminalFailureResult(observation);
+                }
                 string reason;
                 bool matched = VisionConditionEvaluator.Matches(condition, observation, out reason);
                 if (matched)
@@ -188,8 +251,8 @@ namespace WPELibrary.Lib.Vision
                     this.Emit(
                         stepIndex,
                         VisionAssistantLogLevel.Info,
-                        string.Format(
-                            "Condition confirmation {0}/{1}.",
+                        Format(
+                            "Vision_LogConditionConfirmation",
                             consecutiveMatches,
                             condition.RequiredConfirmations));
                     if (consecutiveMatches >= condition.RequiredConfirmations)
@@ -203,7 +266,7 @@ namespace WPELibrary.Lib.Vision
                     this.Emit(
                         stepIndex,
                         VisionAssistantLogLevel.Info,
-                        string.IsNullOrEmpty(reason) ? "Condition not matched." : reason);
+                        string.IsNullOrEmpty(reason) ? Text("Vision_LogConditionNotMatched") : reason);
                 }
 
                 int remaining = condition.TimeoutMilliseconds - (int)stopwatch.ElapsedMilliseconds;
@@ -221,17 +284,51 @@ namespace WPELibrary.Lib.Vision
             return VisionWaitResult.TimedOutResult(lastObservation);
         }
 
+        private VisionWaitResult WaitForVerification(
+            int stepIndex,
+            VisionConditionDefinition condition,
+            CancellationToken cancellationToken)
+        {
+            for (int attempt = 1; attempt <= condition.MaxRetries + 1; attempt++)
+            {
+                this.Emit(
+                    stepIndex,
+                    VisionAssistantLogLevel.Info,
+                    Format("Vision_LogVerificationWaiting", attempt));
+                VisionWaitResult result = this.WaitForCondition(
+                    stepIndex,
+                    condition,
+                    cancellationToken);
+                if (result.Cancelled || result.Matched)
+                {
+                    return result;
+                }
+                if (attempt <= condition.MaxRetries)
+                {
+                    this.Emit(
+                        stepIndex,
+                        VisionAssistantLogLevel.Warning,
+                        Text("Vision_LogVerificationRetry"));
+                }
+            }
+            if (condition.FailurePolicy == VisionFailurePolicy.Skip)
+            {
+                return VisionWaitResult.SkippedResult();
+            }
+            return VisionWaitResult.TimedOutResult(null);
+        }
+
         private string DescribeObservation(
             VisionConditionDefinition condition,
             VisionObservation observation)
         {
             if (observation == null)
             {
-                return "Observation: no result.";
+                return Text("Vision_LogObservationNoResult");
             }
             if (!string.IsNullOrEmpty(observation.Error))
             {
-                return "Observation error: " + observation.Error;
+                return Format("Vision_LogObservationError", observation.Error);
             }
             if (observation.OcrResult != null)
             {
@@ -239,8 +336,8 @@ namespace WPELibrary.Lib.Vision
                     .Replace("\r", " ")
                     .Replace("\n", " ")
                     .Trim();
-                string description = string.Format(
-                    "OCR text='{0}', confidence={1:P1}, success={2}.",
+                string description = Format(
+                    "Vision_LogOcr",
                     text,
                     observation.OcrResult.Confidence,
                     observation.OcrResult.Success);
@@ -248,15 +345,25 @@ namespace WPELibrary.Lib.Vision
             }
             if (observation.TemplateResult != null)
             {
-                string description = string.Format(
-                    "Template found={0}, similarity={1:P1}, location=({2},{3}).",
+                string description = Format(
+                    "Vision_LogTemplate",
                     observation.TemplateResult.Found,
                     observation.TemplateResult.Similarity,
                     observation.TemplateResult.Location.X,
                     observation.TemplateResult.Location.Y);
                 return description + DescribeCaptureDiagnostics(observation);
             }
-            return "Observation: no OCR or template result.";
+            if (observation.ColorResult != null)
+            {
+                string description = Format(
+                    "Vision_LogColor",
+                    observation.ColorResult.Found,
+                    observation.ColorResult.MatchCount,
+                    observation.ColorResult.MatchRatio,
+                    observation.ColorResult.MeanDistance);
+                return description + DescribeCaptureDiagnostics(observation);
+            }
+            return Text("Vision_LogObservationEmpty");
         }
 
         private static string DescribeCaptureDiagnostics(VisionObservation observation)
@@ -273,8 +380,8 @@ namespace WPELibrary.Lib.Vision
             string snapshot = string.IsNullOrWhiteSpace(observation.DiagnosticSnapshotPath)
                 ? string.Empty
                 : ", snapshot=" + observation.DiagnosticSnapshotPath;
-            return string.Format(
-                " capture={0}ms, eval={1}ms, source={2}, cache={3}, brightness={4:0.0}, contrast={5:0.0}{6}{7}.",
+            return Format(
+                "Vision_LogCaptureDiagnostics",
                 observation.CaptureMilliseconds,
                 observation.EvaluationMilliseconds,
                 observation.CaptureSource,
@@ -294,11 +401,25 @@ namespace WPELibrary.Lib.Vision
             }
         }
 
+        private static string Text(string key)
+        {
+            return WPELibrary.Properties.Resources.ResourceManager.GetString(key) ?? key;
+        }
+
+        private static string Format(string key, params object[] arguments)
+        {
+            return string.Format(Text(key), arguments);
+        }
+
         private sealed class VisionWaitResult
         {
             public bool Matched { get; private set; }
 
             public bool Cancelled { get; private set; }
+
+            public bool Skipped { get; private set; }
+
+            public bool TerminalFailure { get; private set; }
 
             public VisionObservation LastObservation { get; private set; }
 
@@ -315,6 +436,20 @@ namespace WPELibrary.Lib.Vision
             public static VisionWaitResult TimedOutResult(VisionObservation observation)
             {
                 return new VisionWaitResult { LastObservation = observation };
+            }
+
+            public static VisionWaitResult SkippedResult()
+            {
+                return new VisionWaitResult { Skipped = true };
+            }
+
+            public static VisionWaitResult TerminalFailureResult(VisionObservation observation)
+            {
+                return new VisionWaitResult
+                {
+                    TerminalFailure = true,
+                    LastObservation = observation
+                };
             }
         }
     }

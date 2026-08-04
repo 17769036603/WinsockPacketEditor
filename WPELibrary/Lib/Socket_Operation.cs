@@ -34,6 +34,11 @@ namespace WPELibrary.Lib
 {   
     public static class Socket_Operation
     {
+        public static string GetUiText(string key)
+        {
+            return WPELibrary.Properties.Resources.ResourceManager.GetString(key) ?? key;
+        }
+
         public static Color col_Del = Color.Red;
         public static Color col_Add = Color.Green;
         public static bool bDoLog = true;

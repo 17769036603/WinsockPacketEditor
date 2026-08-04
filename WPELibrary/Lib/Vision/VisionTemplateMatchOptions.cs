@@ -39,6 +39,14 @@ namespace WPELibrary.Lib.Vision
             {
                 throw new ArgumentOutOfRangeException("ScaleStep");
             }
+            int estimatedScaleCount = (int)Math.Ceiling(
+                (this.MaximumScale - this.MinimumScale) / this.ScaleStep) + 1;
+            if (this.AllowScaleVariation && estimatedScaleCount > 64)
+            {
+                throw new ArgumentException(
+                    "The template scale range produces too many variants; increase the scale step.",
+                    "ScaleStep");
+            }
         }
 
         public IEnumerable<double> GetScales()
