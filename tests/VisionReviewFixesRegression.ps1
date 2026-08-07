@@ -233,6 +233,55 @@ $preprocessor = Read-SourceFile "WPELibrary\Lib\Vision\VisionImagePreprocessor.c
 Assert-Contains $preprocessor "output.UnlockBits(outputData)" `
     "Image preprocessing must unlock bitmap data before disposal."
 
+$worker = Read-SourceFile "vision_worker\worker.py"
+Assert-Contains $worker "self._ocr_by_key" `
+    "Python OCR engines must be cached by model and language instead of one global instance."
+Assert-Contains $worker "_validate_model_directory" `
+    "Python OCR must fail closed when bundled offline models are missing."
+Assert-Contains $worker "scale_factor" `
+    "Python OCR must receive the configured preprocessing scale."
+Assert-Contains $worker "x_scale = original_width" `
+    "Python OCR boxes must be mapped back to the source image coordinates."
+Assert-Contains $worker "character_whitelist" `
+    "Python OCR must apply the configured character whitelist."
+Assert-Contains $worker "begin_input_session" `
+    "Airtest input must require a worker-side authorization session."
+Assert-Contains $worker "authorization_token" `
+    "Airtest actions must validate a per-run authorization token."
+
+$pythonBridge = Read-SourceFile "WPELibrary\Lib\Vision\VisionPythonWorkerTextRecognizer.cs"
+Assert-Contains $pythonBridge "ResolveWorkerModelDirectory" `
+    "Python Worker relative model paths must resolve beside worker.py."
+Assert-Contains $pythonBridge "public VisionCaptureResult Capture" `
+    "Airtest capture must be exposed through the C# JSONL bridge."
+Assert-Contains $pythonBridge "ExecuteAirtestAction" `
+    "Airtest input actions must be exposed through the C# JSONL bridge."
+Assert-Contains $pythonBridge "PythonWorkerTimeoutMilliseconds" `
+    "Python Worker timeout configuration must be wired to the bridge."
+
+$captureMode = Read-SourceFile "WPELibrary\Lib\Vision\VisionCaptureSourceMode.cs"
+Assert-Contains $captureMode "Airtest = 3" `
+    "Airtest must be a selectable capture source."
+$form = Read-SourceFile "WPELibrary\Socket_RobotForm.cs"
+Assert-Contains $form "VisionCaptureSourceMode.Airtest" `
+    "The UI must expose the Airtest capture source."
+Assert-Contains $form "txtVisionPythonExecutable" `
+    "The UI must expose the Python runtime path."
+Assert-Contains $form "txtVisionPythonWorkerScript" `
+    "The UI must expose the Worker script path."
+Assert-Contains $form "nudVisionPythonWorkerTimeout" `
+    "The UI must expose the Worker timeout."
+
+$applicationProject = Read-SourceFile "WinsockPacketEditor\WinsockPacketEditor.csproj"
+foreach ($model in @(
+    "ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+    "PP-OCRv6_det_small.onnx",
+    "PP-OCRv6_rec_small.onnx"
+)) {
+    Assert-Contains $applicationProject $model `
+        "ClickOnce output must include the bundled RapidOCR model: $model"
+}
+
 $tesseract = Read-SourceFile "WPELibrary\Lib\Vision\VisionTesseractRecognizer.cs"
 Assert-Contains $tesseract "IDisposable" `
     "The Tesseract recognizer must release its worker gate."

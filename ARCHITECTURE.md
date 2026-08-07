@@ -9,27 +9,35 @@
 ```mermaid
 flowchart LR
     A[目标窗口客户区截图] --> B{条件类型}
-    B -->|文字/数字| C[Auto OCR]
+    B -->|文字/数字| C[OCR engine selection]
     B -->|模板| D[模板匹配]
     B -->|颜色| E[RGB 像素匹配]
-    C --> F[ONNX DBNet/CRNN]
-    F -->|成功且置信度达标| G[条件判断]
-    F -->|不可用或置信度不足| H[Tesseract 回退]
-    H --> G
+    C -->|显式 Python Worker| F[Python Worker JSONL]
+    F -->|RapidOCR + ONNX Runtime 成功| G[条件判断]
+    C -->|Auto/显式 ONNX| H[C# ONNX]
+    H -->|Auto 且不可用或低置信度| I[Tesseract 回退]
+    I --> G
     D --> G
     E --> G
-    G --> I[状态机确认与已有动作]
+    G --> J[状态机确认与已有动作]
 ```
 
 ### OCR
 
-- `VisionOcrEngine.Auto` 默认先尝试 ONNX，只有识别成功且平均置信度达到 `OnnxRecognitionThreshold` 才直接采用。
-- ONNX 不可用、推理失败或置信度不足时回退到 Tesseract；显式选择 `Onnx` 或 `Tesseract` 时不切换引擎。
+- `VisionOcrEngine.Auto` 保留本地 ONNX/Tesseract 顺序；Python Worker 需要显式选择，避免冷启动模型加载阻塞原有识别流程。Worker 不可用时不伪造文本。
+- 显式选择 `PythonWorker`、`Onnx` 或 `Tesseract` 时不切换引擎；Python Worker 缺少运行时或依赖会返回不可用，不伪造文本。
 - ONNX 使用外部模型目录，默认是应用程序目录下的 `models\ocr`，需要 `det.onnx` 或 `dbnet.onnx`、`rec.onnx` 或 `crnn_lite_lstm.onnx`、以及 `keys.txt` 或 `character_dict.txt`。
 - 如果模型不是默认的 RGB/`(value-0.5)/0.5` 预处理，可在同一目录放置可选的 `preprocess.json`（或 `ocr_preprocess.json`），分别配置 `detector`、`recognizer` 的 `colorOrder`、`mean`、`std` 和 `outputIsLogits`；模型文件或该 sidecar 变化后会自动重载。
 - 识别输入会读取 ONNX 图像输入的 4D 形状、通道数和 NCHW/NHWC 布局；不支持的输入 rank 会明确返回错误，不会静默套用错误形状。
 - 对 PaddleOCR 风格 CRNN，解码器按 `keys.txt` 不含 blank、输出第 0 类为 CTC blank 处理，同时保留 blank 在末类的兼容分支。
 - ONNX 识别器只接受真实推理输出；模型缺失、输出不兼容或推理异常会返回不可用/失败结果，不会生成假文本。
+
+### Python Worker 与 JSONL
+
+- `vision_worker/worker.py` 是独立的长驻进程：C# 前端通过标准输入发送一行 JSON，Worker 通过标准输出返回一行 JSON；协议日志写标准错误，同时写入用户目录下的有限滚动日志文件。
+- `VisionPythonWorkerTextRecognizer` 串行化请求、按超时/取消重启子进程，并把 RapidOCR 文本框、文本和置信度转换成现有 `VisionOcrResult`；现有截图、区域边界、状态机和动作授权仍由 C# 前端负责。
+- Worker 的 `ocr` 使用 RapidOCR 的 ONNX Runtime CPU 推理；`capture` 使用 Airtest Windows 窗口句柄截图；`airtest_action` 只有请求显式设置 `allow_system_input=true` 时才允许输入。
+- Worker 依赖安装到 `%LOCALAPPDATA%\XNAS\WPE\vision-worker\python`，不写入用户数据库，不把 Python 环境塞进 ClickOnce 包；应用输出携带脚本、依赖清单、模型清单和安装脚本。Worker 提供 warmup 健康检查、有限滚动日志和请求诊断。
 
 示例（数值只是模型包提供者应确认的示例，不代表本项目内置模型）：
 
@@ -80,7 +88,22 @@ flowchart LR
 
 ## 配置与交付
 
-- OCR 引擎、ONNX 模型目录、检测阈值、识别阈值和最大图像边长写入 `RobotVisionProfile`，并同步到 XML profile。
+- OCR 引擎、Python Worker 脚本/运行时路径、ONNX 模型目录、检测阈值、识别阈值和最大图像边长写入 `RobotVisionProfile`，并同步到 XML profile。
 - 颜色条件写入 `RobotVisionCondition`，并同步到 XML assistant step。
 - ONNX Runtime 使用 `Microsoft.ML.OnnxRuntime.Managed` 1.27.1；最终应用输出目录同时携带 x64 `onnxruntime.dll` 和 `onnxruntime_providers_shared.dll`。
+- Python Worker 依赖由 `vision_worker/requirements.txt` 管理；`tools/Install-VisionWorker.ps1` 创建每用户环境并执行模型 SHA-256、`ping`、warmup 和 OCR 验收。
 - 项目不内置 APK 中提取的模型。模型必须由使用者提供并确认其来源、许可证和适用性。
+## Python Worker deployment boundary
+
+The WinForms front end communicates with `vision_worker/worker.py` through
+JSONL. Relative RapidOCR model paths resolve beside `worker.py`, and the
+ClickOnce application package includes the three bundled ONNX files under
+`vision_worker/models/ocr`; the worker refuses to download missing models.
+RapidOCR preprocessing and threshold/filter settings are carried in the OCR
+request, and returned boxes are mapped back to the captured source coordinates.
+
+Airtest capture is selectable as a capture source. Airtest actions are used
+only when the Python Worker engine is selected and require a short-lived,
+one-shot, window-bound authorization token issued after the existing UI confirmation.
+Python executable, worker script, and timeout settings persist in RobotVisionProfile
+SQLite columns and the XML profile format.

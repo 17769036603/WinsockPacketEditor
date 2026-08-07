@@ -11,13 +11,23 @@ namespace WPELibrary.Lib.Vision
     {
         private readonly Socket_VisionProfile profile;
         private readonly VisionActionDefinition definition;
+        private readonly IVisionSystemInputProvider systemInputProvider;
 
         public VisionMouseAction(Socket_VisionProfile profile, VisionActionDefinition definition)
+            : this(profile, definition, null)
+        {
+        }
+
+        public VisionMouseAction(
+            Socket_VisionProfile profile,
+            VisionActionDefinition definition,
+            IVisionSystemInputProvider systemInputProvider)
         {
             this.profile = profile ?? throw new ArgumentNullException("profile");
             this.definition = definition == null
                 ? new VisionActionDefinition()
                 : definition.Clone();
+            this.systemInputProvider = systemInputProvider;
         }
 
         public VisionAssistantActionResult Execute(
@@ -91,6 +101,44 @@ namespace WPELibrary.Lib.Vision
             }
 
             Point clientPoint = this.ResolveClientPoint(context, clientSize);
+            if (this.systemInputProvider != null &&
+                this.profile.OcrOptions != null &&
+                this.profile.OcrOptions.Engine == VisionOcrEngine.PythonWorker)
+            {
+                if (!Wait(cancellationToken, this.definition.DelayMilliseconds))
+                {
+                    return VisionAssistantActionResult.CancelledResult();
+                }
+                if (!VisionWindowService.TryValidateClientSize(
+                    window.Handle,
+                    this.profile.CaptureSettings,
+                    out validatedClientSize,
+                    out reason))
+                {
+                    return VisionAssistantActionResult.Failed(reason);
+                }
+                if (!VisionWindowService.TryGetClientBounds(
+                    window.Handle,
+                    out clientBounds,
+                    out clientSize))
+                {
+                    return VisionAssistantActionResult.Failed("The target window client area is unavailable.");
+                }
+                clientPoint = this.ResolveClientPoint(context, clientSize);
+                if (!VisionWindowService.IsForegroundWindow(window.Handle))
+                {
+                    return VisionAssistantActionResult.Failed(
+                        "The target window lost the foreground before system input was sent.");
+                }
+                return this.systemInputProvider.ExecuteAirtestAction(
+                    window.Handle,
+                    clientPoint,
+                    this.definition,
+                    this.profile.OcrOptions,
+                    this.profile.AllowSystemInput,
+                    cancellationToken);
+            }
+
             Point screenPoint = new Point(
                 clientBounds.Left + clientPoint.X,
                 clientBounds.Top + clientPoint.Y);

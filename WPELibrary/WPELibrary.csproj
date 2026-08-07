@@ -168,10 +168,14 @@
     <Compile Include="Lib\Vision\VisionOcrEngine.cs" />
     <Compile Include="Lib\Vision\VisionOcrResult.cs" />
     <Compile Include="Lib\Vision\IVisionTextRecognizer.cs" />
+    <Compile Include="Lib\Vision\IVisionCaptureProvider.cs" />
+    <Compile Include="Lib\Vision\IVisionSystemInputProvider.cs" />
     <Compile Include="Lib\Vision\VisionImagePreprocessor.cs" />
     <Compile Include="Lib\Vision\VisionTesseractRecognizer.cs" />
     <Compile Include="Lib\Vision\VisionOnnxTextRecognizer.cs" />
     <Compile Include="Lib\Vision\VisionAutoTextRecognizer.cs" />
+    <Compile Include="Lib\Vision\VisionPythonWorkerTextRecognizer.cs" />
+    <Compile Include="Lib\Vision\VisionPythonWorkerHealth.cs" />
     <Compile Include="Lib\Vision\VisionTextCondition.cs" />
     <Compile Include="Lib\Vision\VisionColorCondition.cs" />
     <Compile Include="Lib\Vision\VisionColorMatchResult.cs" />

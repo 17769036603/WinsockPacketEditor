@@ -673,7 +673,7 @@ namespace WPELibrary.Lib.Vision
                 string.Equals(processName, "dnmultiplayer", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static VisionCaptureResult CreateCaptureResult(
+        public static VisionCaptureResult CreateCaptureResult(
             Bitmap bitmap,
             VisionCaptureSourceMode sourceMode,
             VisionCaptureSettings settings)

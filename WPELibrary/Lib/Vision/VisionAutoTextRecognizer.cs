@@ -5,21 +5,67 @@ using System.Threading;
 
 namespace WPELibrary.Lib.Vision
 {
-    public sealed class VisionAutoTextRecognizer : IVisionTextRecognizer, IDisposable
+    public sealed class VisionAutoTextRecognizer :
+        IVisionTextRecognizer,
+        IVisionCaptureProvider,
+        IVisionSystemInputProvider,
+        IDisposable
     {
         private readonly VisionOnnxTextRecognizer onnxRecognizer;
         private readonly VisionTesseractRecognizer tesseractRecognizer;
+        private readonly VisionPythonWorkerTextRecognizer pythonWorker;
 
         public VisionAutoTextRecognizer(
             VisionOnnxTextRecognizer onnxRecognizer,
             VisionTesseractRecognizer tesseractRecognizer)
+            : this(onnxRecognizer, tesseractRecognizer, null)
+        {
+        }
+
+        public VisionAutoTextRecognizer(
+            VisionOnnxTextRecognizer onnxRecognizer,
+            VisionTesseractRecognizer tesseractRecognizer,
+            VisionPythonWorkerTextRecognizer pythonWorker)
         {
             this.onnxRecognizer = onnxRecognizer ?? new VisionOnnxTextRecognizer();
             this.tesseractRecognizer = tesseractRecognizer ?? new VisionTesseractRecognizer("tesseract.exe");
+            this.pythonWorker = pythonWorker ?? new VisionPythonWorkerTextRecognizer();
             this.LastEngine = string.Empty;
         }
 
         public string LastEngine { get; private set; }
+
+        public VisionCaptureResult Capture(
+            IntPtr windowHandle,
+            VisionRegion region,
+            VisionCaptureSettings settings,
+            VisionOcrOptions ocrOptions,
+            CancellationToken cancellationToken)
+        {
+            return this.pythonWorker.Capture(
+                windowHandle,
+                region,
+                settings,
+                ocrOptions,
+                cancellationToken);
+        }
+
+        public VisionAssistantActionResult ExecuteAirtestAction(
+            IntPtr windowHandle,
+            Point clientPoint,
+            VisionActionDefinition definition,
+            VisionOcrOptions ocrOptions,
+            bool allowSystemInput,
+            CancellationToken cancellationToken)
+        {
+            return this.pythonWorker.ExecuteAirtestAction(
+                windowHandle,
+                clientPoint,
+                definition,
+                ocrOptions,
+                allowSystemInput,
+                cancellationToken);
+        }
 
         public VisionOcrResult Recognize(
             Bitmap source,
@@ -37,6 +83,14 @@ namespace WPELibrary.Lib.Vision
 
             options.Validate();
             this.LastEngine = string.Empty;
+            if (options.Engine == VisionOcrEngine.PythonWorker)
+            {
+                this.LastEngine = "PythonWorker";
+                return this.pythonWorker.Recognize(source, options, cancellationToken);
+            }
+            // Auto intentionally keeps the established ONNX/Tesseract order.
+            // The Python Worker is opt-in so a cold model load cannot delay the
+            // editor's recognition button or silently change existing profiles.
             if (options.Engine == VisionOcrEngine.Tesseract)
             {
                 this.LastEngine = "Tesseract";
@@ -139,6 +193,10 @@ namespace WPELibrary.Lib.Vision
             if (this.tesseractRecognizer != null)
             {
                 this.tesseractRecognizer.Dispose();
+            }
+            if (this.pythonWorker != null)
+            {
+                this.pythonWorker.Dispose();
             }
         }
     }

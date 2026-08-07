@@ -134,10 +134,10 @@ namespace WPELibrary.Lib.Vision
                 }
 
                 Stopwatch captureStopwatch = Stopwatch.StartNew();
-                using (VisionCaptureResult captureResult = VisionWindowService.CaptureClientRegionDetailed(
+                using (VisionCaptureResult captureResult = CaptureObservation(
                     targetHandle,
                     condition.Region,
-                    this.captureSettings))
+                    cancellationToken))
                 using (Bitmap capture = captureResult.Image == null ? null : new Bitmap(captureResult.Image))
                 {
                     captureStopwatch.Stop();
@@ -253,6 +253,33 @@ namespace WPELibrary.Lib.Vision
             {
                 return VisionObservation.Failed(ex.Message);
             }
+        }
+
+        private VisionCaptureResult CaptureObservation(
+            IntPtr targetHandle,
+            VisionRegion region,
+            CancellationToken cancellationToken)
+        {
+            if (this.captureSettings.SourceMode == VisionCaptureSourceMode.Airtest)
+            {
+                IVisionCaptureProvider provider = this.textRecognizer as IVisionCaptureProvider;
+                if (provider == null)
+                {
+                    throw new InvalidOperationException(
+                        "Airtest capture requires the Python Worker recognizer.");
+                }
+                return provider.Capture(
+                    targetHandle,
+                    region,
+                    this.captureSettings,
+                    this.ocrOptions,
+                    cancellationToken);
+            }
+
+            return VisionWindowService.CaptureClientRegionDetailed(
+                targetHandle,
+                region,
+                this.captureSettings);
         }
 
         private static IEnumerable<Bitmap> GetTemplates(VisionConditionDefinition condition)

@@ -4,6 +4,7 @@ namespace WPELibrary.Lib.Vision
     {
         Auto = 0,
         Onnx = 1,
-        Tesseract = 2
+        Tesseract = 2,
+        PythonWorker = 3
     }
 }

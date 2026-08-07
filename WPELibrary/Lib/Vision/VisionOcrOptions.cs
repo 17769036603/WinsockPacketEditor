@@ -50,6 +50,12 @@ namespace WPELibrary.Lib.Vision
 
         public int OnnxMaxImageSide { get; set; }
 
+        public string PythonExecutablePath { get; set; }
+
+        public string PythonWorkerScriptPath { get; set; }
+
+        public int PythonWorkerTimeoutMilliseconds { get; set; }
+
         public VisionOcrOptions()
         {
             this.ScaleFactor = 2;
@@ -75,6 +81,9 @@ namespace WPELibrary.Lib.Vision
             this.OnnxDetectionThreshold = 0.3D;
             this.OnnxRecognitionThreshold = 0.5D;
             this.OnnxMaxImageSide = 960;
+            this.PythonExecutablePath = string.Empty;
+            this.PythonWorkerScriptPath = string.Empty;
+            this.PythonWorkerTimeoutMilliseconds = 15000;
         }
 
         public void Validate()
@@ -133,6 +142,11 @@ namespace WPELibrary.Lib.Vision
             {
                 throw new ArgumentOutOfRangeException("OnnxMaxImageSide");
             }
+            if (this.PythonWorkerTimeoutMilliseconds < 500 ||
+                this.PythonWorkerTimeoutMilliseconds > 120000)
+            {
+                throw new ArgumentOutOfRangeException("PythonWorkerTimeoutMilliseconds");
+            }
         }
 
         public VisionOcrOptions Clone()
@@ -161,7 +175,10 @@ namespace WPELibrary.Lib.Vision
                 OnnxModelDirectory = this.OnnxModelDirectory,
                 OnnxDetectionThreshold = this.OnnxDetectionThreshold,
                 OnnxRecognitionThreshold = this.OnnxRecognitionThreshold,
-                OnnxMaxImageSide = this.OnnxMaxImageSide
+                OnnxMaxImageSide = this.OnnxMaxImageSide,
+                PythonExecutablePath = this.PythonExecutablePath,
+                PythonWorkerScriptPath = this.PythonWorkerScriptPath,
+                PythonWorkerTimeoutMilliseconds = this.PythonWorkerTimeoutMilliseconds
             };
         }
     }

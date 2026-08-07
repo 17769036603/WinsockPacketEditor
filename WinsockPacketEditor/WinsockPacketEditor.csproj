@@ -33,7 +33,7 @@
     <CreateWebPageOnPublish>true</CreateWebPageOnPublish>
     <WebPage>publish.htm</WebPage>
     <ApplicationRevision>0</ApplicationRevision>
-    <ApplicationVersion>2026.8.4.8</ApplicationVersion>
+    <ApplicationVersion>2026.8.7.4</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <CreateDesktopShortcut>true</CreateDesktopShortcut>
     <PublishWizardCompleted>true</PublishWizardCompleted>
@@ -269,6 +269,38 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="EasyLoad64.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\vision_worker\worker.py">
+      <Link>vision_worker\worker.py</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\vision_worker\requirements.txt">
+      <Link>vision_worker\requirements.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\vision_worker\README.md">
+      <Link>vision_worker\README.md</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\vision_worker\models\ocr\ch_ppocr_mobile_v2.0_cls_mobile.onnx">
+      <Link>vision_worker\models\ocr\ch_ppocr_mobile_v2.0_cls_mobile.onnx</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\vision_worker\models\ocr\PP-OCRv6_det_small.onnx">
+      <Link>vision_worker\models\ocr\PP-OCRv6_det_small.onnx</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\vision_worker\models\ocr\PP-OCRv6_rec_small.onnx">
+      <Link>vision_worker\models\ocr\PP-OCRv6_rec_small.onnx</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\vision_worker\models\ocr\models.manifest.json">
+      <Link>vision_worker\models\ocr\models.manifest.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\tools\Install-VisionWorker.ps1">
+      <Link>tools\Install-VisionWorker.ps1</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Icon\WPE64.ico" />

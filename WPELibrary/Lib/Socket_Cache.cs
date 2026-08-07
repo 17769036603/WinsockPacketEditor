@@ -10165,7 +10165,10 @@ namespace WPELibrary.Lib
                                     OnnxModelDirectory = VisionString(visionRow, "OcrModelDirectory", "models\\ocr"),
                                     OnnxDetectionThreshold = VisionDouble(visionRow, "OcrDetectionThreshold", 0.3D),
                                     OnnxRecognitionThreshold = VisionDouble(visionRow, "OcrRecognitionThreshold", 0.5D),
-                                    OnnxMaxImageSide = VisionInt(visionRow, "OcrMaxImageSide", 960)
+                                    OnnxMaxImageSide = VisionInt(visionRow, "OcrMaxImageSide", 960),
+                                    PythonExecutablePath = VisionString(visionRow, "OcrPythonExecutable", string.Empty),
+                                    PythonWorkerScriptPath = VisionString(visionRow, "OcrPythonWorkerScript", string.Empty),
+                                    PythonWorkerTimeoutMilliseconds = VisionInt(visionRow, "OcrPythonWorkerTimeout", 15000)
                                 },
                                 OcrCondition = new VisionTextCondition
                                 {
@@ -10580,7 +10583,10 @@ namespace WPELibrary.Lib
                         new XElement("OnnxModelDirectory", ocrOptions.OnnxModelDirectory ?? string.Empty),
                         new XElement("OnnxDetectionThreshold", ocrOptions.OnnxDetectionThreshold.ToString(CultureInfo.InvariantCulture)),
                         new XElement("OnnxRecognitionThreshold", ocrOptions.OnnxRecognitionThreshold.ToString(CultureInfo.InvariantCulture)),
-                        new XElement("OnnxMaxImageSide", ocrOptions.OnnxMaxImageSide)),
+                        new XElement("OnnxMaxImageSide", ocrOptions.OnnxMaxImageSide),
+                        new XElement("PythonExecutablePath", ocrOptions.PythonExecutablePath ?? string.Empty),
+                        new XElement("PythonWorkerScriptPath", ocrOptions.PythonWorkerScriptPath ?? string.Empty),
+                        new XElement("PythonWorkerTimeoutMilliseconds", ocrOptions.PythonWorkerTimeoutMilliseconds)),
                         new XElement("OcrCondition",
                         new XElement("MatchMode", (int)ocrCondition.MatchMode),
                         new XElement("ExpectedText", ocrCondition.ExpectedText ?? string.Empty),
@@ -10921,7 +10927,10 @@ namespace WPELibrary.Lib
                         OnnxModelDirectory = XmlString(xeOcrOptions, "OnnxModelDirectory", "models\\ocr"),
                         OnnxDetectionThreshold = XmlDouble(xeOcrOptions, "OnnxDetectionThreshold", 0.3D),
                         OnnxRecognitionThreshold = XmlDouble(xeOcrOptions, "OnnxRecognitionThreshold", 0.5D),
-                        OnnxMaxImageSide = XmlInt(xeOcrOptions, "OnnxMaxImageSide", 960)
+                        OnnxMaxImageSide = XmlInt(xeOcrOptions, "OnnxMaxImageSide", 960),
+                        PythonExecutablePath = XmlString(xeOcrOptions, "PythonExecutablePath", string.Empty),
+                        PythonWorkerScriptPath = XmlString(xeOcrOptions, "PythonWorkerScriptPath", string.Empty),
+                        PythonWorkerTimeoutMilliseconds = XmlInt(xeOcrOptions, "PythonWorkerTimeoutMilliseconds", 15000)
                     };
                 }
 
@@ -14568,6 +14577,9 @@ namespace WPELibrary.Lib
                         sql += "OcrDetectionThreshold REAL DEFAULT 0.3,";
                         sql += "OcrRecognitionThreshold REAL DEFAULT 0.5,";
                         sql += "OcrMaxImageSide INTEGER DEFAULT 960,";
+                        sql += "OcrPythonExecutable TEXT,";
+                        sql += "OcrPythonWorkerScript TEXT,";
+                        sql += "OcrPythonWorkerTimeout INTEGER DEFAULT 15000,";
                         sql += "OcrKeyword TEXT,";
                         sql += "OcrMatchMode INTEGER DEFAULT 0,";
                         sql += "OcrMinimumConfidence REAL DEFAULT 0.5,";
@@ -14672,6 +14684,9 @@ namespace WPELibrary.Lib
                                 "OcrDetectionThreshold REAL DEFAULT 0.3",
                                 "OcrRecognitionThreshold REAL DEFAULT 0.5",
                                 "OcrMaxImageSide INTEGER DEFAULT 960",
+                                "OcrPythonExecutable TEXT",
+                                "OcrPythonWorkerScript TEXT",
+                                "OcrPythonWorkerTimeout INTEGER DEFAULT 15000",
                                 "OcrKeyword TEXT",
                                 "OcrMatchMode INTEGER DEFAULT 0",
                                 "OcrMinimumConfidence REAL DEFAULT 0.5",
@@ -15007,7 +15022,7 @@ namespace WPELibrary.Lib
                             sql += "CaptureSource, CaptureInterval, CaptureSkipUnchanged, CaptureHistoryLimit, CaptureSaveFailures, CaptureFailureDirectory, CaptureRequireExactClientSize, CaptureRequiredClientWidth, CaptureRequiredClientHeight,";
                             sql += "OcrScale, OcrBinary, OcrThreshold, OcrContrast, OcrAdaptive, OcrAdaptiveWindow, OcrAdaptiveOffset,";
                             sql += "OcrInvert, OcrDenoise, OcrSharpen, OcrWhitelist, OcrBlacklist, OcrLanguage,";
-                            sql += "OcrExecutable, OcrTessdataPath, OcrTimeout, OcrPsm, OcrEngine, OcrModelDirectory, OcrDetectionThreshold, OcrRecognitionThreshold, OcrMaxImageSide, OcrKeyword,";
+                            sql += "OcrExecutable, OcrTessdataPath, OcrTimeout, OcrPsm, OcrEngine, OcrModelDirectory, OcrDetectionThreshold, OcrRecognitionThreshold, OcrMaxImageSide, OcrPythonExecutable, OcrPythonWorkerScript, OcrPythonWorkerTimeout, OcrKeyword,";
                             sql += "OcrMatchMode, OcrMinimumConfidence, OcrMinimumNumber, OcrMaximumNumber";
                             sql += ") VALUES (";
                             sql += "@GUID, @WindowHandle, @ProcessId, @ProcessName, @ProcessPath, @ProcessStartTimeUtcTicks, @WindowTitle,";
@@ -15015,7 +15030,7 @@ namespace WPELibrary.Lib
                             sql += "@CaptureSource, @CaptureInterval, @CaptureSkipUnchanged, @CaptureHistoryLimit, @CaptureSaveFailures, @CaptureFailureDirectory, @CaptureRequireExactClientSize, @CaptureRequiredClientWidth, @CaptureRequiredClientHeight,";
                             sql += "@OcrScale, @OcrBinary, @OcrThreshold, @OcrContrast, @OcrAdaptive, @OcrAdaptiveWindow, @OcrAdaptiveOffset,";
                             sql += "@OcrInvert, @OcrDenoise, @OcrSharpen, @OcrWhitelist, @OcrBlacklist, @OcrLanguage,";
-                            sql += "@OcrExecutable, @OcrTessdataPath, @OcrTimeout, @OcrPsm, @OcrEngine, @OcrModelDirectory, @OcrDetectionThreshold, @OcrRecognitionThreshold, @OcrMaxImageSide, @OcrKeyword,";
+                            sql += "@OcrExecutable, @OcrTessdataPath, @OcrTimeout, @OcrPsm, @OcrEngine, @OcrModelDirectory, @OcrDetectionThreshold, @OcrRecognitionThreshold, @OcrMaxImageSide, @OcrPythonExecutable, @OcrPythonWorkerScript, @OcrPythonWorkerTimeout, @OcrKeyword,";
                             sql += "@OcrMatchMode, @OcrMinimumConfidence, @OcrMinimumNumber, @OcrMaximumNumber";
                             sql += ");";
 
@@ -15070,6 +15085,9 @@ namespace WPELibrary.Lib
                                 cmd.Parameters.AddWithValue("@OcrDetectionThreshold", ocrOptions.OnnxDetectionThreshold);
                                 cmd.Parameters.AddWithValue("@OcrRecognitionThreshold", ocrOptions.OnnxRecognitionThreshold);
                                 cmd.Parameters.AddWithValue("@OcrMaxImageSide", ocrOptions.OnnxMaxImageSide);
+                                cmd.Parameters.AddWithValue("@OcrPythonExecutable", ocrOptions.PythonExecutablePath ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrPythonWorkerScript", ocrOptions.PythonWorkerScriptPath ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrPythonWorkerTimeout", ocrOptions.PythonWorkerTimeoutMilliseconds);
                                 cmd.Parameters.AddWithValue("@OcrKeyword", ocrCondition.ExpectedText ?? string.Empty);
                                 cmd.Parameters.AddWithValue("@OcrMatchMode", (int)ocrCondition.MatchMode);
                                 cmd.Parameters.AddWithValue("@OcrMinimumConfidence", ocrCondition.MinimumConfidence);

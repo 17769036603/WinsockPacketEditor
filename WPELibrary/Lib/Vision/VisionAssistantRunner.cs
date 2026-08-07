@@ -170,6 +170,7 @@ namespace WPELibrary.Lib.Vision
             VisionWindowObservationProvider provider = new VisionWindowObservationProvider(
                 profile,
                 textRecognizer);
+            IVisionSystemInputProvider systemInputProvider = textRecognizer as IVisionSystemInputProvider;
             foreach (VisionAssistantStep step in steps)
             {
                 if (step == null)
@@ -180,7 +181,10 @@ namespace WPELibrary.Lib.Vision
                 if (step.ActionDefinition != null &&
                     step.ActionDefinition.Type != VisionActionType.None)
                 {
-                    step.Action = new VisionMouseAction(profile, step.ActionDefinition);
+                    step.Action = new VisionMouseAction(
+                        profile,
+                        step.ActionDefinition,
+                        systemInputProvider);
                 }
             }
             VisionAssistantStateMachine stateMachine = new VisionAssistantStateMachine(provider);

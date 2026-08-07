@@ -417,8 +417,9 @@
   <data name="Vision_SaveTemplate" xml:space="preserve"><value>Save as reference image</value></data>
   <data name="Vision_Threshold" xml:space="preserve"><value>Threshold (%)</value></data>
   <data name="Vision_Match" xml:space="preserve"><value>Run image recognition</value></data>
-  <data name="Vision_NoTemplate" xml:space="preserve"><value>Load or save a reference image first.</value></data>
+  <data name="Vision_NoTemplate" xml:space="preserve"><value>Capture a screenshot first; it will be loaded as the reference image automatically.</value></data>
   <data name="Vision_TemplateLoaded" xml:space="preserve"><value>Reference image loaded: {0}</value></data>
+  <data name="Vision_TemplateAutoLoaded" xml:space="preserve"><value>Current screenshot loaded as the reference image.</value></data>
   <data name="Vision_TemplateSaved" xml:space="preserve"><value>Reference image saved: {0}</value></data>
   <data name="Vision_MatchFound" xml:space="preserve"><value>Match found at ({0},{1}), size {2}x{3}, similarity {4:P1}</value></data>
   <data name="Vision_MatchNotFound" xml:space="preserve"><value>No match reached the threshold; best similarity {0:P1}.</value></data>
@@ -460,6 +461,7 @@
   <data name="Vision_AssistantLogHide" xml:space="preserve"><value>Hide execution log</value></data>
   <data name="Vision_AssistantNoSteps" xml:space="preserve"><value>Add at least one vision step first.</value></data>
   <data name="Vision_AssistantRunning" xml:space="preserve"><value>Vision steps are running.</value></data>
+  <data name="Vision_AssistantBusy" xml:space="preserve"><value>Vision steps are still running. Please wait.</value></data>
   <data name="Vision_AssistantStopping" xml:space="preserve"><value>Stopping vision steps.</value></data>
   <data name="Vision_AssistantCancelled" xml:space="preserve"><value>Vision steps cancelled.</value></data>
   <data name="Vision_AssistantSucceeded" xml:space="preserve"><value>Vision steps completed: {0}.</value></data>
@@ -494,6 +496,7 @@
   <data name="Vision_CaptureSource" xml:space="preserve"><value>Source</value></data>
   <data name="Vision_CaptureAuto" xml:space="preserve"><value>Auto</value></data>
   <data name="Vision_CaptureScreen" xml:space="preserve"><value>Screen</value></data>
+  <data name="Vision_CaptureAirtest" xml:space="preserve"><value>Airtest (Python Worker)</value></data>
   <data name="Vision_CaptureWindowRender" xml:space="preserve"><value>Window render</value></data>
   <data name="Vision_CaptureInterval" xml:space="preserve"><value>Min interval</value></data>
   <data name="Vision_SkipUnchanged" xml:space="preserve"><value>Skip unchanged</value></data>
@@ -524,10 +527,24 @@
   <data name="Vision_OcrSharpen" xml:space="preserve"><value>Sharpen</value></data>
   <data name="Vision_OcrWhitelist" xml:space="preserve"><value>Whitelist</value></data>
   <data name="Vision_OcrEngine" xml:space="preserve"><value>Engine</value></data>
-  <data name="Vision_OcrEngineAuto" xml:space="preserve"><value>Auto (ONNX first)</value></data>
+  <data name="Vision_OcrEngineAuto" xml:space="preserve"><value>Auto (local ONNX first)</value></data>
   <data name="Vision_OcrEngineOnnx" xml:space="preserve"><value>Local ONNX</value></data>
   <data name="Vision_OcrEngineTesseract" xml:space="preserve"><value>Tesseract</value></data>
+  <data name="Vision_OcrEnginePython" xml:space="preserve"><value>Python Worker (RapidOCR)</value></data>
   <data name="Vision_OcrModelDirectory" xml:space="preserve"><value>Model directory</value></data>
+  <data name="Vision_OcrPythonExecutable" xml:space="preserve"><value>Python path</value></data>
+  <data name="Vision_OcrPythonWorkerScript" xml:space="preserve"><value>Worker script</value></data>
+  <data name="Vision_OcrPythonWorkerTimeout" xml:space="preserve"><value>Worker timeout (ms)</value></data>
+  <data name="Vision_OcrPythonReady" xml:space="preserve"><value>Python Worker ready (models found)</value></data>
+  <data name="Vision_OcrPythonUnavailable" xml:space="preserve"><value>Python Worker unavailable: check runtime, script, and models</value></data>
+  <data name="Vision_OcrPythonBrowse" xml:space="preserve"><value>Browse</value></data>
+  <data name="Vision_OcrPythonReset" xml:space="preserve"><value>Reset defaults</value></data>
+  <data name="Vision_OcrPythonTest" xml:space="preserve"><value>Test Worker</value></data>
+  <data name="Vision_OcrPythonPrewarming" xml:space="preserve"><value>Warming up Python Worker...</value></data>
+  <data name="Vision_OcrPythonTesting" xml:space="preserve"><value>Checking Python Worker...</value></data>
+  <data name="Vision_OcrPythonTestSuccess" xml:space="preserve"><value>Worker test passed.</value></data>
+  <data name="Vision_OcrPythonTestFailed" xml:space="preserve"><value>Worker test failed:</value></data>
+  <data name="Vision_OcrPythonAutoHint" xml:space="preserve"><value>Auto keeps the local ONNX/Tesseract order; select Python Worker when RapidOCR is required.</value></data>
   <data name="Vision_OcrDetectionThreshold" xml:space="preserve"><value>Detection threshold</value></data>
   <data name="Vision_OcrRecognitionThreshold" xml:space="preserve"><value>Recognition threshold</value></data>
   <data name="Vision_OcrMaxImageSide" xml:space="preserve"><value>Max image side</value></data>

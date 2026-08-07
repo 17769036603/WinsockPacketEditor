@@ -2366,7 +2366,8 @@ namespace WPELibrary
 
                 this.tsslProcessInfo.Text = Socket_Operation.GetProcessInfo();
                 this.tsslWinSock.Text = Socket_Operation.GetWinSockSupportInfo();
-                this.tsslProcessInfo.Visible = true;
+                // 监听状态继续由内部状态机维护，但不在主状态栏显示“未监听/监听中”等文字。
+                this.tsslProcessInfo.Visible = false;
                 this.tsslWinSock.Visible = false;
                 this.tsslSplit1.Visible = true;
                 this.tsslSplit2.Visible = false;

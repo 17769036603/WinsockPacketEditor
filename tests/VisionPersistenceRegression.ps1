@@ -82,6 +82,9 @@ try {
     $robot.VisionProfile.OcrOptions.OnnxDetectionThreshold = 0.35
     $robot.VisionProfile.OcrOptions.OnnxRecognitionThreshold = 0.72
     $robot.VisionProfile.OcrOptions.OnnxMaxImageSide = 1280
+    $robot.VisionProfile.OcrOptions.PythonExecutablePath = "C:\vision\python.exe"
+    $robot.VisionProfile.OcrOptions.PythonWorkerScriptPath = "C:\vision\worker.py"
+    $robot.VisionProfile.OcrOptions.PythonWorkerTimeoutMilliseconds = 24000
     $robot.VisionProfile.OcrCondition.ExpectedText = "任务完成"
     $robot.VisionProfile.OcrCondition.MinimumConfidence = 0.8
 
@@ -148,8 +151,11 @@ try {
         $loadedXmlProfile.OcrOptions.OnnxModelDirectory -eq "models\ocr-test" -and
         [double]$loadedXmlProfile.OcrOptions.OnnxDetectionThreshold -eq 0.35 -and
         [double]$loadedXmlProfile.OcrOptions.OnnxRecognitionThreshold -eq 0.72 -and
-        $loadedXmlProfile.OcrOptions.OnnxMaxImageSide -eq 1280) `
-        "XML load must restore ONNX OCR settings."
+        $loadedXmlProfile.OcrOptions.OnnxMaxImageSide -eq 1280 -and
+        $loadedXmlProfile.OcrOptions.PythonExecutablePath -eq "C:\vision\python.exe" -and
+        $loadedXmlProfile.OcrOptions.PythonWorkerScriptPath -eq "C:\vision\worker.py" -and
+        $loadedXmlProfile.OcrOptions.PythonWorkerTimeoutMilliseconds -eq 24000) `
+        "XML load must restore ONNX and Python Worker OCR settings."
     Assert-True ($loadedXmlProfile.AssistantSteps[0].Condition.ColorCondition.Red -eq 24 -and
         $loadedXmlProfile.AssistantSteps[0].Condition.ColorCondition.Green -eq 128 -and
         $loadedXmlProfile.AssistantSteps[0].Condition.ColorCondition.Blue -eq 240 -and
@@ -198,8 +204,11 @@ try {
         $profileRows.Rows[0]["OcrModelDirectory"].ToString() -eq "models\ocr-test" -and
         [double]$profileRows.Rows[0]["OcrDetectionThreshold"] -eq 0.35 -and
         [double]$profileRows.Rows[0]["OcrRecognitionThreshold"] -eq 0.72 -and
-        [int]$profileRows.Rows[0]["OcrMaxImageSide"] -eq 1280) `
-        "ONNX OCR settings must survive SQLite persistence."
+        [int]$profileRows.Rows[0]["OcrMaxImageSide"] -eq 1280 -and
+        $profileRows.Rows[0]["OcrPythonExecutable"].ToString() -eq "C:\vision\python.exe" -and
+        $profileRows.Rows[0]["OcrPythonWorkerScript"].ToString() -eq "C:\vision\worker.py" -and
+        [int]$profileRows.Rows[0]["OcrPythonWorkerTimeout"] -eq 24000) `
+        "ONNX and Python Worker OCR settings must survive SQLite persistence."
 
     $conditionRows = [WPELibrary.Lib.Socket_Cache+DataBase]::SelectTable_RobotVisionCondition($robot.RID)
     Assert-True ($conditionRows.Rows.Count -eq 1) `
@@ -237,8 +246,11 @@ try {
         $loadedRobot.VisionProfile.OcrOptions.OnnxModelDirectory -eq "models\ocr-test" -and
         [double]$loadedRobot.VisionProfile.OcrOptions.OnnxDetectionThreshold -eq 0.35 -and
         [double]$loadedRobot.VisionProfile.OcrOptions.OnnxRecognitionThreshold -eq 0.72 -and
-        $loadedRobot.VisionProfile.OcrOptions.OnnxMaxImageSide -eq 1280) `
-        "SQLite load must restore ONNX OCR settings."
+        $loadedRobot.VisionProfile.OcrOptions.OnnxMaxImageSide -eq 1280 -and
+        $loadedRobot.VisionProfile.OcrOptions.PythonExecutablePath -eq "C:\vision\python.exe" -and
+        $loadedRobot.VisionProfile.OcrOptions.PythonWorkerScriptPath -eq "C:\vision\worker.py" -and
+        $loadedRobot.VisionProfile.OcrOptions.PythonWorkerTimeoutMilliseconds -eq 24000) `
+        "SQLite load must restore ONNX and Python Worker OCR settings."
     Assert-True ($loadedRobot.VisionProfile.ProcessPath -eq "C:\vision\vision-target.exe" -and
         $loadedRobot.VisionProfile.ProcessStartTimeUtcTicks -eq 638900000000000000 -and
         $loadedRobot.VisionProfile.Region.UseNormalizedCoordinates -and

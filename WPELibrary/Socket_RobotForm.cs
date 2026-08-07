@@ -69,6 +69,13 @@ namespace WPELibrary
         private NumericUpDown nudVisionOcrDetectionThreshold;
         private NumericUpDown nudVisionOcrRecognitionThreshold;
         private NumericUpDown nudVisionOcrMaxImageSide;
+        private TextBox txtVisionPythonExecutable;
+        private TextBox txtVisionPythonWorkerScript;
+        private NumericUpDown nudVisionPythonWorkerTimeout;
+        private Button bVisionBrowsePythonExecutable;
+        private Button bVisionBrowsePythonWorkerScript;
+        private Button bVisionResetPythonSettings;
+        private Button bVisionTestPythonWorker;
         private Label lVisionOcrModelStatus;
         private Button bVisionRecognizeText;
         private Button bVisionSelectRegion;
@@ -113,6 +120,7 @@ namespace WPELibrary
         private Button bVisionRunSteps;
         private Button bVisionStopSteps;
         private IVisionTextRecognizer visionTextRecognizer;
+        private VisionPythonWorkerTextRecognizer visionPythonWorker;
         private CancellationTokenSource visionAssistantCancellation;
         private Task<VisionAssistantRunResult> visionAssistantTask;
         private bool updatingVisionStepEditor;
@@ -142,6 +150,8 @@ namespace WPELibrary
         private Task<VisionOcrResult> visionOcrTask;
         private CancellationTokenSource visionMatchCancellation;
         private Task<VisionMatchResult> visionMatchTask;
+        private CancellationTokenSource visionPythonHealthCancellation;
+        private Task<VisionPythonWorkerHealth> visionPythonHealthTask;
         private readonly object visionAssistantUiSync = new object();
         private readonly Queue<string> pendingVisionAssistantLogs = new Queue<string>();
         private string pendingVisionAssistantStatus;
@@ -349,6 +359,7 @@ namespace WPELibrary
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
                 AutoScroll = true,
+                BackColor = Color.FromArgb(245, 247, 250),
                 Padding = new Padding(4),
                 Margin = new Padding(0)
             };
@@ -367,6 +378,7 @@ namespace WPELibrary
             };
             FlowLayoutPanel settingsPage = CreateVisionVerticalFlow();
             settingsPage.Dock = DockStyle.Fill;
+            settingsPage.BackColor = Color.FromArgb(245, 247, 250);
             settingsPage.Padding = new Padding(4);
             settingsPage.Resize += (sender, e) => FitVisionSections(settingsPage);
             settingsPage.Layout += (sender, e) => FitVisionSections(settingsPage);
@@ -417,6 +429,7 @@ namespace WPELibrary
             this.nudVisionWidth = CreateVisionNumber(1);
             this.nudVisionHeight = CreateVisionNumber(1);
             this.bVisionSelectRegion = CreateVisionButton(UiText("Vision_SelectRegion"));
+            StyleVisionPrimaryButton(this.bVisionSelectRegion);
             this.bVisionSelectRegion.Click += this.bVisionSelectRegion_Click;
 
             FlowLayoutPanel captureActions = CreateVisionFlow();
@@ -460,6 +473,7 @@ namespace WPELibrary
             this.cbbVisionCaptureSource.Items.Add(new VisionCaptureSourceChoice(VisionCaptureSourceMode.Auto, UiText("Vision_CaptureAuto")));
             this.cbbVisionCaptureSource.Items.Add(new VisionCaptureSourceChoice(VisionCaptureSourceMode.Screen, UiText("Vision_CaptureScreen")));
             this.cbbVisionCaptureSource.Items.Add(new VisionCaptureSourceChoice(VisionCaptureSourceMode.WindowRender, UiText("Vision_CaptureWindowRender")));
+            this.cbbVisionCaptureSource.Items.Add(new VisionCaptureSourceChoice(VisionCaptureSourceMode.Airtest, UiText("Vision_CaptureAirtest")));
             this.cbbVisionCaptureSource.SelectedIndex = 0;
             captureAdvancedContent.Controls.Add(this.cbbVisionCaptureSource);
             captureAdvancedContent.Controls.Add(CreateVisionLabel(UiText("Vision_CaptureInterval")));
@@ -579,7 +593,8 @@ namespace WPELibrary
             {
                 Text = UiText("Vision_ModeOcr"),
                 Padding = new Padding(6),
-                AutoScroll = true,
+                // 主视觉页已经提供唯一的页面级滚动容器；这里不再嵌套滚动。
+                AutoScroll = false,
                 UseVisualStyleBackColor = true
             };
             FlowLayoutPanel ocrRoot = CreateVisionVerticalFlow();
@@ -692,6 +707,9 @@ namespace WPELibrary
             this.cbbVisionOcrEngine.Items.Add(new VisionOcrEngineChoice(
                 VisionOcrEngine.Tesseract,
                 UiText("Vision_OcrEngineTesseract")));
+            this.cbbVisionOcrEngine.Items.Add(new VisionOcrEngineChoice(
+                VisionOcrEngine.PythonWorker,
+                UiText("Vision_OcrEnginePython")));
             this.cbbVisionOcrEngine.SelectedIndexChanged += (sender, e) => this.UpdateVisionOcrModelStatus();
             this.cbbVisionOcrEngine.SelectedIndex = 0;
             engineSettings.Controls.Add(this.cbbVisionOcrEngine);
@@ -725,6 +743,55 @@ namespace WPELibrary
             this.lVisionOcrModelStatus = CreateVisionStatusLabel(string.Empty);
             engineSettings.Controls.Add(this.lVisionOcrModelStatus);
             ocrAdvancedContent.Controls.Add(engineSettings);
+            FlowLayoutPanel pythonSettings = CreateVisionVerticalFlow();
+            FlowLayoutPanel pythonExecutableSettings = CreateVisionFlow();
+            pythonExecutableSettings.Controls.Add(CreateVisionLabel(UiText("Vision_OcrPythonExecutable")));
+            this.txtVisionPythonExecutable = new TextBox
+            {
+                Width = 210,
+                AccessibleName = UiText("Vision_OcrPythonExecutable"),
+                AccessibleRole = AccessibleRole.Text,
+                Margin = new Padding(0, 2, 8, 2)
+            };
+            this.txtVisionPythonExecutable.TextChanged += (sender, e) => this.UpdateVisionOcrModelStatus();
+            pythonExecutableSettings.Controls.Add(this.txtVisionPythonExecutable);
+            this.bVisionBrowsePythonExecutable = CreateVisionButton(UiText("Vision_OcrPythonBrowse"));
+            this.bVisionBrowsePythonExecutable.Click += this.bVisionBrowsePythonExecutable_Click;
+            pythonExecutableSettings.Controls.Add(this.bVisionBrowsePythonExecutable);
+            pythonSettings.Controls.Add(pythonExecutableSettings);
+            FlowLayoutPanel pythonScriptSettings = CreateVisionFlow();
+            pythonScriptSettings.Controls.Add(CreateVisionLabel(UiText("Vision_OcrPythonWorkerScript")));
+            this.txtVisionPythonWorkerScript = new TextBox
+            {
+                Width = 210,
+                AccessibleName = UiText("Vision_OcrPythonWorkerScript"),
+                AccessibleRole = AccessibleRole.Text,
+                Margin = new Padding(0, 2, 8, 2)
+            };
+            this.txtVisionPythonWorkerScript.TextChanged += (sender, e) => this.UpdateVisionOcrModelStatus();
+            pythonScriptSettings.Controls.Add(this.txtVisionPythonWorkerScript);
+            this.bVisionBrowsePythonWorkerScript = CreateVisionButton(UiText("Vision_OcrPythonBrowse"));
+            this.bVisionBrowsePythonWorkerScript.Click += this.bVisionBrowsePythonWorkerScript_Click;
+            pythonScriptSettings.Controls.Add(this.bVisionBrowsePythonWorkerScript);
+            pythonSettings.Controls.Add(pythonScriptSettings);
+            FlowLayoutPanel pythonRuntimeSettings = CreateVisionFlow();
+            pythonRuntimeSettings.Controls.Add(CreateVisionLabel(UiText("Vision_OcrPythonWorkerTimeout")));
+            this.nudVisionPythonWorkerTimeout = CreateVisionNumber(500);
+            this.nudVisionPythonWorkerTimeout.Minimum = 500;
+            this.nudVisionPythonWorkerTimeout.Maximum = 120000;
+            this.nudVisionPythonWorkerTimeout.Value = 15000;
+            this.nudVisionPythonWorkerTimeout.Width = 76;
+            this.nudVisionPythonWorkerTimeout.Dock = DockStyle.None;
+            pythonRuntimeSettings.Controls.Add(this.nudVisionPythonWorkerTimeout);
+            this.bVisionTestPythonWorker = CreateVisionButton(UiText("Vision_OcrPythonTest"));
+            this.bVisionTestPythonWorker.Click += this.bVisionTestPythonWorker_Click;
+            pythonRuntimeSettings.Controls.Add(this.bVisionTestPythonWorker);
+            this.bVisionResetPythonSettings = CreateVisionButton(UiText("Vision_OcrPythonReset"));
+            this.bVisionResetPythonSettings.Click += this.bVisionResetPythonSettings_Click;
+            pythonRuntimeSettings.Controls.Add(this.bVisionResetPythonSettings);
+            pythonSettings.Controls.Add(pythonRuntimeSettings);
+            pythonSettings.Controls.Add(CreateVisionStatusLabel(UiText("Vision_OcrPythonAutoHint")));
+            ocrAdvancedContent.Controls.Add(pythonSettings);
             FlowLayoutPanel ocrExtraActions = CreateVisionFlow();
             ocrExtraActions.Controls.Add(this.bVisionPreviewOcr);
             ocrExtraActions.Controls.Add(this.bVisionRestorePreview);
@@ -743,29 +810,20 @@ namespace WPELibrary
             {
                 Text = UiText("Vision_ModeTemplate"),
                 Padding = new Padding(6),
-                AutoScroll = true,
+                // 模板页随内容自动增高，由外层视觉页统一滚动。
+                AutoScroll = false,
                 UseVisualStyleBackColor = true
             };
             FlowLayoutPanel templateRoot = CreateVisionVerticalFlow();
-            FlowLayoutPanel templateActions = CreateVisionFlow();
-            Button bLoadVisionTemplate = CreateVisionButton(UiText("Vision_LoadTemplate"));
-            bLoadVisionTemplate.Click += this.bLoadVisionTemplate_Click;
-            templateActions.Controls.Add(bLoadVisionTemplate);
-            Button bSaveVisionTemplate = CreateVisionButton(UiText("Vision_SaveTemplate"));
-            bSaveVisionTemplate.Click += this.bSaveVisionTemplate_Click;
-            templateActions.Controls.Add(bSaveVisionTemplate);
-            Button bAddVisionTemplateVariant = CreateVisionButton(UiText("Vision_AddTemplateVariant"));
-            bAddVisionTemplateVariant.Click += this.bAddVisionTemplateVariant_Click;
-            templateActions.Controls.Add(bAddVisionTemplateVariant);
+            // 参考图片由截图流程自动准备；保留内部模板匹配入口供旧配置和回归调用，
+            // 但不再把手动加载、保存、变体和开始匹配按钮放到界面上。
             this.bVisionMatchTemplate = CreateVisionButton(UiText("Vision_Match"));
             this.bVisionMatchTemplate.Click += this.bMatchVisionTemplate_Click;
-            templateActions.Controls.Add(this.bVisionMatchTemplate);
+            this.bVisionMatchTemplate.Visible = false;
             this.bVisionCancelMatch = CreateVisionButton(UiText("Vision_MatchCancel"));
             this.bVisionCancelMatch.Enabled = false;
             this.bVisionCancelMatch.Visible = false;
             this.bVisionCancelMatch.Click += this.bCancelVisionMatch_Click;
-            templateActions.Controls.Add(this.bVisionCancelMatch);
-            templateRoot.Controls.Add(templateActions);
             FlowLayoutPanel templateBasic = CreateVisionFlow();
             templateBasic.Controls.Add(CreateVisionLabel(UiText("Vision_Threshold")));
             this.nudVisionThreshold = CreateVisionNumber(0);
@@ -807,15 +865,18 @@ namespace WPELibrary
             templateRoot.Controls.Add(templatePreviewHost);
             templatePage.Controls.Add(templateRoot);
             modeTabs.TabPages.Add(templatePage);
-            modeTabs.SelectedIndexChanged += (sender, e) =>
+            Action fitModeTabs = () =>
             {
-                int targetHeight = modeTabs.SelectedIndex == 0 ? 130 : 225;
-                if (modeTabs.Height != targetHeight)
-                {
-                    modeTabs.Height = targetHeight;
-                    recognitionSection.PerformLayout();
-                }
+                Control selectedContent = modeTabs.SelectedIndex == 0
+                    ? (Control)ocrRoot
+                    : templateRoot;
+                FitVisionModeTabs(modeTabs, selectedContent, modeTabs.SelectedIndex == 0 ? 130 : 225);
+                recognitionSection.PerformLayout();
             };
+            modeTabs.Resize += (sender, e) => fitModeTabs();
+            ocrRoot.Layout += (sender, e) => fitModeTabs();
+            templateRoot.Layout += (sender, e) => fitModeTabs();
+            modeTabs.SelectedIndexChanged += (sender, e) => fitModeTabs();
             recognitionLayout.Controls.Add(modeTabs, 0, 0);
             AttachVisionSectionContent(recognitionSection, recognitionLayout);
 
@@ -1015,11 +1076,7 @@ namespace WPELibrary
             this.bVisionConfirmAction = CreateVisionButton(UiText("Vision_ConfirmAction"));
             this.bVisionConfirmAction.Name = "bVisionConfirmAction";
             this.bVisionConfirmAction.Click += this.bConfirmVisionAction_Click;
-            this.bVisionConfirmAction.UseVisualStyleBackColor = false;
-            this.bVisionConfirmAction.BackColor = Color.FromArgb(0, 120, 215);
-            this.bVisionConfirmAction.ForeColor = Color.White;
-            this.bVisionConfirmAction.FlatStyle = FlatStyle.Flat;
-            this.bVisionConfirmAction.FlatAppearance.BorderColor = Color.FromArgb(0, 84, 153);
+            StyleVisionPrimaryButton(this.bVisionConfirmAction);
             confirmSettings.Controls.Add(this.bVisionConfirmAction);
             this.bVisionCancelAction = CreateVisionButton(UiText("Vision_CancelAction"));
             this.bVisionCancelAction.Name = "bVisionCancelAction";
@@ -1099,6 +1156,7 @@ namespace WPELibrary
 
             FlowLayoutPanel assistantActions = CreateVisionFlow();
             this.bVisionRunSteps = CreateVisionButton(UiText("Vision_RunSteps"));
+            StyleVisionPrimaryButton(this.bVisionRunSteps);
             this.bVisionRunSteps.Click += this.bRunVisionAssistant_Click;
             assistantActions.Controls.Add(this.bVisionRunSteps);
             this.bVisionStopSteps = CreateVisionButton(UiText("Vision_StopSteps"));
@@ -1173,14 +1231,17 @@ namespace WPELibrary
             this.UpdateVisionActionEditor();
             this.UpdateVisionVerificationEditor();
 
+            this.visionPythonWorker = new VisionPythonWorkerTextRecognizer();
             this.visionTextRecognizer = new VisionAutoTextRecognizer(
                 new VisionOnnxTextRecognizer(),
-                new VisionTesseractRecognizer("tesseract.exe"));
+                new VisionTesseractRecognizer("tesseract.exe"),
+                this.visionPythonWorker);
             this.RefreshVisionAssistantSteps();
             this.tcRobotInstruction.TabPages.Add(visionTab);
             this.tcRobotInstruction.TabPages.Add(visionSettingsTab);
             FitVisionSections(page);
             FitVisionSections(settingsPage);
+            fitModeTabs();
             this.FormClosed += this.Socket_RobotForm_FormClosed;
         }
 
@@ -1278,8 +1339,10 @@ namespace WPELibrary
                 Text = title,
                 AutoSize = false,
                 Dock = DockStyle.None,
-                Padding = new Padding(8, 20, 8, 8),
-                Margin = new Padding(0, 0, 0, 8)
+                BackColor = Color.White,
+                ForeColor = Color.FromArgb(31, 41, 55),
+                Padding = new Padding(10, 24, 10, 10),
+                Margin = new Padding(0, 0, 0, 10)
             };
         }
 
@@ -1313,7 +1376,7 @@ namespace WPELibrary
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = true,
                 AutoScroll = false,
-                Padding = new Padding(0, 2, 0, 2),
+                Padding = new Padding(0, 3, 0, 3),
                 Margin = new Padding(0)
             };
         }
@@ -1335,8 +1398,26 @@ namespace WPELibrary
                 AccessibleName = text,
                 AccessibleRole = AccessibleRole.PushButton,
                 UseVisualStyleBackColor = true,
-                Margin = new Padding(0, 2, 6, 2)
+                MinimumSize = new Size(76, 27),
+                Padding = new Padding(8, 0, 8, 0),
+                Margin = new Padding(0, 3, 8, 3)
             };
+        }
+
+        private static void StyleVisionPrimaryButton(Button button)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            button.UseVisualStyleBackColor = false;
+            button.BackColor = Color.FromArgb(0, 120, 215);
+            button.ForeColor = Color.White;
+            button.FlatStyle = FlatStyle.Flat;
+            button.FlatAppearance.BorderColor = Color.FromArgb(0, 84, 153);
+            button.FlatAppearance.MouseOverBackColor = Color.FromArgb(0, 102, 184);
+            button.FlatAppearance.MouseDownBackColor = Color.FromArgb(0, 84, 153);
         }
 
         private static CheckBox CreateVisionCheckBox(string text)
@@ -1347,7 +1428,7 @@ namespace WPELibrary
                 Text = text,
                 AccessibleName = text,
                 AccessibleRole = AccessibleRole.CheckButton,
-                Margin = new Padding(0, 4, 8, 2)
+                Margin = new Padding(0, 5, 10, 3)
             };
         }
 
@@ -1360,7 +1441,8 @@ namespace WPELibrary
                 AccessibleName = text,
                 AccessibleRole = AccessibleRole.StaticText,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(0, 5, 6, 2)
+                ForeColor = Color.FromArgb(55, 65, 81),
+                Margin = new Padding(0, 5, 8, 2)
             };
         }
 
@@ -1375,8 +1457,9 @@ namespace WPELibrary
                 AccessibleRole = AccessibleRole.StaticText,
                 Tag = "VisionStatusLabel",
                 Text = text,
-                ForeColor = Color.FromArgb(80, 80, 80),
-                Margin = new Padding(0, 4, 0, 4)
+                ForeColor = Color.FromArgb(107, 114, 128),
+                Margin = new Padding(0, 5, 0, 5),
+                Padding = new Padding(0, 1, 0, 1)
             };
         }
 
@@ -1385,7 +1468,7 @@ namespace WPELibrary
             return new PictureBox
             {
                 Dock = DockStyle.Fill,
-                BackColor = Color.FromArgb(248, 248, 248),
+                BackColor = Color.White,
                 AccessibleRole = AccessibleRole.Graphic,
                 BorderStyle = BorderStyle.FixedSingle,
                 SizeMode = PictureBoxSizeMode.Zoom,
@@ -1401,6 +1484,10 @@ namespace WPELibrary
             TableLayoutPanel wrapper = CreateVisionGrid(1);
             Button toggle = CreateVisionButton(collapsedText + "  ▶");
             toggle.TextAlign = ContentAlignment.MiddleLeft;
+            toggle.FlatStyle = FlatStyle.Flat;
+            toggle.FlatAppearance.BorderSize = 0;
+            toggle.BackColor = Color.FromArgb(245, 247, 250);
+            toggle.ForeColor = Color.FromArgb(55, 65, 81);
             content.Visible = false;
             content.Margin = new Padding(8, 0, 0, 4);
             wrapper.Controls.Add(toggle, 0, 0);
@@ -1470,12 +1557,35 @@ namespace WPELibrary
 
         private static void FitVisionSections(FlowLayoutPanel page)
         {
+            int scrollBarWidth = page.VerticalScroll.Visible
+                ? SystemInformation.VerticalScrollBarWidth
+                : 0;
             int width = Math.Max(
                 1,
-                page.ClientSize.Width - page.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth - 4);
+                page.ClientSize.Width - page.Padding.Horizontal - scrollBarWidth - 4);
             foreach (Control section in page.Controls)
             {
                 section.Width = width;
+            }
+        }
+
+        private static void FitVisionModeTabs(
+            TabControl tabs,
+            Control selectedContent,
+            int minimumHeight)
+        {
+            if (tabs == null || selectedContent == null || tabs.ClientSize.Width <= 0)
+            {
+                return;
+            }
+
+            int contentWidth = Math.Max(1, tabs.ClientSize.Width - (tabs.Padding.X * 2) - 12);
+            int contentHeight = selectedContent.GetPreferredSize(new Size(contentWidth, 0)).Height;
+            int tabHeaderHeight = Math.Max(24, tabs.ItemSize.Height) + 12;
+            int targetHeight = Math.Max(minimumHeight, contentHeight + tabHeaderHeight);
+            if (tabs.Height != targetHeight)
+            {
+                tabs.Height = targetHeight;
             }
         }
 
@@ -1576,7 +1686,16 @@ namespace WPELibrary
             this.SetVisionDecimal(this.nudVisionOcrDetectionThreshold, ocrOptions.OnnxDetectionThreshold);
             this.SetVisionDecimal(this.nudVisionOcrRecognitionThreshold, ocrOptions.OnnxRecognitionThreshold);
             this.SetVisionNumber(this.nudVisionOcrMaxImageSide, ocrOptions.OnnxMaxImageSide);
+            this.txtVisionPythonExecutable.Text = ocrOptions.PythonExecutablePath ?? string.Empty;
+            this.txtVisionPythonWorkerScript.Text = ocrOptions.PythonWorkerScriptPath ?? string.Empty;
+            this.SetVisionNumber(
+                this.nudVisionPythonWorkerTimeout,
+                ocrOptions.PythonWorkerTimeoutMilliseconds);
             this.UpdateVisionOcrModelStatus();
+            if (ocrOptions.Engine == VisionOcrEngine.PythonWorker)
+            {
+                this.BeginVisionPythonPrewarm();
+            }
             this.txtVisionOcrKeyword.Text = profile.OcrCondition == null
                 ? string.Empty
                 : profile.OcrCondition.ExpectedText ?? string.Empty;
@@ -1939,6 +2058,10 @@ namespace WPELibrary
                         captureResult.Warning));
                 }
 
+                // 首次截图自动准备一份参考图，避免图片识别页仍显示为空；
+                // 已经加载或保存过的参考图必须保留，后续截图只更新当前截图。
+                this.AutoLoadVisionTemplateFromCapture();
+
                 // 截图完成后默认自动识别，并将结果填入可手动修改的关键词框。
                 this.bRecognizeVisionText_Click(this, EventArgs.Empty);
             }
@@ -1946,6 +2069,22 @@ namespace WPELibrary
             {
                 this.SetVisionStatus(string.Format(UiText("Vision_CaptureFailed"), ex.Message));
             }
+        }
+
+        private void AutoLoadVisionTemplateFromCapture()
+        {
+            if (this.visionPreview == null || this.visionTemplate != null)
+            {
+                return;
+            }
+
+            this.DisposeVisionPreprocessedPreview();
+            this.visionTemplate = new Bitmap(this.visionPreview);
+            if (this.pbVisionTemplate != null)
+            {
+                this.pbVisionTemplate.Image = this.visionTemplate;
+            }
+            this.SetVisionMatchStatus(UiText("Vision_TemplateAutoLoaded"));
         }
 
         private void bLoadVisionTemplate_Click(object sender, EventArgs e)
@@ -2106,6 +2245,10 @@ namespace WPELibrary
             {
                 this.visionMatchCancellation.Cancel();
             }
+            if (this.visionPythonHealthCancellation != null)
+            {
+                this.visionPythonHealthCancellation.Cancel();
+            }
         }
 
         private void SetVisionMatchButtons(bool running)
@@ -2181,9 +2324,11 @@ namespace WPELibrary
                 VisionOcrOptions options = this.ReadVisionOcrOptions();
                 if (this.visionTextRecognizer == null)
                 {
+                    this.visionPythonWorker = new VisionPythonWorkerTextRecognizer();
                     this.visionTextRecognizer = new VisionAutoTextRecognizer(
                         new VisionOnnxTextRecognizer(),
-                        new VisionTesseractRecognizer(options.ExecutablePath));
+                        new VisionTesseractRecognizer(options.ExecutablePath),
+                        this.visionPythonWorker);
                 }
                 IVisionTextRecognizer recognizer = this.visionTextRecognizer;
 
@@ -3469,6 +3614,8 @@ namespace WPELibrary
         {
             if (this.visionAssistantTask != null && !this.visionAssistantTask.IsCompleted)
             {
+                this.SetVisionAssistantStatus(UiText("Vision_AssistantBusy"));
+                this.AppendVisionAssistantLog(UiText("Vision_AssistantBusy"));
                 return;
             }
             if (this.sriSelect == null || this.sriSelect.VisionProfile == null ||
@@ -3513,8 +3660,9 @@ namespace WPELibrary
                 }
                 runProfile.AllowSystemInput = true;
             }
-            this.visionAssistantCancellation = new CancellationTokenSource();
-            CancellationToken cancellationToken = this.visionAssistantCancellation.Token;
+            CancellationTokenSource runCancellation = new CancellationTokenSource();
+            this.visionAssistantCancellation = runCancellation;
+            CancellationToken cancellationToken = runCancellation.Token;
             this.ClearVisionAssistantLog();
             this.SetVisionAssistantLogExpanded(true);
             this.SetVisionAssistantButtons(true);
@@ -3523,14 +3671,15 @@ namespace WPELibrary
 
             try
             {
-                this.visionAssistantTask = Task.Run(
+                Task<VisionAssistantRunResult> runTask = Task.Run(
                     () => VisionAssistantRunner.Run(
                         runProfile,
                         recognizer,
                         cancellationToken,
                         this.VisionAssistantLogEmitted));
-                this.visionAssistantTask.ContinueWith(
-                    task => this.CompleteVisionAssistant(task, runProfile),
+                this.visionAssistantTask = runTask;
+                runTask.ContinueWith(
+                    task => this.CompleteVisionAssistant(task, runProfile, runCancellation),
                     CancellationToken.None,
                     TaskContinuationOptions.None,
                     TaskScheduler.Default);
@@ -3542,7 +3691,7 @@ namespace WPELibrary
                 this.SetVisionAssistantStatus(string.Format(
                     UiText("Vision_AssistantFailed"),
                     ex.Message));
-                this.DisposeVisionAssistantCancellation();
+                this.DisposeVisionAssistantCancellation(runCancellation);
             }
         }
 
@@ -3572,12 +3721,13 @@ namespace WPELibrary
 
         private void CompleteVisionAssistant(
             Task<VisionAssistantRunResult> task,
-            Socket_VisionProfile runProfile)
+            Socket_VisionProfile runProfile,
+            CancellationTokenSource runCancellation)
         {
             if (this.IsDisposed || !this.IsHandleCreated)
             {
                 this.DisposeVisionProfileTemplates(runProfile);
-                this.DisposeVisionAssistantCancellation();
+                this.DisposeVisionAssistantCancellation(runCancellation);
                 return;
             }
 
@@ -3585,6 +3735,16 @@ namespace WPELibrary
             {
                 this.BeginInvoke(new Action(() =>
                 {
+                    // A completed task can queue this callback just before the user
+                    // starts the next run. An old callback must never reset the new
+                    // run's buttons, task field, or cancellation source.
+                    if (!object.ReferenceEquals(this.visionAssistantTask, task))
+                    {
+                        this.DisposeVisionProfileTemplates(runProfile);
+                        this.DisposeVisionAssistantCancellation(runCancellation);
+                        return;
+                    }
+
                     try
                     {
                         if (task.IsCanceled)
@@ -3630,15 +3790,18 @@ namespace WPELibrary
                     finally
                     {
                         this.DisposeVisionProfileTemplates(runProfile);
-                        this.DisposeVisionAssistantCancellation();
-                        this.visionAssistantTask = null;
+                        this.DisposeVisionAssistantCancellation(runCancellation);
+                        if (object.ReferenceEquals(this.visionAssistantTask, task))
+                        {
+                            this.visionAssistantTask = null;
+                        }
                     }
                 }));
             }
             catch (InvalidOperationException)
             {
                 this.DisposeVisionProfileTemplates(runProfile);
-                this.DisposeVisionAssistantCancellation();
+                this.DisposeVisionAssistantCancellation(runCancellation);
             }
         }
 
@@ -3845,12 +4008,15 @@ namespace WPELibrary
             }
         }
 
-        private void DisposeVisionAssistantCancellation()
+        private void DisposeVisionAssistantCancellation(CancellationTokenSource cancellation)
         {
-            if (this.visionAssistantCancellation != null)
+            if (cancellation != null)
             {
-                this.visionAssistantCancellation.Dispose();
-                this.visionAssistantCancellation = null;
+                cancellation.Dispose();
+                if (object.ReferenceEquals(this.visionAssistantCancellation, cancellation))
+                {
+                    this.visionAssistantCancellation = null;
+                }
             }
         }
 
@@ -3920,6 +4086,15 @@ namespace WPELibrary
             options.OnnxMaxImageSide = this.nudVisionOcrMaxImageSide == null
                 ? 960
                 : (int)this.nudVisionOcrMaxImageSide.Value;
+            options.PythonExecutablePath = this.txtVisionPythonExecutable == null
+                ? string.Empty
+                : this.txtVisionPythonExecutable.Text.Trim();
+            options.PythonWorkerScriptPath = this.txtVisionPythonWorkerScript == null
+                ? string.Empty
+                : this.txtVisionPythonWorkerScript.Text.Trim();
+            options.PythonWorkerTimeoutMilliseconds = this.nudVisionPythonWorkerTimeout == null
+                ? 15000
+                : (int)this.nudVisionPythonWorkerTimeout.Value;
             return options;
         }
 
@@ -3972,8 +4147,159 @@ namespace WPELibrary
                 this.lVisionOcrModelStatus.Text = UiText("Vision_OcrTesseractStatus");
                 return;
             }
+            if (choice != null && choice.Engine == VisionOcrEngine.PythonWorker)
+            {
+                try
+                {
+                    VisionOcrOptions options = this.ReadVisionOcrOptions();
+                    VisionPythonWorkerHealth health = this.EnsureVisionPythonWorker().CheckHealth(
+                        options,
+                        false,
+                        CancellationToken.None);
+                    this.lVisionOcrModelStatus.Text = health.IsReady
+                        ? UiText("Vision_OcrPythonReady") + " - " + health.Summary
+                        : UiText("Vision_OcrPythonUnavailable") + ": " + health.Summary;
+                }
+                catch (Exception ex)
+                {
+                    this.lVisionOcrModelStatus.Text = UiText("Vision_OcrPythonUnavailable") + ": " + ex.Message;
+                }
+                return;
+            }
             this.lVisionOcrModelStatus.Text = VisionOnnxTextRecognizer.DescribeModelDirectory(
                 this.txtVisionOcrModelDirectory.Text.Trim());
+        }
+
+        private VisionPythonWorkerTextRecognizer EnsureVisionPythonWorker()
+        {
+            if (this.visionPythonWorker == null)
+            {
+                this.visionPythonWorker = new VisionPythonWorkerTextRecognizer();
+            }
+            if (this.visionTextRecognizer == null)
+            {
+                this.visionTextRecognizer = new VisionAutoTextRecognizer(
+                    new VisionOnnxTextRecognizer(),
+                    new VisionTesseractRecognizer("tesseract.exe"),
+                    this.visionPythonWorker);
+            }
+            return this.visionPythonWorker;
+        }
+
+        private void bVisionBrowsePythonExecutable_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog dialog = new OpenFileDialog())
+            {
+                dialog.Filter = "Python executable|python.exe;py.exe|Executable files|*.exe|All files|*.*";
+                dialog.Title = UiText("Vision_OcrPythonExecutable");
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    this.txtVisionPythonExecutable.Text = dialog.FileName;
+                }
+            }
+        }
+
+        private void bVisionBrowsePythonWorkerScript_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog dialog = new OpenFileDialog())
+            {
+                dialog.Filter = "Python worker|worker.py|Python files|*.py|All files|*.*";
+                dialog.Title = UiText("Vision_OcrPythonWorkerScript");
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    this.txtVisionPythonWorkerScript.Text = dialog.FileName;
+                }
+            }
+        }
+
+        private void bVisionResetPythonSettings_Click(object sender, EventArgs e)
+        {
+            this.txtVisionPythonExecutable.Text = string.Empty;
+            this.txtVisionPythonWorkerScript.Text = string.Empty;
+            this.txtVisionOcrModelDirectory.Text = "models\\ocr";
+            this.SetVisionNumber(this.nudVisionPythonWorkerTimeout, 15000);
+            this.UpdateVisionOcrModelStatus();
+        }
+
+        private async void bVisionTestPythonWorker_Click(object sender, EventArgs e)
+        {
+            await this.RunVisionPythonHealthCheckAsync(true, true);
+        }
+
+        private async void BeginVisionPythonPrewarm()
+        {
+            await this.RunVisionPythonHealthCheckAsync(true, false);
+        }
+
+        private async Task RunVisionPythonHealthCheckAsync(bool warmup, bool fromButton)
+        {
+            if (this.visionRobotClosing ||
+                this.visionPythonHealthTask != null && !this.visionPythonHealthTask.IsCompleted)
+            {
+                return;
+            }
+            VisionOcrOptions options;
+            try
+            {
+                options = this.ReadVisionOcrOptions();
+            }
+            catch (Exception ex)
+            {
+                this.lVisionOcrModelStatus.Text = UiText("Vision_OcrPythonUnavailable") + ": " + ex.Message;
+                return;
+            }
+
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            this.visionPythonHealthCancellation = cancellation;
+            if (fromButton && this.bVisionTestPythonWorker != null)
+            {
+                this.bVisionTestPythonWorker.Enabled = false;
+            }
+            this.lVisionOcrModelStatus.Text = warmup
+                ? UiText("Vision_OcrPythonPrewarming")
+                : UiText("Vision_OcrPythonTesting");
+            try
+            {
+                VisionPythonWorkerTextRecognizer worker = this.EnsureVisionPythonWorker();
+                this.visionPythonHealthTask = Task.Run(
+                    () => worker.CheckHealth(options, warmup, cancellation.Token),
+                    CancellationToken.None);
+                VisionPythonWorkerHealth health = await this.visionPythonHealthTask;
+                if (this.IsDisposed || this.visionRobotClosing)
+                {
+                    return;
+                }
+                this.lVisionOcrModelStatus.Text = health.IsReady
+                    ? UiText("Vision_OcrPythonTestSuccess") + " " + health.Summary
+                    : UiText("Vision_OcrPythonTestFailed") + " " + health.Summary;
+            }
+            catch (OperationCanceledException)
+            {
+                if (!this.IsDisposed && !this.visionRobotClosing)
+                {
+                    this.lVisionOcrModelStatus.Text = UiText("Vision_OcrPythonUnavailable");
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!this.IsDisposed && !this.visionRobotClosing)
+                {
+                    this.lVisionOcrModelStatus.Text = UiText("Vision_OcrPythonTestFailed") + " " + ex.Message;
+                }
+            }
+            finally
+            {
+                if (object.ReferenceEquals(this.visionPythonHealthCancellation, cancellation))
+                {
+                    this.visionPythonHealthCancellation = null;
+                }
+                cancellation.Dispose();
+                if (fromButton && this.bVisionTestPythonWorker != null && !this.IsDisposed)
+                {
+                    this.bVisionTestPythonWorker.Enabled = true;
+                }
+                this.visionPythonHealthTask = null;
+            }
         }
 
         private void bSaveVisionProfile_Click(object sender, EventArgs e)
@@ -4648,6 +4974,10 @@ namespace WPELibrary
             if (this.visionOcrTask != null && !this.visionOcrTask.IsCompleted)
             {
                 runningTasks.Add(this.visionOcrTask);
+            }
+            if (this.visionPythonHealthTask != null && !this.visionPythonHealthTask.IsCompleted)
+            {
+                runningTasks.Add(this.visionPythonHealthTask);
             }
             if (runningTasks.Count == 0)
             {

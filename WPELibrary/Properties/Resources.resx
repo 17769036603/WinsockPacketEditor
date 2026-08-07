@@ -708,8 +708,9 @@
   <data name="Vision_SaveTemplate" xml:space="preserve"><value>保存为参考图片</value></data>
   <data name="Vision_Threshold" xml:space="preserve"><value>阈值 (%)</value></data>
   <data name="Vision_Match" xml:space="preserve"><value>开始图片识别</value></data>
-  <data name="Vision_NoTemplate" xml:space="preserve"><value>请先加载或保存一张参考图片。</value></data>
+  <data name="Vision_NoTemplate" xml:space="preserve"><value>请先截图，系统会自动加载参考图片。</value></data>
   <data name="Vision_TemplateLoaded" xml:space="preserve"><value>参考图片已加载：{0}</value></data>
+  <data name="Vision_TemplateAutoLoaded" xml:space="preserve"><value>当前截图已自动加载为参考图片。</value></data>
   <data name="Vision_TemplateSaved" xml:space="preserve"><value>参考图片已保存：{0}</value></data>
   <data name="Vision_MatchFound" xml:space="preserve"><value>匹配成功：位置 ({0},{1})，尺寸 {2}×{3}，相似度 {4:P1}</value></data>
   <data name="Vision_MatchNotFound" xml:space="preserve"><value>未达到阈值，最高相似度 {0:P1}。</value></data>
@@ -751,6 +752,7 @@
   <data name="Vision_AssistantLogHide" xml:space="preserve"><value>收起执行日志</value></data>
   <data name="Vision_AssistantNoSteps" xml:space="preserve"><value>请先添加至少一个识别步骤。</value></data>
   <data name="Vision_AssistantRunning" xml:space="preserve"><value>识别步骤运行中。</value></data>
+  <data name="Vision_AssistantBusy" xml:space="preserve"><value>识别步骤仍在运行，请稍候。</value></data>
   <data name="Vision_AssistantStopping" xml:space="preserve"><value>正在停止识别步骤。</value></data>
   <data name="Vision_AssistantCancelled" xml:space="preserve"><value>识别步骤已取消。</value></data>
   <data name="Vision_AssistantSucceeded" xml:space="preserve"><value>识别步骤完成：{0} 步。</value></data>
@@ -785,6 +787,7 @@
   <data name="Vision_CaptureSource" xml:space="preserve"><value>来源</value></data>
   <data name="Vision_CaptureAuto" xml:space="preserve"><value>自动</value></data>
   <data name="Vision_CaptureScreen" xml:space="preserve"><value>屏幕</value></data>
+  <data name="Vision_CaptureAirtest" xml:space="preserve"><value>Airtest（Python Worker）</value></data>
   <data name="Vision_CaptureWindowRender" xml:space="preserve"><value>窗口渲染</value></data>
   <data name="Vision_CaptureInterval" xml:space="preserve"><value>限频(ms)</value></data>
   <data name="Vision_SkipUnchanged" xml:space="preserve"><value>跳过未变化</value></data>
@@ -815,10 +818,24 @@
   <data name="Vision_OcrSharpen" xml:space="preserve"><value>锐化</value></data>
   <data name="Vision_OcrWhitelist" xml:space="preserve"><value>字符白名单</value></data>
   <data name="Vision_OcrEngine" xml:space="preserve"><value>引擎</value></data>
-  <data name="Vision_OcrEngineAuto" xml:space="preserve"><value>自动（ONNX优先）</value></data>
+  <data name="Vision_OcrEngineAuto" xml:space="preserve"><value>自动（本地 ONNX 优先）</value></data>
   <data name="Vision_OcrEngineOnnx" xml:space="preserve"><value>本地 ONNX</value></data>
   <data name="Vision_OcrEngineTesseract" xml:space="preserve"><value>Tesseract</value></data>
+  <data name="Vision_OcrEnginePython" xml:space="preserve"><value>Python Worker（RapidOCR）</value></data>
   <data name="Vision_OcrModelDirectory" xml:space="preserve"><value>模型目录</value></data>
+  <data name="Vision_OcrPythonExecutable" xml:space="preserve"><value>Python 路径</value></data>
+  <data name="Vision_OcrPythonWorkerScript" xml:space="preserve"><value>Worker 脚本</value></data>
+  <data name="Vision_OcrPythonWorkerTimeout" xml:space="preserve"><value>Worker 超时(ms)</value></data>
+  <data name="Vision_OcrPythonReady" xml:space="preserve"><value>Python Worker 已就绪（模型已找到）</value></data>
+  <data name="Vision_OcrPythonUnavailable" xml:space="preserve"><value>Python Worker 不可用：请检查运行时、脚本和模型</value></data>
+  <data name="Vision_OcrPythonBrowse" xml:space="preserve"><value>浏览</value></data>
+  <data name="Vision_OcrPythonReset" xml:space="preserve"><value>恢复默认</value></data>
+  <data name="Vision_OcrPythonTest" xml:space="preserve"><value>测试 Worker</value></data>
+  <data name="Vision_OcrPythonPrewarming" xml:space="preserve"><value>正在预热 Python Worker…</value></data>
+  <data name="Vision_OcrPythonTesting" xml:space="preserve"><value>正在检查 Python Worker…</value></data>
+  <data name="Vision_OcrPythonTestSuccess" xml:space="preserve"><value>Worker 测试通过。</value></data>
+  <data name="Vision_OcrPythonTestFailed" xml:space="preserve"><value>Worker 测试失败：</value></data>
+  <data name="Vision_OcrPythonAutoHint" xml:space="preserve"><value>自动模式保留本地 ONNX/Tesseract 顺序；需要 RapidOCR 时请选择 Python Worker。</value></data>
   <data name="Vision_OcrDetectionThreshold" xml:space="preserve"><value>检测阈值</value></data>
   <data name="Vision_OcrRecognitionThreshold" xml:space="preserve"><value>识别阈值</value></data>
   <data name="Vision_OcrMaxImageSide" xml:space="preserve"><value>最大边长</value></data>

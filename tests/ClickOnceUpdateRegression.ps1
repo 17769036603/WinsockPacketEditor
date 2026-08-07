@@ -1,5 +1,6 @@
 ﻿param(
-    [string]$RepositoryRoot
+    [string]$RepositoryRoot,
+    [switch]$AllowUnsigned
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,10 +76,15 @@ function Assert-LocalPackage {
         "固定入口清单必须指向当前最高版本。"
     Assert-Contains $stableManifest (($latestVersion + "/小黑封包助手.exe.manifest")) `
         "固定入口清单必须指向版本目录中的应用清单。"
-    Assert-Contains $manifest '<Signature ' `
-        "版本部署清单必须包含 ClickOnce 签名。"
-    Assert-Contains $stableManifest '<Signature ' `
-        "固定入口清单必须包含 ClickOnce 签名。"
+    if ($AllowUnsigned) {
+        Write-Warning "本次按 unsigned local release 校验，跳过清单签名断言。"
+    }
+    else {
+        Assert-Contains $manifest '<Signature ' `
+            "版本部署清单必须包含 ClickOnce 签名。"
+        Assert-Contains $stableManifest '<Signature ' `
+            "固定入口清单必须包含 ClickOnce 签名。"
+    }
 
     $stableXml = [xml]$stableManifest
     $stableDependency = $stableXml.SelectSingleNode("//*[local-name()='dependentAssembly' and @dependencyType='install']")
@@ -105,8 +111,10 @@ function Assert-LocalPackage {
 
     $exeManifestPath = Join-Path $latestDirectory "小黑封包助手.exe.manifest"
     $exeManifestText = [System.IO.File]::ReadAllText($exeManifestPath, [System.Text.Encoding]::UTF8)
-    Assert-Contains $exeManifestText '<Signature ' `
-        "应用清单必须包含 ClickOnce 签名。"
+    if (-not $AllowUnsigned) {
+        Assert-Contains $exeManifestText '<Signature ' `
+            "应用清单必须包含 ClickOnce 签名。"
+    }
     [xml]$exeManifest = $exeManifestText
     $applicationIdentity = $exeManifest.SelectSingleNode("/*[local-name()='assembly']/*[local-name()='assemblyIdentity']")
     if ($null -eq $applicationIdentity) {

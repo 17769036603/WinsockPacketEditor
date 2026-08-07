@@ -24,6 +24,12 @@ function Assert-Contains([string]$text, [string]$needle, [string]$message) {
     }
 }
 
+function Assert-NotContains([string]$text, [string]$needle, [string]$message) {
+    if ($text.Contains($needle)) {
+        throw $message
+    }
+}
+
 Assert-Contains $service 'CaptureClientRegionDetailed' 'Detailed capture API is missing.'
 Assert-Contains $service 'PrintWindow' 'Window-render fallback is missing.'
 Assert-Contains $service 'ProcessStartTimeUtcTicks' 'Process identity metadata is missing.'
@@ -48,6 +54,9 @@ Assert-Contains $form 'visionHistory' 'Capture history is missing.'
 Assert-Contains $form 'bVisionSelectRegion_Click' 'The client-area region picker button is missing.'
 Assert-Contains $form 'VisionRegionPickerForm' 'The client-area selection overlay is missing.'
 Assert-Contains $form 'this.bCaptureVision_Click(this, EventArgs.Empty);' 'Region selection does not trigger the automatic capture flow.'
+Assert-Contains $form 'AutoLoadVisionTemplateFromCapture' 'Capture does not auto-prepare the reference image.'
+Assert-Contains $form 'this.bVisionMatchTemplate.Visible = false;' 'Manual image recognition must stay hidden from the compact UI.'
+Assert-NotContains $form 'templateActions' 'Manual reference-image buttons must not be added to the image recognition page.'
 Assert-Contains $form 'CalculateVisionSelectionRectangle' 'Reverse-drag selection calculation is missing.'
 Assert-Contains $form 'SystemInformation.VirtualScreen.Contains' 'Off-screen target validation is missing.'
 Assert-Contains $form 'DialogResult = DialogResult.Cancel' 'Esc cancellation must leave the existing region unchanged.'

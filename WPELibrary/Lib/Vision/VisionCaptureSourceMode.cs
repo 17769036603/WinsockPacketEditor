@@ -4,6 +4,7 @@ namespace WPELibrary.Lib.Vision
     {
         Auto = 0,
         Screen = 1,
-        WindowRender = 2
+        WindowRender = 2,
+        Airtest = 3
     }
 }

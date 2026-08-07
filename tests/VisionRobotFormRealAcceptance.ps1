@@ -209,6 +209,10 @@ try {
     Assert-True (-not [string]::IsNullOrWhiteSpace($visionStatus.Text)) `
         "The Robot form capture action must update its status."
 
+    $visionTemplate = Get-PrivateField $robotForm "visionTemplate"
+    Assert-True ($null -ne $visionTemplate -and $templateBox.Image -ne $null) `
+        "The first capture must automatically populate the image reference preview."
+
     $keyword.Text = $taskText
     Invoke-PrivateEvent $robotForm "bRecognizeVisionText_Click"
     Pump-Ui 20
@@ -216,9 +220,6 @@ try {
         $ocrStatus.Text.Contains("42")) `
         "The Robot form OCR action must show the recognized task text and number."
 
-    $template = $visionPreview.Clone()
-    Set-PrivateField $robotForm "visionTemplate" $template
-    $templateBox.Image = $template
     $threshold = Get-PrivateField $robotForm "nudVisionThreshold"
     $threshold.Value = 99
     Invoke-PrivateEvent $robotForm "bMatchVisionTemplate_Click"

@@ -56,6 +56,15 @@ function Capture-Form($form, [string]$fileName) {
     }
 }
 
+function Add-AutoScrollDescendant($control, $results) {
+    if ($control -is [System.Windows.Forms.ScrollableControl] -and $control.AutoScroll) {
+        $results.Add($control)
+    }
+    foreach ($child in $control.Controls) {
+        Add-AutoScrollDescendant $child $results
+    }
+}
+
 $robot = [WPELibrary.Lib.Socket_RobotInfo]::new(
     $true,
     [Guid]::NewGuid(),
@@ -120,6 +129,13 @@ try {
         "txtVisionOcrKeyword",
         "cbbVisionOcrEngine",
         "txtVisionOcrModelDirectory",
+        "txtVisionPythonExecutable",
+        "txtVisionPythonWorkerScript",
+        "nudVisionPythonWorkerTimeout",
+        "bVisionBrowsePythonExecutable",
+        "bVisionBrowsePythonWorkerScript",
+        "bVisionResetPythonSettings",
+        "bVisionTestPythonWorker",
         "nudVisionOcrDetectionThreshold",
         "nudVisionOcrRecognitionThreshold",
         "nudVisionOcrMaxImageSide",
@@ -375,6 +391,11 @@ try {
     $visionRoot.PerformLayout()
     if ($visionRoot.HorizontalScroll.Visible) {
         throw "Vision page unexpectedly exposes a horizontal scrollbar."
+    }
+    $autoScrollControls = New-Object 'System.Collections.Generic.List[object]'
+    Add-AutoScrollDescendant $visionRoot $autoScrollControls
+    if ($autoScrollControls.Count -ne 1 -or $autoScrollControls[0] -ne $visionRoot) {
+        throw "Vision workflow should use one page-level vertical scrollbar without nested scroll containers."
     }
     $visionSections = @($visionRoot.Controls)
     if ($visionSections.Count -ne 4) {
