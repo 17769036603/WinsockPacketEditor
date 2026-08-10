@@ -9,6 +9,8 @@ namespace WPELibrary.Lib
         Idle,
         Starting,
         Running,
+        Pausing,
+        Paused,
         Stopping,
         Completed,
         Cancelled,
@@ -19,6 +21,7 @@ namespace WPELibrary.Lib
     {
         public Guid JobId { get; set; }
         public Guid PresetId { get; set; }
+        public string Revision { get; set; }
         public Socket_ByteSweepRuntimeState State { get; set; }
         public string PresetName { get; set; }
         public string Mode { get; set; }
@@ -124,6 +127,7 @@ namespace WPELibrary.Lib
     {
         private readonly object syncRoot = new object();
         private CancellationTokenSource cancellationSource;
+        private readonly ManualResetEventSlim pauseGate = new ManualResetEventSlim(true);
         private Socket_ByteSweepRuntimeSnapshot snapshot = new Socket_ByteSweepRuntimeSnapshot
         {
             State = Socket_ByteSweepRuntimeState.Idle,
@@ -144,8 +148,18 @@ namespace WPELibrary.Lib
                 {
                     return this.snapshot.State == Socket_ByteSweepRuntimeState.Starting ||
                         this.snapshot.State == Socket_ByteSweepRuntimeState.Running ||
+                        this.snapshot.State == Socket_ByteSweepRuntimeState.Pausing ||
+                        this.snapshot.State == Socket_ByteSweepRuntimeState.Paused ||
                         this.snapshot.State == Socket_ByteSweepRuntimeState.Stopping;
                 }
+            }
+        }
+
+        public Socket_ByteSweepRuntimeSnapshot GetSnapshot()
+        {
+            lock (this.syncRoot)
+            {
+                return Clone(this.snapshot);
             }
         }
 
@@ -171,6 +185,7 @@ namespace WPELibrary.Lib
                 jobId = Guid.NewGuid();
                 jobCancellation = new CancellationTokenSource();
                 this.cancellationSource = jobCancellation;
+                this.pauseGate.Set();
                 this.snapshot = new Socket_ByteSweepRuntimeSnapshot
                 {
                     JobId = jobId,
@@ -199,13 +214,99 @@ namespace WPELibrary.Lib
                     return false;
                 }
 
+                // Pause/stop may win the race while the caller is still
+                // starting the worker. Do not overwrite that decision.
+                if (this.snapshot.State == Socket_ByteSweepRuntimeState.Paused ||
+                    this.snapshot.State == Socket_ByteSweepRuntimeState.Stopping)
+                {
+                    return true;
+                }
+                if (this.snapshot.State == Socket_ByteSweepRuntimeState.Running)
+                {
+                    return true;
+                }
+                if (this.snapshot.State != Socket_ByteSweepRuntimeState.Starting)
+                {
+                    return false;
+                }
+
                 this.snapshot.State = Socket_ByteSweepRuntimeState.Running;
+                this.pauseGate.Set();
                 this.snapshot.Timestamp = DateTime.Now;
                 current = Clone(this.snapshot);
             }
 
             this.PublishState(current, "递进运行中");
             return true;
+        }
+
+        public bool SetRevision(Guid jobId, string revision)
+        {
+            lock (this.syncRoot)
+            {
+                if (this.snapshot.JobId != jobId)
+                {
+                    return false;
+                }
+                this.snapshot.Revision = revision ?? string.Empty;
+                this.snapshot.Timestamp = DateTime.Now;
+                return true;
+            }
+        }
+
+        public bool RequestPause(Guid jobId)
+        {
+            Socket_ByteSweepRuntimeSnapshot current;
+            lock (this.syncRoot)
+            {
+                if (this.snapshot.JobId != jobId ||
+                    (this.snapshot.State != Socket_ByteSweepRuntimeState.Running &&
+                     this.snapshot.State != Socket_ByteSweepRuntimeState.Starting))
+                {
+                    return false;
+                }
+
+                this.pauseGate.Reset();
+                this.snapshot.State = Socket_ByteSweepRuntimeState.Paused;
+                this.snapshot.Timestamp = DateTime.Now;
+                current = Clone(this.snapshot);
+            }
+
+            this.PublishState(current, "递进已暂停");
+            return true;
+        }
+
+        public bool Resume(Guid jobId)
+        {
+            Socket_ByteSweepRuntimeSnapshot current;
+            lock (this.syncRoot)
+            {
+                if (this.snapshot.JobId != jobId ||
+                    this.snapshot.State != Socket_ByteSweepRuntimeState.Paused)
+                {
+                    return false;
+                }
+
+                this.pauseGate.Set();
+                this.snapshot.State = Socket_ByteSweepRuntimeState.Running;
+                this.snapshot.Timestamp = DateTime.Now;
+                current = Clone(this.snapshot);
+            }
+
+            this.PublishState(current, "递进继续运行");
+            return true;
+        }
+
+        public void WaitIfPaused(Guid jobId, CancellationToken token)
+        {
+            lock (this.syncRoot)
+            {
+                if (this.snapshot.JobId != jobId)
+                {
+                    return;
+                }
+            }
+            this.pauseGate.Wait(token);
         }
 
         public bool RequestStop(Guid jobId)
@@ -220,6 +321,7 @@ namespace WPELibrary.Lib
 
                 this.snapshot.State = Socket_ByteSweepRuntimeState.Stopping;
                 this.snapshot.Timestamp = DateTime.Now;
+                this.pauseGate.Set();
                 if (this.cancellationSource != null)
                 {
                     this.cancellationSource.Cancel();
@@ -317,6 +419,7 @@ namespace WPELibrary.Lib
                     : (cancelled ? Socket_ByteSweepRuntimeState.Cancelled : Socket_ByteSweepRuntimeState.Completed);
                 this.snapshot.Detail = detail ?? (error == null ? string.Empty : error.Message);
                 this.snapshot.Timestamp = DateTime.Now;
+                this.pauseGate.Set();
                 current = Clone(this.snapshot);
                 completedCancellation = this.cancellationSource;
                 this.cancellationSource = null;
@@ -345,6 +448,7 @@ namespace WPELibrary.Lib
             {
                 JobId = value.JobId,
                 PresetId = value.PresetId,
+                Revision = value.Revision,
                 State = value.State,
                 PresetName = value.PresetName,
                 Mode = value.Mode,

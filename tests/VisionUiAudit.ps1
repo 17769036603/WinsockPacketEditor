@@ -161,6 +161,7 @@ try {
         "bToggleVisionAssistantLog",
         "txtVisionAssistantLog",
         "lVisionStatus",
+        "bToggleRobotInstructionPanel",
         "bToggleExecuteLog",
         "txtExecute"
     )
@@ -368,6 +369,31 @@ try {
     $executeToggleField.GetValue($form).PerformClick()
     if ($executeTextField.GetValue($form).Visible) {
         throw "Execution log did not collapse after clicking the toggle button."
+    }
+    $instructionGroupField = $form.GetType().GetField(
+        "gbRobotInstruction",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $instructionToggleField = $form.GetType().GetField(
+        "bToggleRobotInstructionPanel",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    if (-not $instructionGroupField.GetValue($form).Visible -or
+        $instructionToggleField.GetValue($form).Visible) {
+        throw "A populated instruction list should be expanded by default."
+    }
+    [void]$form.UpdateInstruction_ByListAction(
+        [WPELibrary.Lib.Socket_Cache+System+ListAction]::CleanUp,
+        0)
+    [System.Windows.Forms.Application]::DoEvents()
+    if ($instructionGroupField.GetValue($form).Visible -or
+        -not $instructionToggleField.GetValue($form).Visible) {
+        throw "An empty instruction list should collapse into a compact toggle."
+    }
+    Capture-Form $form "02-robot-vision-empty-instructions.png"
+    $instructionToggleField.GetValue($form).PerformClick()
+    if (-not $instructionGroupField.GetValue($form).Visible) {
+        throw "The empty instruction list toggle did not restore the panel."
     }
     $visionLogField = $form.GetType().GetField(
         "txtVisionAssistantLog",

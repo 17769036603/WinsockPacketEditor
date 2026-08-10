@@ -198,7 +198,7 @@ namespace WinsockPacketEditor
                 if (!string.IsNullOrEmpty(this.RemoteIP))
                 {
                     string RemotePort = this.nudRemote_Port.Value.ToString();
-                    sReturn = string.Format("http://{0}:{1}", this.RemoteIP, RemotePort);                    
+                    sReturn = string.Format("https://{0}:{1}", this.RemoteIP, RemotePort);
                 }
             }
             catch (Exception ex)

@@ -43,6 +43,7 @@ namespace WPELibrary
         private System.Drawing.Color byteSweepOriginalSelectionForeColor;
         private bool byteSweepHighlightActive;
         private bool byteSweepLiveDisplayEnabled;
+        private bool byteSweepRestoringLiveDisplay;
         private bool byteSweepLiveValueActive;
         private long byteSweepLivePosition = -1;
         private byte byteSweepLiveOriginalValue;
@@ -54,15 +55,22 @@ namespace WPELibrary
         private long byteSweepLiveSelectionStart = -1;
         private long byteSweepLiveSelectionLength = 1;
         private bool byteSweepProviderHadChanges;
+        private ToolStripSeparator dynamicVariableMenuSeparator;
+        private ToolStripMenuItem replaceDynamicVariableMenuItem;
+        private ToolStripMenuItem editDynamicBindingMenuItem;
+        private ToolStripMenuItem removeDynamicBindingMenuItem;
         private bool packetEditorLockActive;
         private bool packetEditorOriginalReadOnly;
         private Socket_ByteAnnotationController byteAnnotationController;
         private List<Socket_ByteAnnotationInfo> workingByteAnnotations;
+        private List<PresetVariableBinding> workingVariableBindings;
+        private byte[] preparedVariableBuffer;
         private Socket_SendInfo savedSendPreset;
         private Socket_PacketInfo savedSendPresetPacket;
         private Socket_ByteSweepPresetInfo savedByteSweepPreset;
         private string baseWindowTitle;
         private ToolStripStatusLabel tlCurrentPacketIdentity;
+        private ToolStripStatusLabel tlDynamicVariablePreview;
         private TableLayoutPanel tlpSendActions;
         private TableLayoutPanel tlpByteSweepSettings;
         private Panel pnlByteSweepActions;
@@ -138,6 +146,7 @@ namespace WPELibrary
             {
                 MultiLanguage.SetDefaultLanguage(MultiLanguage.DefaultLanguage);                
                 InitializeComponent();
+                this.InitializeDynamicVariableMenu();
                 this.MinimumSize = new System.Drawing.Size(1200, 620);
                 this.InitializeHexSelectionAppearance();
                 this.InitializeSendPanelLayout();
@@ -160,6 +169,14 @@ namespace WPELibrary
                     TextAlign = System.Drawing.ContentAlignment.MiddleLeft
                 };
                 this.ssSocketSend.Items.Insert(0, this.tlCurrentPacketIdentity);
+                this.tlDynamicVariablePreview = new ToolStripStatusLabel
+                {
+                    Name = "tlDynamicVariablePreview",
+                    ForeColor = System.Drawing.Color.DarkSlateGray,
+                    AutoSize = true,
+                    TextAlign = System.Drawing.ContentAlignment.MiddleLeft
+                };
+                this.ssSocketSend.Items.Insert(1, this.tlDynamicVariablePreview);
 
                 if (spi != null)
                 { 
@@ -1444,12 +1461,17 @@ namespace WPELibrary
             try
             {
                 this.workingByteAnnotations = Socket_ByteAnnotationEngine.Clone(this.SPI.ByteAnnotations);
+                this.workingVariableBindings = (this.SPI.VariableBindings ?? new List<PresetVariableBinding>())
+                    .Where(item => item != null)
+                    .Select(item => item.Clone())
+                    .ToList();
                 Socket_AnnotatedByteProvider dbp = new Socket_AnnotatedByteProvider(
-                    this.SPI.PacketBuffer, this.workingByteAnnotations);
+                    this.SPI.PacketBuffer, this.workingByteAnnotations, this.workingVariableBindings);
                 dbp.Changed += new EventHandler(ByteProvider_Changed);
                 dbp.LengthChanged += new EventHandler(ByteProvider_LengthChanged);
                 hbPacketData.ByteProvider = dbp;
                 this.byteAnnotationController.Bind(this.workingByteAnnotations);
+                this.RefreshDynamicBindingStyle();
 
                 DefaultByteCharConverter defConverter = new DefaultByteCharConverter();
                 EbcdicByteCharProvider ebcdicConverter = new EbcdicByteCharProvider();
@@ -1669,6 +1691,11 @@ namespace WPELibrary
                         return false;
                     }
                 }
+
+                if (!this.TryPrepareVariableBuffer(byteSweep))
+                {
+                    return false;
+                }
             }
             catch (Exception ex)
             {
@@ -1676,6 +1703,93 @@ namespace WPELibrary
                 return false;
             }
 
+            return true;
+        }
+
+        private bool TryPrepareVariableBuffer(bool byteSweep)
+        {
+            byte[] buffer = Socket_ByteAnnotationEngine.GetBytes(this.hbPacketData.ByteProvider);
+            this.preparedVariableBuffer = buffer == null ? null : (byte[])buffer.Clone();
+            List<PresetVariableBinding> bindings = this.workingVariableBindings ?? new List<PresetVariableBinding>();
+
+            if (bindings.Count == 0)
+            {
+                return this.preparedVariableBuffer != null;
+            }
+
+            if (byteSweep)
+            {
+                if (this.IsPairCombinationMode())
+                {
+                    if (VariableResolver.HasRangeConflict(bindings,
+                        (int)this.nudByteSweepFirstPosition.Value,
+                        (int)this.nudByteSweepFirstLength.Value) ||
+                        VariableResolver.HasRangeConflict(bindings,
+                        (int)this.nudByteSweepSecondPosition.Value,
+                        (int)this.nudByteSweepSecondLength.Value))
+                    {
+                        Socket_Operation.ShowMessageBox("动态变量绑定范围不能与字节扫掠范围重叠。");
+                        return false;
+                    }
+                }
+                else
+                {
+                    long sweepStart;
+                    long sweepLength;
+                    if (this.TryGetByteSweepSelection(out sweepStart, out sweepLength) &&
+                        VariableResolver.HasRangeConflict(bindings, (int)sweepStart, (int)sweepLength))
+                    {
+                        Socket_Operation.ShowMessageBox("动态变量绑定范围不能与字节扫掠范围重叠。");
+                        return false;
+                    }
+                }
+            }
+            else if (this.cbProgressionPosition.Checked)
+            {
+                int position = (int)this.nudProgressionPosition.Value;
+                int carry = this.cbProgressionCarry.Checked
+                    ? (int)this.nudProgressionCarry.Value
+                    : 0;
+                int start = Math.Max(0, position - carry);
+                if (VariableResolver.HasRangeConflict(bindings, start, position - start + 1))
+                {
+                    Socket_Operation.ShowMessageBox("动态变量绑定范围不能与递进范围重叠。");
+                    return false;
+                }
+            }
+
+            DynamicVariableSnapshot snapshot = DynamicVariableRuntime.CaptureSnapshot();
+            byte[] resolved;
+            string error;
+            Guid failedVariableId;
+            if (!VariableResolver.TryResolveBuffer(
+                this.preparedVariableBuffer,
+                bindings,
+                snapshot,
+                variableId =>
+                {
+                    DynamicVariableDefinition definition;
+                    return DynamicVariableRuntime.TryGetDefinition(variableId, out definition)
+                        ? definition
+                        : null;
+                },
+                out resolved,
+                out error,
+                out failedVariableId))
+            {
+                DynamicVariableDefinition failedDefinition;
+                string symbol = failedVariableId != Guid.Empty &&
+                    DynamicVariableRuntime.TryGetDefinition(failedVariableId, out failedDefinition)
+                    ? failedDefinition.Symbol
+                    : failedVariableId == Guid.Empty
+                        ? "未知"
+                        : failedVariableId.ToString("N");
+                Socket_Operation.ShowMessageBox(
+                    string.Format("变量 {0} 无法解析：{1}", symbol, error));
+                return false;
+            }
+
+            this.preparedVariableBuffer = resolved;
             return true;
         }
 
@@ -1914,7 +2028,9 @@ namespace WPELibrary
                     : (int)this.nudSendType_Times.Value,
                 IPFrom = this.txtIPFrom.Text.Trim(),
                 IPTo = this.txtIPTo.Text.Trim(),
-                Buffer = Socket_ByteAnnotationEngine.GetBytes(dbp),
+                Buffer = this.preparedVariableBuffer == null
+                    ? Socket_ByteAnnotationEngine.GetBytes(dbp)
+                    : (byte[])this.preparedVariableBuffer.Clone(),
                 Continuously = this.rbSendType_Continuously.Checked,
                 ByteSweep = byteSweep,
                 ProgressionEnabled = !byteSweep && this.cbProgressionPosition.Checked,
@@ -2841,19 +2957,33 @@ namespace WPELibrary
 
         private void EndByteSweepLiveDisplay()
         {
+            // Live preview writes temporary values through the byte provider.
+            // Restoring those values must not turn a clean editor into an
+            // unsaved editor, otherwise closing a preview-only window can
+            // unexpectedly open the unsaved-changes dialog.
+            bool editorDirtyBeforeRestore = this.byteSweepEditorDirty;
             bool liveDisplayWasActive =
                 this.byteSweepLiveDisplayEnabled ||
                 this.byteSweepLiveValueActive ||
                 this.byteSweepLiveSecondValueActive;
-            this.byteSweepLiveDisplayEnabled = false;
-            Interlocked.Increment(ref this.byteSweepLiveDisplayGeneration);
-            this.RestoreByteSweepDisplayedValue();
-            IByteProvider provider = this.hbPacketData.ByteProvider;
-            if (liveDisplayWasActive &&
-                provider != null &&
-                !this.byteSweepProviderHadChanges)
+            this.byteSweepRestoringLiveDisplay = true;
+            try
             {
-                provider.ApplyChanges();
+                this.byteSweepLiveDisplayEnabled = false;
+                Interlocked.Increment(ref this.byteSweepLiveDisplayGeneration);
+                this.RestoreByteSweepDisplayedValue();
+                IByteProvider provider = this.hbPacketData.ByteProvider;
+                if (liveDisplayWasActive &&
+                    provider != null &&
+                    !this.byteSweepProviderHadChanges)
+                {
+                    provider.ApplyChanges();
+                }
+            }
+            finally
+            {
+                this.byteSweepRestoringLiveDisplay = false;
+                this.byteSweepEditorDirty = editorDirtyBeforeRestore;
             }
             this.byteSweepProviderHadChanges = false;
             this.byteSweepLiveSelectionStart = -1;
@@ -3063,8 +3193,12 @@ namespace WPELibrary
             value.ByteAnnotations =
                 Socket_ByteAnnotationEngine.Clone(this.SPI.ByteAnnotations);
 
-            Socket_Cache.ByteSweepList.UpdatePreset(this.savedByteSweepPreset, value);
-            Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
+            if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                () => Socket_Cache.ByteSweepList.UpdatePreset(this.savedByteSweepPreset, value)))
+            {
+                Socket_Operation.ShowMessageBox(UiText("UI_PresetSaveFailed"));
+                return false;
+            }
             this.UpdateByteSweepPresetIdentity();
             this.ShowPresetSaveStatus(
                 UiText("UI_SweepPresetUpdated"),
@@ -3135,8 +3269,12 @@ namespace WPELibrary
             {
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
-                    Socket_Cache.ByteSweepList.AddPreset(dialog.Result);
-                    Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
+                    if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                        () => Socket_Cache.ByteSweepList.AddPreset(dialog.Result)))
+                    {
+                        Socket_Operation.ShowMessageBox(UiText("UI_PresetSaveFailed"));
+                        return false;
+                    }
                     this.tlByteSweepProgress.Visible = true;
                     this.tlByteSweepProgress.Text = string.Format(
                         System.Globalization.CultureInfo.CurrentCulture,
@@ -3227,78 +3365,84 @@ namespace WPELibrary
                         return;
                     }
 
-                    if (!this.ApplyCurrentPacketEdits())
-                    {
-                        return;
-                    }
-
-                    string targetFolder = Socket_Cache.SendList.lstFolders.FirstOrDefault(folder =>
-                        string.Equals(folder, dialog.FolderName, StringComparison.OrdinalIgnoreCase));
-                    if (targetFolder == null)
-                    {
-                        Socket_Cache.SendList.AddFolder(dialog.FolderName);
-                        targetFolder = dialog.FolderName;
-                    }
-
                     int loopCount = this.rbSendType_Continuously.Checked
                         ? 0
                         : (int)this.nudSendType_Times.Value;
-                    if (existingPreset != null)
+                    string targetFolder = dialog.FolderName;
+                    Socket_SendInfo committedPreset = null;
+                    bool mutationValid = true;
+                    bool saved = Socket_Cache.SendList.TryApplyListChangeAndSave(() =>
                     {
-                        if (this.savedSendPresetPacket != null &&
-                            !ReferenceEquals(this.SPI, this.savedSendPresetPacket))
+                        if (!this.ApplyCurrentPacketEdits())
                         {
-                            CopyPacket(this.SPI, this.savedSendPresetPacket);
+                            mutationValid = false;
+                            return;
                         }
 
-                        bool folderChanged = !string.Equals(
-                            existingPreset.SFolder,
-                            targetFolder,
-                            StringComparison.Ordinal);
-                        existingPreset.SName = dialog.PresetName;
-                        existingPreset.SFolder = targetFolder;
-                        existingPreset.SLoopCNT = loopCount;
-                        existingPreset.SLoopINT = (int)this.nudSendType_Interval.Value;
-                        if (folderChanged)
+                        targetFolder = Socket_Cache.SendList.lstFolders.FirstOrDefault(folder =>
+                            string.Equals(folder, dialog.FolderName, StringComparison.OrdinalIgnoreCase));
+                        if (targetFolder == null)
                         {
-                            existingPreset.SSortOrder = Socket_Cache.SendList.lstSend.Count(item =>
-                                !ReferenceEquals(item, existingPreset) &&
-                                string.Equals(
-                                    item.SFolder,
-                                    targetFolder,
-                                    StringComparison.Ordinal)) + 1;
+                            Socket_Cache.SendList.AddFolder(dialog.FolderName);
+                            targetFolder = dialog.FolderName;
                         }
 
-                        this.savedSendPreset = existingPreset;
-                        this.savedSendPresetPacket = containingPreset == null
-                            ? this.savedSendPresetPacket
-                            : this.SPI;
-                        int existingIndex = Socket_Cache.SendList.lstSend.IndexOf(existingPreset);
-                        if (existingIndex >= 0)
+                        if (existingPreset != null)
                         {
-                            Socket_Cache.SendList.lstSend.ResetItem(existingIndex);
+                            if (this.savedSendPresetPacket != null &&
+                                !ReferenceEquals(this.SPI, this.savedSendPresetPacket))
+                            {
+                                CopyPacket(this.SPI, this.savedSendPresetPacket);
+                            }
+
+                            bool folderChanged = !string.Equals(
+                                existingPreset.SFolder,
+                                targetFolder,
+                                StringComparison.Ordinal);
+                            existingPreset.SName = dialog.PresetName;
+                            existingPreset.SFolder = targetFolder;
+                            existingPreset.SLoopCNT = loopCount;
+                            existingPreset.SLoopINT = (int)this.nudSendType_Interval.Value;
+                            if (folderChanged)
+                            {
+                                existingPreset.SSortOrder = Socket_Cache.SendList.lstSend.Count(item =>
+                                    !ReferenceEquals(item, existingPreset) &&
+                                    string.Equals(
+                                        item.SFolder,
+                                        targetFolder,
+                                        StringComparison.Ordinal)) + 1;
+                            }
+
+                            committedPreset = existingPreset;
+                            return;
                         }
-                        this.UpdatePresetIdentity(existingPreset);
-                        Socket_Cache.SendList.SaveSendList_ToDB();
-                        this.ShowPresetSaveStatus(
-                            UiText("UI_SendPresetUpdated"),
+
+                        committedPreset = CreateSendPreset(
+                            this.SPI,
+                            dialog.PresetName,
                             targetFolder,
-                            dialog.PresetName);
+                            loopCount,
+                            (int)this.nudSendType_Interval.Value);
+                        Socket_Cache.SendList.SendToList(committedPreset);
+                    });
+
+                    if (!mutationValid || !saved || committedPreset == null)
+                    {
+                        Socket_Operation.ShowMessageBox(UiText("UI_PresetSaveFailed"));
                         return;
                     }
 
-                    this.savedSendPreset = CreateSendPreset(
-                        this.SPI,
-                        dialog.PresetName,
+                    this.savedSendPreset = committedPreset;
+                    this.savedSendPresetPacket = containingPreset == null
+                        ? committedPreset.SCollection[0]
+                        : this.SPI;
+                    this.UpdatePresetIdentity(committedPreset);
+                    this.ShowPresetSaveStatus(
+                        existingPreset == null
+                            ? UiText("UI_SendPresetSaved")
+                            : UiText("UI_SendPresetUpdated"),
                         targetFolder,
-                        loopCount,
-                        (int)this.nudSendType_Interval.Value);
-                    Socket_Cache.SendList.SendToList(this.savedSendPreset);
-                    this.savedSendPresetPacket = this.savedSendPreset.SCollection[0];
-                    this.UpdatePresetIdentity(this.savedSendPreset);
-                    Socket_Cache.SendList.SaveSendList_ToDB();
-                    this.ShowPresetSaveStatus(UiText("UI_SendPresetSaved"),
-                        targetFolder, dialog.PresetName);
+                        dialog.PresetName);
                 }
             }
             catch (Exception ex)
@@ -3329,6 +3473,10 @@ namespace WPELibrary
             this.SPI.PacketLen = buffer.Length;
             this.SPI.ByteAnnotations =
                 Socket_ByteAnnotationEngine.Clone(this.workingByteAnnotations);
+            this.SPI.VariableBindings = (this.workingVariableBindings ?? new List<PresetVariableBinding>())
+                .Where(item => item != null)
+                .Select(item => item.Clone())
+                .ToList();
             provider.ApplyChanges();
             return true;
         }
@@ -3379,6 +3527,11 @@ namespace WPELibrary
             target.FilterAction = source.FilterAction;
             target.ByteAnnotations =
                 Socket_ByteAnnotationEngine.Clone(source.ByteAnnotations);
+            target.VariableBindings = (source.VariableBindings ?? new List<PresetVariableBinding>())
+                .Where(item => item != null)
+                .Select(item => item.Clone())
+                .ToList();
+            target.SortOrder = source.SortOrder;
         }
 
         private void ShowPresetSaveStatus(string template, string folder, string name)
@@ -3395,9 +3548,60 @@ namespace WPELibrary
 
         #region//右键菜单
 
+        private void InitializeDynamicVariableMenu()
+        {
+            this.dynamicVariableMenuSeparator = new ToolStripSeparator
+            {
+                Name = "cmsHexBox_DynamicVariableSeparator"
+            };
+            this.replaceDynamicVariableMenuItem = new ToolStripMenuItem
+            {
+                Name = "cmsHexBox_ReplaceDynamicVariable",
+                Text = "替换为动态变量"
+            };
+            this.editDynamicBindingMenuItem = new ToolStripMenuItem
+            {
+                Name = "cmsHexBox_EditDynamicBinding",
+                Text = "修改变量绑定"
+            };
+            this.removeDynamicBindingMenuItem = new ToolStripMenuItem
+            {
+                Name = "cmsHexBox_RemoveDynamicBinding",
+                Text = "取消变量绑定"
+            };
+            int index = this.cmsHexBox.Items.Count;
+            this.cmsHexBox.Items.Insert(index, this.dynamicVariableMenuSeparator);
+            this.cmsHexBox.Items.Insert(index + 1, this.replaceDynamicVariableMenuItem);
+            this.cmsHexBox.Items.Insert(index + 2, this.editDynamicBindingMenuItem);
+            this.cmsHexBox.Items.Insert(index + 3, this.removeDynamicBindingMenuItem);
+        }
+
+        private bool TryGetVariableBindingSelection(out int offset, out int length)
+        {
+            offset = 0;
+            length = 0;
+            IByteProvider provider = this.hbPacketData.ByteProvider;
+            return provider != null && DynamicVariableRange.TryFromSelection(
+                this.hbPacketData.SelectionStart,
+                this.hbPacketData.SelectionLength,
+                provider.Length,
+                out offset,
+                out length);
+        }
+
         private void cmsHexBox_Opening(object sender, CancelEventArgs e)
         {
             Socket_Operation.InitSendListComboBox(this.tscbSendList);
+            int offset;
+            int length;
+            bool valid = this.TryGetVariableBindingSelection(out offset, out length);
+            PresetVariableBinding binding = valid
+                ? (this.workingVariableBindings ?? new List<PresetVariableBinding>())
+                    .FirstOrDefault(item => item != null && item.Offset == offset && item.Length == length)
+                : null;
+            this.replaceDynamicVariableMenuItem.Enabled = valid && !this.bgwSendPacket.IsBusy;
+            this.editDynamicBindingMenuItem.Enabled = binding != null && !this.bgwSendPacket.IsBusy;
+            this.removeDynamicBindingMenuItem.Enabled = binding != null && !this.bgwSendPacket.IsBusy;
         }
 
         private void tscbSendList_SelectedIndexChanged(object sender, EventArgs e)
@@ -3417,11 +3621,16 @@ namespace WPELibrary
                         string sIPTo = this.txtIPTo.Text.Trim();
 
                         byte[] bBuffer = null;
+                        long selectionStart = 0;
+                        long selectionLength = 0;
+                        bool hasSelection = this.hbPacketData.CanCopy();
 
-                        if (this.hbPacketData.CanCopy())
+                        if (hasSelection)
                         {
+                            selectionStart = this.hbPacketData.SelectionStart;
+                            selectionLength = this.hbPacketData.SelectionLength;
                             this.hbPacketData.CopyHex();
-                            bBuffer = Socket_Operation.StringToBytes(Socket_Cache.SocketPacket.EncodingFormat.Hex, Clipboard.GetText());                            
+                            bBuffer = Socket_Operation.StringToBytes(Socket_Cache.SocketPacket.EncodingFormat.Hex, Clipboard.GetText());
                         }
                         else
                         {
@@ -3431,8 +3640,12 @@ namespace WPELibrary
                         Socket_Cache.Send.AddSendCollection(SCollection, iSocket, this.SPI.PacketType, sIPFrom, sIPTo, bBuffer,
                             Socket_ByteAnnotationEngine.ForSelection(
                                 this.workingByteAnnotations,
-                                this.hbPacketData.CanCopy() ? this.hbPacketData.SelectionStart : 0,
-                                this.hbPacketData.CanCopy() ? this.hbPacketData.SelectionLength : 0));
+                                hasSelection ? selectionStart : 0,
+                                hasSelection ? selectionLength : bBuffer == null ? 0 : bBuffer.Length),
+                            DynamicVariableSerialization.ForSelection(
+                                this.workingVariableBindings,
+                                hasSelection ? selectionStart : 0,
+                                hasSelection ? selectionLength : bBuffer == null ? 0 : bBuffer.Length));
                     }                                       
 
                     this.cmsHexBox.Close();
@@ -3455,6 +3668,18 @@ namespace WPELibrary
 
                 switch (sItemText)
                 {  
+                    case "cmsHexBox_ReplaceDynamicVariable":
+                        this.ChangeDynamicBinding(false);
+                        break;
+
+                    case "cmsHexBox_EditDynamicBinding":
+                        this.ChangeDynamicBinding(true);
+                        break;
+
+                    case "cmsHexBox_RemoveDynamicBinding":
+                        this.RemoveDynamicBinding();
+                        break;
+
                     case "cmsHexBox_FilterList":
 
                         if (this.hbPacketData.CanCopy())
@@ -3482,6 +3707,107 @@ namespace WPELibrary
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }            
+        }
+
+        private void ChangeDynamicBinding(bool editExisting)
+        {
+            int offset;
+            int length;
+            if (!this.TryGetVariableBindingSelection(out offset, out length))
+            {
+                return;
+            }
+            this.SPI.VariableBindings = this.workingVariableBindings ?? new List<PresetVariableBinding>();
+            bool changed = editExisting
+                ? DynamicVariableUiActions.ChangeBinding(this, this.SPI, offset, length)
+                : DynamicVariableUiActions.AddBinding(this, this.SPI, offset, length);
+            if (changed)
+            {
+                this.workingVariableBindings = this.SPI.VariableBindings;
+                this.byteAnnotationController.Refresh();
+                this.RefreshDynamicBindingStyle();
+            }
+        }
+
+        private void RemoveDynamicBinding()
+        {
+            int offset;
+            int length;
+            if (!this.TryGetVariableBindingSelection(out offset, out length))
+            {
+                return;
+            }
+            this.SPI.VariableBindings = this.workingVariableBindings ?? new List<PresetVariableBinding>();
+            if (DynamicVariableUiActions.RemoveBinding(this, this.SPI, offset, length))
+            {
+                this.workingVariableBindings = this.SPI.VariableBindings;
+                this.byteAnnotationController.Refresh();
+                this.RefreshDynamicBindingStyle();
+            }
+        }
+
+        private void RefreshDynamicBindingStyle()
+        {
+            List<DynamicVariableDisplayRange> ranges = new List<DynamicVariableDisplayRange>();
+            foreach (PresetVariableBinding binding in this.workingVariableBindings ?? new List<PresetVariableBinding>())
+            {
+                DynamicVariableDefinition definition;
+                if (binding != null && DynamicVariableRuntime.TryGetDefinition(binding.VariableId, out definition))
+                {
+                    ranges.Add(new DynamicVariableDisplayRange
+                    {
+                        Offset = binding.Offset,
+                        Length = binding.Length,
+                        VariableId = binding.VariableId,
+                        Symbol = definition.Symbol,
+                        DisplayName = definition.DisplayName,
+                        RuleName = "发送预设绑定"
+                    });
+                }
+            }
+            this.hbPacketData.ByteStyleProvider = new DynamicVariableCompositeStyleProvider(
+                this.workingByteAnnotations,
+                ranges);
+            this.UpdateDynamicVariablePreview();
+            this.hbPacketData.Invalidate();
+        }
+
+        private void UpdateDynamicVariablePreview()
+        {
+            if (this.tlDynamicVariablePreview == null)
+            {
+                return;
+            }
+            byte[] buffer = this.hbPacketData == null || this.hbPacketData.ByteProvider == null
+                ? null
+                : Socket_ByteAnnotationEngine.GetBytes(this.hbPacketData.ByteProvider);
+            List<string> parts = new List<string>();
+            List<PresetVariableBinding> bindings = (this.workingVariableBindings ?? new List<PresetVariableBinding>())
+                .Where(item => item != null)
+                .OrderBy(item => item.Offset)
+                .ToList();
+            for (int index = 0; buffer != null && index < buffer.Length; index++)
+            {
+                PresetVariableBinding binding = bindings.FirstOrDefault(item =>
+                    item.Offset == index && item.Length > 0 && item.End <= buffer.Length);
+                if (binding != null)
+                {
+                    DynamicVariableDefinition definition;
+                    string symbol = DynamicVariableRuntime.TryGetDefinition(binding.VariableId, out definition)
+                        ? definition.Symbol
+                        : binding.VariableId.ToString("N");
+                    parts.Add("{" + symbol + "}");
+                    index += binding.Length - 1;
+                }
+                else
+                {
+                    parts.Add(buffer[index].ToString("X2"));
+                }
+            }
+            this.tlDynamicVariablePreview.Text = parts.Count == 0
+                ? string.Empty
+                : "模板：" + string.Join(" ", parts);
+            this.tlDynamicVariablePreview.ToolTipText = this.tlDynamicVariablePreview.Text;
         }
 
         #endregion
@@ -3546,8 +3872,11 @@ namespace WPELibrary
         {
             this.HexBox_ManageAbility();
             this.byteAnnotationController.Refresh();
+            this.UpdateDynamicVariablePreview();
             this.UpdateByteSweepEditorByteValues();
-            if (!this.byteSweepLiveDisplayEnabled && !this.byteSweepWasRunning)
+            if (!this.byteSweepLiveDisplayEnabled &&
+                !this.byteSweepWasRunning &&
+                !this.byteSweepRestoringLiveDisplay)
             {
                 this.byteSweepEditorDirty = true;
             }
@@ -3557,6 +3886,7 @@ namespace WPELibrary
         {
             this.HexBox_UpdatePacketLen();
             this.byteAnnotationController.Refresh();
+            this.UpdateDynamicVariablePreview();
             this.UpdateByteSweepEditorByteValues();
             this.byteSweepEditorDirty = true;
         }

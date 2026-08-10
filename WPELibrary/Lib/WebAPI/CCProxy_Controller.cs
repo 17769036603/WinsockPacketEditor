@@ -59,7 +59,7 @@ namespace WPELibrary.Lib.WebAPI
         {
             try
             {
-                if (string.IsNullOrEmpty(pai.UserName) || string.IsNullOrEmpty(pai.PassWord))
+                if (pai == null || string.IsNullOrEmpty(pai.UserName) || string.IsNullOrEmpty(pai.PassWord))
                 {
                     return false;
                 }
@@ -80,21 +80,24 @@ namespace WPELibrary.Lib.WebAPI
                 pai.IsLimitDevices = true;
                 pai.LimitDevices = 1;
 
-                return Socket_Cache.ProxyAccount.AddProxyAccount(
-                    Guid.NewGuid(), 
-                    pai.IsEnable, 
-                    pai.UserName, 
-                    pai.PassWord, 
-                    pai.LoginTime, 
-                    string.Empty, 
-                    string.Empty, 
-                    pai.IsLimitLinks,
-                    pai.LimitLinks,
-                    pai.IsLimitDevices,
-                    pai.LimitDevices,
-                    pai.IsExpiry, 
-                    pai.ExpiryTime, 
-                    DateTime.Now);
+                bool mutationSucceeded = false;
+                bool saved = Socket_Cache.ProxyAccount.TryApplyListChangeAndSave(
+                    () => mutationSucceeded = Socket_Cache.ProxyAccount.AddProxyAccount(
+                        Guid.NewGuid(),
+                        pai.IsEnable,
+                        pai.UserName,
+                        pai.PassWord,
+                        pai.LoginTime,
+                        string.Empty,
+                        string.Empty,
+                        pai.IsLimitLinks,
+                        pai.LimitLinks,
+                        pai.IsLimitDevices,
+                        pai.LimitDevices,
+                        pai.IsExpiry,
+                        pai.ExpiryTime,
+                        DateTime.Now));
+                return mutationSucceeded && saved;
             }
             catch (Exception ex)
             {
@@ -111,7 +114,7 @@ namespace WPELibrary.Lib.WebAPI
         {
             try
             {
-                if (string.IsNullOrEmpty(pai.UserName))
+                if (pai == null || string.IsNullOrEmpty(pai.UserName))
                 {
                     return false;
                 }
@@ -133,14 +136,17 @@ namespace WPELibrary.Lib.WebAPI
 
                 pai.IsLimitDevices = true;
 
-                return Socket_Cache.ProxyAccount.UpdateProxyAccount_ByCCProxy(
-                    pai.UserName, 
-                    pai.IsEnable, 
-                    pai.PassWord, 
-                    pai.IsLimitLinks,
-                    pai.LimitLinks,                   
-                    pai.IsExpiry, 
-                    pai.ExpiryTime);
+                bool mutationSucceeded = false;
+                bool saved = Socket_Cache.ProxyAccount.TryApplyListChangeAndSave(
+                    () => mutationSucceeded = Socket_Cache.ProxyAccount.UpdateProxyAccount_ByCCProxy(
+                        pai.UserName,
+                        pai.IsEnable,
+                        pai.PassWord,
+                        pai.IsLimitLinks,
+                        pai.LimitLinks,
+                        pai.IsExpiry,
+                        pai.ExpiryTime));
+                return mutationSucceeded && saved;
             }
             catch (Exception ex)
             {
@@ -155,7 +161,15 @@ namespace WPELibrary.Lib.WebAPI
 
         public static bool DelUser(string UserName)
         {
-            return Socket_Cache.ProxyAccount.DeleteProxyAccount_ByUserName(UserName);
+            if (string.IsNullOrEmpty(UserName))
+            {
+                return false;
+            }
+
+            bool mutationSucceeded = false;
+            bool saved = Socket_Cache.ProxyAccount.TryApplyListChangeAndSave(
+                () => mutationSucceeded = Socket_Cache.ProxyAccount.DeleteProxyAccount_ByUserName(UserName));
+            return mutationSucceeded && saved;
         }
 
         #endregion

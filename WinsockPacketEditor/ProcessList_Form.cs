@@ -238,6 +238,15 @@ namespace WinsockPacketEditor
                             displayTable.ImportRow(processRow);
                         }
                     }
+
+                    // Some protected processes can make the general process
+                    // snapshot incomplete. Keep the injection entry usable by
+                    // resolving the known emulator engines directly as a
+                    // fallback instead of showing an empty chooser.
+                    if (displayTable.Rows.Count == 0)
+                    {
+                        this.AppendDirectEmulatorRows(displayTable);
+                    }
                 }
 
                 this.BindProcessSearch(displayTable);
@@ -259,6 +268,55 @@ namespace WinsockPacketEditor
             }
 
             return false;
+        }
+
+        private void AppendDirectEmulatorRows(DataTable displayTable)
+        {
+            foreach (string processName in EmulatorMainProcessNames)
+            {
+                Process[] processes;
+                try
+                {
+                    processes = Process.GetProcessesByName(processName);
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(
+                        nameof(AppendDirectEmulatorRows),
+                        string.Format("读取模拟器进程 {0} 失败：{1}", processName, ex.Message));
+                    continue;
+                }
+
+                foreach (Process process in processes)
+                {
+                    try
+                    {
+                        DataRow row = displayTable.NewRow();
+                        row["ICO"] = new Icon(SystemIcons.Application, 256, 256).ToBitmap();
+                        row["PName"] = process.ProcessName;
+                        row["PID"] = process.Id;
+                        row["PPath"] = Socket_Operation.GetProcessPath(process);
+                        row["PArch"] = Socket_Operation.IsWin64Process(process.Id) ? "x64" : "x86";
+                        row["PCompatibility"] = File.Exists(
+                            Path.Combine(
+                                Path.GetDirectoryName(typeof(Socket_Operation).Assembly.Location),
+                                Socket_Cache.System.WPE64_DLL))
+                            ? (MultiLanguage.DefaultLanguage == "en-US" ? "Ready" : "可注入")
+                            : (MultiLanguage.DefaultLanguage == "en-US" ? "Missing DLL" : "缺少 DLL");
+                        displayTable.Rows.Add(row);
+                    }
+                    catch (Exception ex)
+                    {
+                        Socket_Operation.DoLog(
+                            nameof(AppendDirectEmulatorRows),
+                            string.Format("读取模拟器进程 {0}[{1}] 失败：{2}", processName, process.Id, ex.Message));
+                    }
+                    finally
+                    {
+                        process.Dispose();
+                    }
+                }
+            }
         }
 
         internal static bool IsSupportedInjectionProcess(string processName)

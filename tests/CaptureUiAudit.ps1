@@ -33,8 +33,19 @@ else {
     $resolvedBuildDirectory
 }
 $applicationExe = Get-ChildItem -LiteralPath $applicationDirectory -Filter "*.exe" |
-    Where-Object { $_.Name -notlike "EasyHook*Svc.exe" } |
+    Where-Object { $_.Name -eq "小黑封包助手.exe" } |
     Select-Object -First 1 -ExpandProperty FullName
+if ([string]::IsNullOrEmpty($applicationExe)) {
+    $applicationExe = Get-ChildItem -LiteralPath $applicationDirectory -Filter "*.exe" |
+        Where-Object {
+            $_.Name -notlike "EasyHook*Svc.exe" -and
+            $_.Name -notlike "VisionLiveHarness*.exe"
+        } |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+if ([string]::IsNullOrEmpty($applicationExe)) {
+    throw "Application executable not found in $applicationDirectory"
+}
 
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
@@ -245,10 +256,16 @@ $staticFlags = [System.Reflection.BindingFlags]::Static -bor
     [System.Reflection.BindingFlags]::NonPublic
 $dbPathField = $databaseType.GetField("dbPath", $staticFlags)
 $dbNameField = $databaseType.GetField("dbName", $staticFlags)
-$connectionField = $databaseType.GetField("conStr", $staticFlags)
+$connectionProperty = $databaseType.GetProperty("conStr", $staticFlags)
+$connectionField = $databaseType.GetField("connectionString", $staticFlags)
 $originalDbPath = $dbPathField.GetValue($null)
 $originalDbName = $dbNameField.GetValue($null)
-$originalConnection = $connectionField.GetValue($null)
+$originalConnection = if ($null -ne $connectionProperty) {
+    $connectionProperty.GetValue($null, $null)
+}
+else {
+    $connectionField.GetValue($null)
+}
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("wpe-ui-audit-" + [Guid]::NewGuid().ToString("N"))
 $temporaryDatabase = Join-Path $temporaryRoot "ui-audit.db"
 
@@ -256,7 +273,12 @@ try {
     [System.IO.Directory]::CreateDirectory($temporaryRoot) | Out-Null
     $dbPathField.SetValue($null, $temporaryRoot)
     $dbNameField.SetValue($null, "ui-audit.db")
-    $connectionField.SetValue($null, "Data Source=$temporaryDatabase;Version=3;")
+    if ($null -ne $connectionProperty) {
+        $connectionProperty.SetValue($null, "Data Source=$temporaryDatabase;Version=3;", $null)
+    }
+    else {
+        $connectionField.SetValue($null, "Data Source=$temporaryDatabase;Version=3;")
+    }
     [WPELibrary.Lib.Socket_Cache+DataBase]::InitDB()
 
     if ($SeedSendPackets) {
@@ -299,7 +321,12 @@ finally {
     [WPELibrary.Lib.Socket_Cache+System]::InvokeAction = $null
     $dbPathField.SetValue($null, $originalDbPath)
     $dbNameField.SetValue($null, $originalDbName)
-    $connectionField.SetValue($null, $originalConnection)
+    if ($null -ne $connectionProperty) {
+        $connectionProperty.SetValue($null, $originalConnection, $null)
+    }
+    else {
+        $connectionField.SetValue($null, $originalConnection)
+    }
 
     $resolvedTemporaryRoot = [System.IO.Path]::GetFullPath($temporaryRoot)
     $resolvedSystemTemp = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())

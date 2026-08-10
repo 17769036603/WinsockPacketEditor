@@ -15,6 +15,9 @@ namespace WinsockPacketEditor
         private string ProcessPath = string.Empty;        
 
         private readonly ToolTip tt = new ToolTip();
+        private Button bRemoteSettings;
+        private Button bMobileAccountSettings;
+        private bool autoInjectLastProcess;
 
         #region//窗体事件
 
@@ -31,8 +34,8 @@ namespace WinsockPacketEditor
 
         private void ConfigureAccessibleLayout()
         {
-            this.ClientSize = new System.Drawing.Size(620, 300);
-            this.MinimumSize = new System.Drawing.Size(636, 339);
+            this.ClientSize = new System.Drawing.Size(820, 300);
+            this.MinimumSize = new System.Drawing.Size(836, 339);
             this.MaximizeBox = false;
             this.AccessibleRole = AccessibleRole.Window;
             this.Text = Socket_Cache.System.WPE;
@@ -41,6 +44,36 @@ namespace WinsockPacketEditor
             this.bInject.Text = MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_2);
             this.tlpProcessInject.ColumnStyles[2].Width = 140F;
             this.tlpProcessInject.ColumnStyles[3].Width = 150F;
+            this.tlpProcessInject.ColumnCount = 6;
+            this.tlpProcessInject.ColumnStyles.Add(
+                new System.Windows.Forms.ColumnStyle(
+                    System.Windows.Forms.SizeType.Absolute,
+                    100F));
+            this.tlpProcessInject.ColumnStyles.Add(
+                new System.Windows.Forms.ColumnStyle(
+                    System.Windows.Forms.SizeType.Absolute,
+                    100F));
+            this.bRemoteSettings = new Button
+            {
+                Name = "bRemoteSettings",
+                Text = "远程设置",
+                AutoSize = true,
+                UseVisualStyleBackColor = true,
+                AccessibleName = "远程设置"
+            };
+            this.bRemoteSettings.Click += this.bRemoteSettings_Click;
+            this.tlpProcessInject.Controls.Add(this.bRemoteSettings, 4, 0);
+
+            this.bMobileAccountSettings = new Button
+            {
+                Name = "bMobileAccountSettings",
+                Text = "移动端账号",
+                AutoSize = true,
+                UseVisualStyleBackColor = true,
+                AccessibleName = "移动端账号"
+            };
+            this.bMobileAccountSettings.Click += this.bMobileAccountSettings_Click;
+            this.tlpProcessInject.Controls.Add(this.bMobileAccountSettings, 5, 0);
 
             this.tbProcessID.TabStop = false;
             this.tbProcessID.AccessibleName = this.bSelectProcess.Text;
@@ -59,6 +92,19 @@ namespace WinsockPacketEditor
             this.rtbLog.AccessibleRole = AccessibleRole.Text;
             this.rtbLog.ScrollBars = RichTextBoxScrollBars.Both;
             this.AcceptButton = this.bInject;
+        }
+
+        private void bRemoteSettings_Click(object sender, EventArgs e)
+        {
+            using (SystemMode_Form form = new SystemMode_Form())
+            {
+                form.ShowDialog(this);
+            }
+        }
+
+        private void bMobileAccountSettings_Click(object sender, EventArgs e)
+        {
+            Socket_Operation.ShowProxyAccountListForm();
         }
 
         private void InitToolTip()
@@ -81,6 +127,39 @@ namespace WinsockPacketEditor
             Socket_Cache.System.SaveSystemConfig_LastInjection_ToDB();
         }
 
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            if (!this.autoInjectLastProcess || !this.bInject.Enabled)
+            {
+                return;
+            }
+
+            // Keep the normal injector UI unchanged. The explicit command-line
+            // switch is used by unattended desktop restarts after a ClickOnce
+            // update, where no one is available to press the button.
+            this.BeginInvoke(new Action(() =>
+            {
+                if (!this.IsDisposed && this.bInject.Enabled)
+                {
+                    this.bInject.PerformClick();
+                }
+            }));
+        }
+
+        private static bool HasAutoInjectSwitch()
+        {
+            foreach (string argument in Environment.GetCommandLineArgs())
+            {
+                if (string.Equals(argument, "--auto-inject", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         #endregion
 
         #region//初始化上次注入信息
@@ -99,6 +178,7 @@ namespace WinsockPacketEditor
                         Program.PNAME = plProcess[0].ProcessName;
 
                         this.ShowSelectProcess();
+                        this.autoInjectLastProcess = HasAutoInjectSwitch();
                     }
                 }
             }
@@ -116,6 +196,11 @@ namespace WinsockPacketEditor
         {
             try
             {
+                if (this.TrySelectSingleEmulator())
+                {
+                    return;
+                }
+
                 ProcessList_Form plf = new ProcessList_Form();
                 plf.ShowDialog();
 
@@ -124,6 +209,58 @@ namespace WinsockPacketEditor
             catch (Exception ex)
             {
                 ShowLog(ex.Message);
+            }
+        }
+
+        private bool TrySelectSingleEmulator()
+        {
+            Process selected = null;
+            int matchCount = 0;
+
+            try
+            {
+                foreach (Process process in Process.GetProcesses())
+                {
+                    try
+                    {
+                        if (!ProcessList_Form.IsSupportedInjectionProcess(process.ProcessName))
+                        {
+                            process.Dispose();
+                            continue;
+                        }
+
+                        selected?.Dispose();
+                        selected = process;
+                        matchCount++;
+                    }
+                    catch (Exception ex)
+                    {
+                        Socket_Operation.DoLog(
+                            nameof(TrySelectSingleEmulator),
+                            string.Format("读取进程 {0} 失败：{1}", process.Id, ex.Message));
+                        process.Dispose();
+                    }
+                }
+
+                if (matchCount != 1 || selected == null)
+                {
+                    return false;
+                }
+
+                Program.PID = selected.Id;
+                Program.PNAME = selected.ProcessName;
+                Program.PATH = string.Empty;
+                this.ShowSelectProcess();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(nameof(TrySelectSingleEmulator), ex.Message);
+                return false;
+            }
+            finally
+            {
+                selected?.Dispose();
             }
         }
 

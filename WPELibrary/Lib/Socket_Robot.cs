@@ -20,6 +20,7 @@ namespace WPELibrary.Lib
         private CancellationTokenSource cts;
         private DataTable RobotInstruction = new DataTable();
         private readonly ManualResetEventSlim robotStopped = new ManualResetEventSlim(true);
+        private readonly ManualResetEventSlim robotPauseGate = new ManualResetEventSlim(true);
         public BackgroundWorker Worker = new BackgroundWorker();
         private readonly WindowsInput.InputSimulator sim = new WindowsInput.InputSimulator();        
 
@@ -44,57 +45,57 @@ namespace WPELibrary.Lib
 
         #region//启动机器人
 
-        public void StartRobot(string RobotName, DataTable dtRobotInstruction, Dictionary<string, object> parameters)
+        public bool StartRobot(string RobotName, DataTable dtRobotInstruction, Dictionary<string, object> parameters)
         {
             try
             {
-                if (dtRobotInstruction.Rows.Count > 0)
+                if (dtRobotInstruction == null || dtRobotInstruction.Rows.Count <= 0 || this.Worker.IsBusy)
                 {
-                    if (!this.Worker.IsBusy)
-                    {
-                        this.Total_Instruction = 0;
-                        this.RobotName = RobotName;
-                        this.RobotInstruction = dtRobotInstruction;
+                    return false;
+                }
 
-                        if (parameters != null)
-                        {
-                            this._parameters = parameters;
-                        }
-                        else
-                        {
-                            this._parameters.Clear();
-                        }
+                this.Total_Instruction = 0;
+                this.RobotName = RobotName;
+                this.RobotInstruction = dtRobotInstruction.Copy();
 
-                        int iReturn = Socket_Cache.Robot.CheckRobotInstruction(this.RobotInstruction, true);
+                if (parameters != null)
+                {
+                    this._parameters = new Dictionary<string, object>(parameters);
+                }
+                else
+                {
+                    this._parameters.Clear();
+                }
 
-                        if (iReturn > -1)
-                        {
-                            string sLog = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_123), iReturn + 1, this.RobotName);
-                            Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, sLog);
-                        }
-                        else
-                        {
-                            this.cts = new CancellationTokenSource();
-                            this.robotStopped.Reset();
-                            try
-                            {
-                                this.Worker.RunWorkerAsync();
-                            }
-                            catch
-                            {
-                                this.robotStopped.Set();
-                                throw;
-                            }
+                int iReturn = Socket_Cache.Robot.CheckRobotInstruction(this.RobotInstruction, true);
+                if (iReturn > -1)
+                {
+                    string sLog = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_123), iReturn + 1, this.RobotName);
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, sLog);
+                    return false;
+                }
 
-                            string sLog = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_109), this.RobotName);
-                            Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, sLog);
-                        }
-                    }
-                }                
+                this.cts = new CancellationTokenSource();
+                this.robotPauseGate.Set();
+                this.robotStopped.Reset();
+                try
+                {
+                    this.Worker.RunWorkerAsync();
+                }
+                catch
+                {
+                    this.robotStopped.Set();
+                    throw;
+                }
+
+                string sLogStarted = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_109), this.RobotName);
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, sLogStarted);
+                return true;
             }
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                return false;
             }
         }
 
@@ -124,7 +125,34 @@ namespace WPELibrary.Lib
 
         public bool WaitForCompletion(int millisecondsTimeout)
         {
+            if (millisecondsTimeout == Timeout.Infinite)
+            {
+                this.robotStopped.Wait();
+                return true;
+            }
             return this.robotStopped.Wait(Math.Max(0, millisecondsTimeout));
+        }
+
+        public bool PauseRobot()
+        {
+            if (!this.Worker.IsBusy)
+            {
+                return false;
+            }
+
+            this.robotPauseGate.Reset();
+            return true;
+        }
+
+        public bool ResumeRobot()
+        {
+            this.robotPauseGate.Set();
+            return true;
+        }
+
+        public bool IsPaused
+        {
+            get { return !this.robotPauseGate.IsSet && this.Worker.IsBusy; }
         }
 
         #endregion
@@ -142,6 +170,7 @@ namespace WPELibrary.Lib
 
                     for (int i = 0; i < this.RobotInstruction.Rows.Count; i++)
                     {
+                        this.robotPauseGate.Wait(this.cts.Token);
                         if (Worker.CancellationPending)
                         {
                             e.Cancel = true;
@@ -160,7 +189,11 @@ namespace WPELibrary.Lib
 
                                     if (!string.IsNullOrEmpty(sContent))
                                     {
-                                        Guid SID = Guid.Parse(sContent);
+                                        if (!Guid.TryParse(sContent, out Guid SID) || SID == Guid.Empty)
+                                        {
+                                            throw new InvalidOperationException("机器人发送预设 GUID 无效。");
+                                        }
+
                                         Socket_Send ss = Socket_Cache.Send.DoSend(SID);
 
                                         if (ss != null)
@@ -230,14 +263,18 @@ namespace WPELibrary.Lib
                                             Random random = new Random();
                                             iDelay = random.Next(iFrom, iTo + 1);
 
-                                            Socket_Operation.DoSleepAsync(iDelay, this.cts.Token).Wait();
+                                            Socket_Operation.DoSleepAsync(iDelay, this.cts.Token)
+                                                .GetAwaiter()
+                                                .GetResult();
                                         }
                                     }
                                     else
                                     {
                                         if (int.TryParse(sContent, out iDelay))
                                         {
-                                            Socket_Operation.DoSleepAsync(iDelay, this.cts.Token).Wait();
+                                            Socket_Operation.DoSleepAsync(iDelay, this.cts.Token)
+                                                .GetAwaiter()
+                                                .GetResult();
                                         }
                                     }                                    
 
@@ -245,7 +282,7 @@ namespace WPELibrary.Lib
 
                                 case Socket_Cache.Robot.InstructionType.LoopStart:
 
-                                    if (int.TryParse(sContent, out int Count))
+                                    if (int.TryParse(sContent, out int Count) && Count > 0)
                                     {
                                         sLoopStart.Push(i);
 
@@ -257,6 +294,10 @@ namespace WPELibrary.Lib
                                         {
                                             dLoopCNT.Add(i, Count);
                                         }
+                                    }
+                                    else
+                                    {
+                                        throw new InvalidOperationException("机器人循环次数无效。");
                                     }
 
                                     break;
@@ -603,7 +644,11 @@ namespace WPELibrary.Lib
             }
             finally
             {
+                this.robotPauseGate.Set();
                 this.robotStopped.Set();
+                CancellationTokenSource completedCts = this.cts;
+                this.cts = null;
+                completedCts?.Dispose();
             }
         }
 

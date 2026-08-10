@@ -18,6 +18,9 @@ try {
     if ([WPELibrary.Lib.Socket_Operation]::PassWord_Decrypt($storedPassword) -ne "proxy-secret") {
         throw "Proxy password protection round-trip failed."
     }
+    if ([WPELibrary.Lib.Socket_Operation]::PassWord_Decrypt("legacy-plain-password") -ne "legacy-plain-password") {
+        throw "Plain-text remote password migration compatibility failed."
+    }
 
     $legacyMethod = [WPELibrary.Lib.Socket_Operation].GetMethod(
         "GetLegacyAESKeyFromString",

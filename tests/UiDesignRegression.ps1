@@ -33,8 +33,13 @@ else {
     $resolvedBuildDirectory
 }
 $applicationExe = Get-ChildItem -LiteralPath $applicationDirectory -Filter "*.exe" |
-    Where-Object { $_.Name -notlike "EasyHook*Svc.exe" } |
+    Where-Object { $_.Name -eq "小黑封包助手.exe" } |
     Select-Object -First 1 -ExpandProperty FullName
+if ([string]::IsNullOrEmpty($applicationExe)) {
+    $applicationExe = Get-ChildItem -LiteralPath $applicationDirectory -Filter "*.exe" |
+        Where-Object { $_.Name -notlike "EasyHook*Svc.exe" -and $_.Name -notlike "VisionLiveHarness*.exe" } |
+        Select-Object -First 1 -ExpandProperty FullName
+}
 if ([string]::IsNullOrEmpty($applicationExe)) {
     throw "Application executable not found in $applicationDirectory"
 }
@@ -1578,7 +1583,7 @@ Assert-True (-not $sweepPresetFormSource.Contains("NumericUpDown")) "The sweep i
 Assert-True ($sweepPresetFormSource.Contains("EditDetailsRequested")) "The sweep identity dialog must distinguish navigation to other settings."
 Assert-True ($sweepMainSource.Contains("new Socket_SendForm(packet, preset)")) "Other sweep settings must open the existing preset in the send page."
 Assert-True ($sendFormSource.Contains("this.UpdateCurrentByteSweepPreset();")) "The sweep edit page save action must update the current preset directly."
-Assert-True ($sendFormSource.Contains("Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();")) "Direct sweep saves must persist immediately."
+Assert-True ($sendFormSource.Contains("Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(")) "Direct sweep saves must persist immediately with rollback on failure."
 Assert-True ($sendFormSource.Contains("private void InitializeSendPanelLayout()")) "The send page must define its two-panel layout explicitly."
 Assert-True ($sendFormSource.Contains("this.gbSendSocket.Visible = false;")) "The legacy Socket panel must remain hidden without deleting its backing controls."
 Assert-True ($sendFormSource.Contains("this.tlpParameter.ColumnCount = 2;")) "The lower editor must reserve columns only for send and progression."
@@ -1599,12 +1604,12 @@ Assert-True ($sendWorkerSource.Contains("while (this.LoopCNT == 0 || loopIndex <
 Assert-True ($mainForm.Contains('e.Value = UiText("UI_ContinuousSend");')) "The packet list must label continuous presets accurately."
 Assert-True ([regex]::IsMatch(
     $cacheSource,
-    'ssReturn\.StartSend\(\s*ssi\.SName,\s*resolvedSocket,')) "Existing send presets must pass an immutable resolved Socket into the worker."
+    'ssReturn\.StartSend\(\s*sendName,\s*(?:useSystemSocket,\s*)?resolvedSocket,')) "Existing send presets must pass an immutable resolved Socket into the worker."
 Assert-True ($sendWorkerSource.Contains("this.resolvedSystemSocket = Math.Max(0, ResolvedSystemSocket);")) "A send worker must snapshot its resolved Socket before it starts."
 Assert-True ($sendWorkerSource.Contains("Socket = this.resolvedSystemSocket;")) "A running send worker must keep using its own Socket snapshot."
 Assert-True (-not $sendWorkerSource.Contains("Socket = Socket_Cache.System.SystemSocket;")) "A running send worker must not reread the mutable global Socket."
 Assert-True ($cacheSource.Contains("public static int FindLatestMatchingSocket(")) "Preset sends need a shared exact type-and-destination Socket matcher."
-Assert-True ($cacheSource.Contains("Socket_Cache.SocketList.ResolveCurrentSocket(ssi.SCollection);")) "Hotkey and direct preset sends must refresh the current Socket before sending."
+Assert-True ($cacheSource.Contains("Socket_Cache.SocketList.ResolveCurrentSocket(sendCollection)")) "Hotkey and direct preset sends must refresh the current Socket before sending."
 Assert-True ($cacheSource.Contains("_ = DoSendAsync(SID);")) "Hotkey sends must start asynchronously without blocking the UI dispatcher."
 Assert-True ($cacheSource.Contains("public static int ManualSystemSocket")) "Automatic matching must keep an explicit manual fallback separate from resolved state."
 Assert-True ($cacheSource.Contains("internal static int ResolveSystemSocket(int matchedSocket)")) "Manual fallback selection and resolved-state updates must remain atomic."

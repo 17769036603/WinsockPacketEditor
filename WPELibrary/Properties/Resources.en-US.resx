@@ -61,6 +61,10 @@
   <data name="UI_FilterEmpty" xml:space="preserve"><value>No filters yet. Click “Add filter”.</value></data>
   <data name="UI_ByteSweepEmpty" xml:space="preserve"><value>No byte-sweep presets in this group. Click “New preset”.</value></data>
   <data name="UI_MoveToGroup" xml:space="preserve"><value>Move to group</value></data>
+  <data name="UI_DeleteAssistant" xml:space="preserve"><value>Delete assistant</value></data>
+  <data name="UI_ConfirmDeleteAssistant" xml:space="preserve"><value>Delete assistant "{0}"?</value></data>
+  <data name="UI_DeleteAssistantFailed" xml:space="preserve"><value>Assistant deletion failed; the original list was restored.</value></data>
+  <data name="UI_AssistantSaveFailed" xml:space="preserve"><value>Assistant settings could not be saved; the original state was restored.</value></data>
   <data name="UI_GroupMustBeEmpty" xml:space="preserve"><value>Only empty groups can be deleted. Move assistants first.</value></data>
   <data name="Main_GeneralSettings" xml:space="preserve"><value>General</value></data>
   <data name="Main_AdvancedTools" xml:space="preserve"><value>Advanced tools</value></data>
@@ -401,7 +405,7 @@
   <data name="Vision_Capture" xml:space="preserve"><value>Capture preview</value></data>
   <data name="Vision_SaveScreenshot" xml:space="preserve"><value>Save screenshot</value></data>
   <data name="Vision_SaveProfile" xml:space="preserve"><value>Save region</value></data>
-  <data name="Vision_SelectWindowHint" xml:space="preserve"><value>No usable target window was found; injection will bind it automatically.</value></data>
+  <data name="Vision_SelectWindowHint" xml:space="preserve"><value>No target window is bound yet. Start and inject the target program first; it will be bound automatically.</value></data>
   <data name="Vision_WindowSelected" xml:space="preserve"><value>Selected: {0}, client area {1}×{2}</value></data>
   <data name="Vision_WindowAutoBound" xml:space="preserve"><value>Automatically bound to injected target window: {0}</value></data>
   <data name="Vision_CaptureSuccess" xml:space="preserve"><value>Capture succeeded: region ({0},{1}) {2}×{3}</value></data>
@@ -556,6 +560,8 @@
   <data name="Vision_MatchRunning" xml:space="preserve"><value>Matching...</value></data>
   <data name="Robot_ExecuteLogShow" xml:space="preserve"><value>Show execution log</value></data>
   <data name="Robot_ExecuteLogHide" xml:space="preserve"><value>Hide execution log</value></data>
+  <data name="Robot_InstructionPanelShow" xml:space="preserve"><value>Show instructions ({0})</value></data>
+  <data name="Robot_InstructionPanelHide" xml:space="preserve"><value>Hide instructions ({0})</value></data>
   <data name="Vision_SelectRegion" xml:space="preserve"><value>Select recognition area</value></data>
   <data name="Vision_Recapture" xml:space="preserve"><value>Recapture</value></data>
   <data name="Vision_AdvancedRegion" xml:space="preserve"><value>Advanced region settings</value></data>
@@ -603,4 +609,5 @@
   <data name="Vision_ClientSizeInvalid" xml:space="preserve"><value>size mismatch</value></data>
   <data name="Vision_ClientSizeUnavailable" xml:space="preserve"><value>client area unavailable</value></data>
   <data name="Vision_FixedCoordinatesRequired" xml:space="preserve"><value>Fixed-size mode requires pixel coordinates.</value></data>
+  <data name="UI_PresetSaveFailed" xml:space="preserve"><value>Preset could not be saved; the original state was restored.</value></data>
 </root>

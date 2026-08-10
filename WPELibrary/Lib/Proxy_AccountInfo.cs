@@ -225,5 +225,51 @@ namespace WPELibrary.Lib
         }
 
         #endregion
+
+        public Proxy_AccountInfo Clone()
+        {
+            return new Proxy_AccountInfo(
+                this.AID,
+                this.IsEnable,
+                this.UserName,
+                this.PassWord,
+                this.LoginTime,
+                this.LoginIP,
+                this.IPLocation,
+                this.IsLimitLinks,
+                this.LimitLinks,
+                this.IsLimitDevices,
+                this.LimitDevices,
+                this.IsExpiry,
+                this.ExpiryTime,
+                this.CreateTime)
+            {
+                IsOnLine = this.IsOnLine
+            };
+        }
+
+        public void CopyFrom(Proxy_AccountInfo source)
+        {
+            if (source == null)
+            {
+                return;
+            }
+
+            this.AID = source.AID;
+            this.IsEnable = source.IsEnable;
+            this.UserName = source.UserName;
+            this.PassWord = source.PassWord;
+            this.LoginTime = source.LoginTime;
+            this.LoginIP = source.LoginIP;
+            this.IPLocation = source.IPLocation;
+            this.IsLimitLinks = source.IsLimitLinks;
+            this.LimitLinks = source.LimitLinks;
+            this.IsLimitDevices = source.IsLimitDevices;
+            this.LimitDevices = source.LimitDevices;
+            this.IsExpiry = source.IsExpiry;
+            this.ExpiryTime = source.ExpiryTime;
+            this.CreateTime = source.CreateTime;
+            this.IsOnLine = source.IsOnLine;
+        }
     }
 }

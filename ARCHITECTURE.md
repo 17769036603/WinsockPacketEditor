@@ -4,6 +4,49 @@
 
 本项目的视觉自动化只负责读取目标窗口客户区截图、识别状态并执行已有的鼠标动作。它不依赖上传的 Android APK 私有代码、私有模型或运行时资源，也不负责抓包、注入或发送网络数据。
 
+## 移动端预设同步后端
+
+移动端的开发拆分、状态机、协议字段、错误处理和验收矩阵维护在 [`mobile/IMPLEMENTATION_PLAN.md`](mobile/IMPLEMENTATION_PLAN.md)；本文件只保留稳定的系统边界和后端事实。
+
+移动端第一阶段不在模拟器端执行抓包或滤镜。电脑端作为唯一预设数据源、管理端和执行端，通过 HTTPS OWIN Web API 提供完整只读预设同步和受控执行接口；模拟器端只展示并控制发送、递进、助手三类预设。模拟器可以缓存完整快照，用于显示名称、序号、分组、顺序、代码/封包内容、发送次数、发送间隔和对应模块参数，但不提供任何编辑写回能力：
+
+进程注入模式下，`MobileSync` 必须由注入目标进程中的 `Socket_Form` 承载，而不是由注入器主窗体承载。预设缓存、当前目标套接字和发送/递进/助手执行状态都位于注入端；`Socket_Form_Load` 在加载数据库配置后调用 `StartRemoteMGT`，只有系统配置中的远程管理开关已启用，并且存在 HTTPS 地址、用户名和密码时才会启动监听。注入器主窗体不提前占用同一 HTTPS 端口，避免移动端连到没有目标执行状态的进程。服务关闭时沿用现有 `StopRemoteMGT` 生命周期。
+
+`Socket_Form_Load` 只初始化目标窗体和移动服务，不自动调用 `StartHook_MainForm`；桌面用户仍通过现有 Hook 控件启动，移动端则由 `EnsureHookRunningForMobile` 按动作按需启动。这样打开封包窗体或进行 UI/模拟器审计不会隐式触发真实 Hook。
+
+- `GET /MobileSync/manifest`：返回发送、递进、助手预设数量及内容版本摘要。
+- `GET /MobileSync/snapshot`：返回三类预设的版本化完整只读 DTO（ID、名称、序号、分组、排序、代码/封包内容、发送参数、递进参数和助手指令配置）；不直接返回桌面端 XML、认证信息或未列入协议的内部状态。
+- `GET /MobileSync/runtime`：返回三类预设的当前运行状态。
+- `POST /MobileSync/send/{id}/start`、`POST /MobileSync/send/{id}/pause`、`POST /MobileSync/send/stop`：开始/恢复、暂停或停止电脑端发送预设。
+- `POST /MobileSync/progression/{id}/start`、`POST /MobileSync/progression/{id}/pause`、`POST /MobileSync/progression/stop`：开始/恢复、暂停或停止电脑端递进预设。
+- `POST /MobileSync/assistant/{id}/start`、`POST /MobileSync/assistant/{id}/pause`、`POST /MobileSync/assistant/stop`：开始/恢复、暂停或停止电脑端助手预设。
+
+同步协议的目标加固规则：`schemaVersion=2` 起，分组使用稳定 `groupId`，名称只负责显示；快照中的二进制内容统一使用 Base64，移动端按需生成十六进制显示；间隔统一为毫秒，`loopCount=0` 表示连续发送。`manifest` 同时提供 `revision`、`payloadSha256`、`payloadBytes` 和能力列表，三者基于不含时间和哈希元数据的规范化快照正文计算，客户端只在服务端声明支持完整快照/版本绑定且快照通过版本、哈希、大小和字段范围校验后原子替换缓存。
+
+启动接口必须携带移动端当前显示的 `expectedRevision`；电脑端发现版本不一致时返回 `preset_revision_mismatch`，不得执行移动端旧快照对应的请求。断网时移动端可以查看上一次完整快照，但不能把发送或停止显示为已成功；停止请求按 `jobId` 幂等处理，避免重复点击误停后续任务。
+
+发送、助手和递进的暂停恢复还必须匹配暂停任务保存的 `revision`。即使 `jobId` 仍然存在，只要预设内容已经变化，恢复请求也返回 `runtime_revision_mismatch`，要求移动端先更新快照，避免旧任务状态套用到新预设。
+
+版本摘要由三类完整预设快照的规范化内容计算 SHA-256；因此修改名称、序号、分组、顺序、发送封包/参数、递进参数或助手指令都会触发摘要变化。响应传输的是版本化的 allowlist DTO，不直接下发桌面端 XML；移动端没有本地快照时，首次连接会自动获取完整快照；已有缓存后重新连接只验证连接并刷新运行状态，不会自动替换本地快照。只有悬浮面板的“更新预设”会检查摘要并在变化时重新获取完整快照。移动端不写入预设，只能只读查看同步参数、选择已同步预设并请求电脑端执行或停止。
+
+当前源码的 `MobilePresetSnapshot` 已返回三类完整只读 DTO；移动端使用稳定分组 ID、应用私有 `SnapshotStore`、`expectedRevision`/`requestId`、哈希/大小校验和原子快照提交。`SyncCoordinator` 负责免密自动连接、缓存回放、运行状态未知态和 Activity/悬浮服务生命周期；移动端仍不提供预设写回。真实 HTTPS 证书和目标业务动作联调仍需在目标环境中验收。
+
+电脑端当前普通发送语义是：`LoopCNT` 统计完整遍历封包集合的轮数，`LoopCNT=0` 表示连续；`LoopINT` 在每个封包发送后等待。移动端显示和同步协议必须保持这一语义，不能把它误写成整轮间隔。
+
+预设快照同步与运行状态同步分离：完整快照不做后台自动拉取，运行状态则在 Activity 可见或悬浮服务运行期间独立轮询，以便悬浮面板保持按钮操作反馈而不改变用户当前选择的预设。
+
+`/MobileSync/*` 按用户确认的局域网边界完全匿名，不读取 Basic Auth，也不要求代理账号；其他 Web API 路由仍使用远程管理管理员账号。移动端客户端强制 HTTPS、禁止明文 HTTP 和自动降级重定向。远程服务启动/停止是幂等的，HTTPS 监听或证书配置失败时服务保持关闭并写入明确日志。
+
+移动端不再包含账号或密码输入、存储和请求头。应用使用保存的 HTTPS endpoint；首次没有 endpoint 时使用 `https://192.168.0.100:89/`。Activity、粘性悬浮服务或开机广播重建时会直接连接。主配置内容根节点永久为 `GONE`，Activity 使用透明窗口并立即退到后台，只留下悬浮控制；首次缺少悬浮窗权限时只打开 Android 系统授权页。
+
+移动端 snapshot 下载先依据 manifest 的 `payloadBytes` 加有限协议元数据空间限制响应体，再按规范化 UTF-8 正文做 SHA-256 和字节数校验；助手 `visionProfile` 即使为空也作为显式 `null` 保留，递进组合参数必须同时落在原始封包范围内。悬浮面板使用受限高度窗口，分组列表在面板内部滚动，避免浮层占满整个模拟器屏幕。
+
+发送和助手执行入口在 UI 线程捕获不可变预设快照后再启动后台 Worker，避免桌面编辑列表时跨线程枚举绑定集合；停止接口能覆盖启动中的任务，并通过 `/MobileSync/runtime` 暴露 `starting`、`running`、`stopping` 和当前预设 ID。停止没有活动任务时返回 `accepted: false`，客户端应以当前 runtime 为准。
+
+真实验收辅助程序采用 fail-closed 规则：只有目标进程可响应、模块枚举成功且实际发现 `WPELibrary.dll` 时才报告注入已证明；缺少任一条件均返回非零并标记 `target-injection-not-proven=true`。静态构建、UI 审计和模拟器启动不能替代这条真实目标验收。
+
+递进启动预检通过结构化错误码区分预设无效、运行时忙、封包窗体未就绪和目标套接字不可用；移动端据此显示对应的预设、忙碌或连接错误，不把执行前置条件伪装成预设错误。
+
 ## 识别链路
 
 ```mermaid
@@ -86,6 +129,12 @@ flowchart LR
 - 机器人指令表仍由现有 SQLite/XML 指令序列化保存，视觉步骤本体继续由 `RobotVisionCondition`/XML `VisionProfile` 保存。
 - Hook 过滤器的延迟发送/机器人任务使用有界队列，并在 Hook 停止时取消正在等待或运行的任务；队列槽位会持续占用到实际任务结束，避免只限制启动瞬间。
 
+## Hook I/O boundary
+
+- Overlapped and completion-routine `WSASend`/`WSARecv` calls pass through to Winsock unchanged; synchronous buffer rewriting is not safe for completion-driven I/O.
+- Receive-side interception returns `SOCKET_ERROR` with `WSAEINTR` rather than zero bytes, so a filtered packet is not misreported as a closed connection. The raw packet is still sent to the existing processing/logging path.
+- Multi-buffer synchronous send/receive paths preserve every `WSABUF.len` and clear unused replacement tails before the native call; TCP replay loops until the complete payload is sent or the native API fails.
+
 ## 配置与交付
 
 - OCR 引擎、Python Worker 脚本/运行时路径、ONNX 模型目录、检测阈值、识别阈值和最大图像边长写入 `RobotVisionProfile`，并同步到 XML profile。
@@ -107,3 +156,120 @@ only when the Python Worker engine is selected and require a short-lived,
 one-shot, window-bound authorization token issued after the existing UI confirmation.
 Python executable, worker script, and timeout settings persist in RobotVisionProfile
 SQLite columns and the XML profile format.
+
+## Mobile snapshot visual-profile boundary
+
+`MobilePresetSnapshotBuilder` does not serialize `Socket_VisionProfile` directly.
+The mobile snapshot uses an explicit JSON allow-list so persisted preset
+configuration remains readable while desktop runtime state stays local. The
+allow-list includes vision regions, OCR/matching thresholds, capture tuning,
+assistant step conditions, declarative action definitions, and PNG template
+resources. It excludes target window/process identity, run-scoped system-input
+authorization, desktop executable/model paths, failure-snapshot directories,
+and executable `IVisionAssistantAction` objects.
+
+## Mobile runtime and action concurrency boundary
+
+`SyncCoordinator` binds every asynchronous manifest, snapshot, runtime, and action
+publication to the current session generation, client instance, and profile key.
+After a profile switch, stale work may finish for cleanup but cannot publish into
+the new Activity or floating panel. Runtime control remains disabled until all
+three module statuses have a known state.
+
+`MobileSync/runtime` is parsed fail-closed: all three module objects are required,
+each state must be recognized, and known boolean fields must retain boolean JSON
+types. `isBusy` is not used as the `running` flag because paused and stopping
+tasks are also busy. Busy states must include a non-empty `presetId`, `jobId`,
+and `revision`; the desktop DTO explicitly exposes `pausing`, and its `isBusy`
+value includes the pausing transition. The client also rejects explicit boolean
+flags that contradict `state`. Missing or malformed runtime data becomes
+`UNKNOWN`, and is never rendered as an idle/stopped state.
+
+Mobile action admission uses `expectedRevision`, request-scoped `requestId`, and
+job/preset identity checks. The desktop request cache performs atomic per-request
+deduplication while allowing unrelated request IDs to proceed independently;
+cached rejected results retain their structured conflict response. Progression
+publishes the task revision immediately after job creation and before the worker
+can publish its first runtime sample, preventing a false stale-revision result.
+Unexpected desktop action exceptions are converted into a cached non-accepted
+result so a replay cannot repeat an operation with an unknown outcome.
+Pause and resume admission rechecks the active task revision on the desktop
+side. Stop is a job-scoped cleanup operation and remains available across a
+revision change; duplicate progression stops remain accepted for the same
+non-empty job ID even after the completed task has cleared from the current
+runtime snapshot. When a mobile snapshot is newer than a busy runtime, the
+client disables start/pause/resume while keeping stop available for cleanup.
+
+The Activity never reveals its retired setup content. It restores the saved or
+default HTTPS endpoint, starts the overlay as soon as Android grants overlay
+permission, and moves itself behind the game. The sticky service and boot
+receiver use the same coordinator, so process or emulator restarts reconnect
+without credentials and keep the floating control as the only product surface.
+
+## Dynamic fields and variables V1
+
+Dynamic variables are implemented as an additive layer over the existing
+WinForms, HexBox, SQLite, filter, and send-preset paths. `DynamicVariableDefinition`
+owns a stable internal GUID and an editable uppercase symbol; `ExtractionRule`
+stores fixed pattern bytes, a wildcard mask, packet type, and one or more
+non-overlapping `DynamicField` ranges. `PatternMatcher` groups validated rules
+by packet type and packet length, and `VariableExtractor` extracts all fields
+from a matching final display buffer without database or UI access on the hot
+path.
+
+`WinSockHook` defers existing filter send/robot actions in their original
+order, processes dynamic extraction after the existing filter transformation,
+atomically updates the in-memory current values, and only then releases the
+deferred actions. `SpeedMode` and `NoModify_NoDisplay` remain outside dynamic
+extraction. History values are deduplicated and bounded in memory before batch
+SQLite persistence; current values are session-only and are never restored from
+history on startup.
+
+Send presets retain their original `Buffer` BLOB and store optional
+`PresetVariableBinding` metadata plus `SortOrder`. At task admission,
+`VariableResolver` validates every binding and resolves a single immutable
+`DynamicVariableSnapshot`; the resolved clone is then passed through the
+existing socket send and operation paths. Continuous, multi-packet, robot, and
+advanced-filter preset sends therefore share the same snapshot boundary, while
+filter search/modify syntax remains unchanged.
+
+The packet-detail HexBox and send editor expose dynamic-field/binding context
+menus and combined ordinary-annotation/dynamic-field styling. Settings contains
+an independent variable-center page for current values, rules, discovered
+values, rule testing/editing/deletion, session pause, current-value clearing,
+and labels. SQLite/XML backup and preset migration preserve old fixed presets;
+old files without variable metadata load as ordinary data, while exports with
+bindings warn that older software will ignore those bindings.
+
+The review hardening path rejects malformed or duplicate variable definitions,
+duplicate extraction sources, invalid packet directions, and invalid backup
+rules before replacing the in-memory state. Send resolution reports the exact
+failed variable ID/symbol, and manual preset sends surface the structured error;
+filter/robot-triggered sends retain the existing asynchronous path and log the
+same error. Dynamic-field and binding UI entry points validate buffer ranges,
+null fields, source ownership, and weak fixed-byte patterns before mutating
+definitions or rules. Saving and history flushing are skipped until the
+dynamic-variable database has completed its initial load, preventing a failed
+startup load from overwriting existing data.
+
+## Persistence and service hardening
+
+Preset and mapping mutations use a snapshot/mutate/atomic-save/rollback boundary.
+The boundary covers send, filter, byte-sweep, robot, proxy-account, local-map and
+remote-map collections, including ordering, folders, enabled state and imported
+configuration. Startup loaders preflight table reads and parse into temporary
+collections before replacing live lists; a failed or incomplete load marks the
+system load incomplete and disables exit-time persistence, so an empty or partial
+memory view cannot overwrite an existing database.
+
+Configuration XML is validated before scalar mutation, and dynamic-variable
+persistence reports a Boolean result to its UI callers. Backup import therefore
+only persists a configuration section after its validation succeeds; UI paths
+surface a save failure instead of treating an in-memory change as durable.
+
+The TCP/TLS fallback host is bounded independently of the OWIN route layer:
+TLS 1.2, 15-second handshake/request deadlines, 64 KiB request headers, 4 MiB
+request bodies, 16 MiB response bodies, and 64 active clients. Active clients are
+tracked and closed during disposal, while `MobileSync` remains limited to local
+network addresses and an 8 MiB canonical snapshot. The ordinary Web API routes
+remain behind administrator authentication.

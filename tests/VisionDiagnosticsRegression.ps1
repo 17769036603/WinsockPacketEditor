@@ -1,11 +1,17 @@
 param(
     [string]$Configuration = "Release",
-    [string]$OutputDirectory = ""
+    [string]$OutputDirectory = "",
+    [string]$LibraryPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$libraryDll = Join-Path $repo "WPELibrary\bin\$Configuration\WPELibrary.dll"
+$libraryDll = if ([string]::IsNullOrWhiteSpace($LibraryPath)) {
+    Join-Path $repo "WPELibrary\bin\$Configuration\WPELibrary.dll"
+}
+else {
+    [System.IO.Path]::GetFullPath($LibraryPath)
+}
 $resolvedOutput = if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     Join-Path $repo ("WPELibrary\work\VisionDiagnosticsRegression\" + [Guid]::NewGuid().ToString("N"))
 }
@@ -65,6 +71,10 @@ try {
     $profile.CaptureSettings.MinimumIntervalMilliseconds = 1000
     $profile.CaptureSettings.SkipUnchangedFrames = $true
 
+    $form.Activate()
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 100
+    [System.Windows.Forms.Application]::DoEvents()
     $capture = [WPELibrary.Lib.Vision.VisionWindowService]::CaptureClientRegion(
         $form.Handle,
         $profile.Region)

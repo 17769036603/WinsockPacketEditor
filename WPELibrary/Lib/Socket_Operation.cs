@@ -34,6 +34,8 @@ namespace WPELibrary.Lib
 {   
     public static class Socket_Operation
     {
+        private static readonly object RemoteMgtSync = new object();
+
         public static string GetUiText(string key)
         {
             return WPELibrary.Properties.Resources.ResourceManager.GetString(key) ?? key;
@@ -335,55 +337,122 @@ namespace WPELibrary.Lib
 
         #region//启动远程管理
 
-        public static void StartRemoteMGT()
+        public static bool StartRemoteMGT()
         {
-            try
+            lock (RemoteMgtSync)
             {
-                if (Socket_Cache.System.IsRemote)
+                if (Socket_Cache.System.WebServer != null)
                 {
-                    if (!string.IsNullOrEmpty(Socket_Cache.System.Remote_URL) &&
-                        !string.IsNullOrEmpty(Socket_Cache.System.Remote_UserName) &&
-                        !string.IsNullOrEmpty(Socket_Cache.System.Remote_PassWord))
-                    {
-                        string sLog = string.Empty;
+                    return true;
+                }
 
+                if (!Socket_Cache.System.IsRemote)
+                {
+                    return false;
+                }
+
+                if (string.IsNullOrWhiteSpace(Socket_Cache.System.Remote_URL) ||
+                    string.IsNullOrWhiteSpace(Socket_Cache.System.Remote_UserName) ||
+                    string.IsNullOrWhiteSpace(Socket_Cache.System.Remote_PassWord))
+                {
+                    Socket_Operation.DoLog_Proxy(
+                        nameof(StartRemoteMGT),
+                        "远程管理配置不完整，服务未启动。");
+                    return false;
+                }
+
+                if (!Uri.TryCreate(
+                        Socket_Cache.System.Remote_URL,
+                        UriKind.Absolute,
+                        out Uri remoteUri) ||
+                    !string.Equals(remoteUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+                {
+                    Socket_Operation.DoLog_Proxy(
+                        nameof(StartRemoteMGT),
+                        "远程管理仅允许使用 HTTPS 地址。");
+                    return false;
+                }
+
+                IDisposable server = null;
+                try
+                {
+                    server = WebApp.Start<Socket_Web>(Socket_Cache.System.Remote_URL);
+                    Socket_Operation.InitCCProxy_HTML();
+                    Socket_Cache.System.WebServer = server;
+
+                    Socket_Operation.DoLog(
+                        MethodBase.GetCurrentMethod().Name,
+                        string.Format(
+                            MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_178),
+                            Socket_Cache.System.Remote_URL));
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    if (server != null)
+                    {
                         try
                         {
-                            Socket_Cache.System.WebServer = WebApp.Start<Socket_Web>(Socket_Cache.System.Remote_URL);
-                            Socket_Operation.InitCCProxy_HTML();
-
-                            sLog = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_178), Socket_Cache.System.Remote_URL);
+                            server.Dispose();
                         }
-                        catch
+                        catch (Exception disposeException)
                         {
-                            sLog = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_179), Process.GetCurrentProcess().ProcessName);
+                            Socket_Operation.DoLog(
+                                nameof(StartRemoteMGT),
+                                disposeException.Message);
                         }
+                    }
 
-                        Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, sLog);
+                    Socket_Cache.System.WebServer = null;
+                    try
+                    {
+                        IDisposable tcpServer = Socket_TcpOwinHost.Start(remoteUri);
+                        Socket_Operation.InitCCProxy_HTML();
+                        Socket_Cache.System.WebServer = tcpServer;
+                        Socket_Operation.DoLog(
+                            nameof(StartRemoteMGT),
+                            string.Format(
+                                "HTTP.sys 监听启动失败（{0}），已切换到无需 URL ACL 的 HTTPS 后备主机：{1}",
+                                ex.Message,
+                                Socket_Cache.System.Remote_URL));
+                        return true;
+                    }
+                    catch (Exception fallbackException)
+                    {
+                        Socket_Operation.DoLog(
+                            nameof(StartRemoteMGT),
+                            string.Format(
+                                "远程管理启动失败：HTTP.sys={0}；HTTPS 后备主机={1}。请检查证书和端口占用。",
+                                ex.Message,
+                                fallbackException.Message));
+                        return false;
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
         }
 
         public static void StopRemoteMGT(Socket_Cache.System.SystemMode FromMode)
         {
-            try
+            StopRemoteMGT();
+        }
+
+        public static void StopRemoteMGT()
+        {
+            lock (RemoteMgtSync)
             {
-                if (FromMode == Socket_Cache.System.StartMode)
+                IDisposable server = Socket_Cache.System.WebServer;
+                Socket_Cache.System.WebServer = null;
+                if (server != null)
                 {
-                    if (Socket_Cache.System.WebServer != null)
+                    try
                     {
-                        Socket_Cache.System.WebServer.Dispose();
+                        server.Dispose();
                     }
-                }                         
-            }
-            catch (Exception ex)
-            {
-                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    catch (Exception ex)
+                    {
+                        Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    }
+                }
             }
         }
 
@@ -466,25 +535,34 @@ namespace WPELibrary.Lib
 
                     foreach (Process p in procesArr)
                     {
-                        string sPName = p.ProcessName;
-                        string sPPath = Socket_Operation.GetProcessPath(p);                        
-                        int iPID = p.Id;
-                        Image iICO = IconFromFile(p);
-                        bool isWin64 = Socket_Operation.IsWin64Process(iPID);
-                        string injectionLibrary = Path.Combine(
-                            Path.GetDirectoryName(typeof(Socket_Operation).Assembly.Location),
-                            Socket_Cache.System.WPE64_DLL);
+                        try
+                        {
+                            string sPName = p.ProcessName;
+                            string sPPath = Socket_Operation.GetProcessPath(p);
+                            int iPID = p.Id;
+                            Image iICO = IconFromFile(p);
+                            bool isWin64 = Socket_Operation.IsWin64Process(iPID);
+                            string injectionLibrary = Path.Combine(
+                                Path.GetDirectoryName(typeof(Socket_Operation).Assembly.Location),
+                                Socket_Cache.System.WPE64_DLL);
 
-                        DataRow dr = dtProcessList.NewRow();
-                        dr["ICO"] = iICO;
-                        dr["PName"] = sPName;
-                        dr["PID"] = iPID;
-                        dr["PPath"] = sPPath;
-                        dr["PArch"] = isWin64 ? "x64" : "x86";
-                        dr["PCompatibility"] = File.Exists(injectionLibrary)
-                            ? (MultiLanguage.DefaultLanguage == "en-US" ? "Ready" : "可注入")
-                            : (MultiLanguage.DefaultLanguage == "en-US" ? "Missing DLL" : "缺少 DLL");
-                        dtProcessList.Rows.Add(dr);
+                            DataRow dr = dtProcessList.NewRow();
+                            dr["ICO"] = iICO;
+                            dr["PName"] = sPName;
+                            dr["PID"] = iPID;
+                            dr["PPath"] = sPPath;
+                            dr["PArch"] = isWin64 ? "x64" : "x86";
+                            dr["PCompatibility"] = File.Exists(injectionLibrary)
+                                ? (MultiLanguage.DefaultLanguage == "en-US" ? "Ready" : "可注入")
+                                : (MultiLanguage.DefaultLanguage == "en-US" ? "Missing DLL" : "缺少 DLL");
+                            dtProcessList.Rows.Add(dr);
+                        }
+                        catch (Exception ex)
+                        {
+                            Socket_Operation.DoLog(
+                                nameof(GetProcess),
+                                string.Format("跳过进程 {0}：{1}", p.Id, ex.Message));
+                        }
                     }
 
                     DataView dv = dtProcessList.DefaultView;
@@ -627,8 +705,16 @@ namespace WPELibrary.Lib
                     return Encoding.UTF8.GetString(plainBytes);
                 }
 
-                // Import and authenticate passwords written by older releases.
-                return LegacyPassWord_Decrypt(encryptedText);
+                // Import and authenticate passwords written by older releases. Some
+                // database/XML files also stored this field as plain text before
+                // password protection was introduced, so keep that format usable.
+                string legacyPlainText = LegacyPassWord_Decrypt(encryptedText);
+                return string.Equals(
+                        LegacyPassWord_Encrypt(legacyPlainText),
+                        encryptedText,
+                        StringComparison.Ordinal)
+                    ? legacyPlainText
+                    : encryptedText;
             }
             catch (Exception ex)
             {
@@ -659,6 +745,24 @@ namespace WPELibrary.Lib
         internal static string LegacyPassWord_EncryptForCompatibility(string plainText)
         {
             return string.IsNullOrEmpty(plainText) ? string.Empty : LegacyPassWord_Encrypt(plainText);
+        }
+
+        internal static string PassWord_EncryptForPortableExport(string storedPassword)
+        {
+            if (string.IsNullOrEmpty(storedPassword))
+            {
+                return string.Empty;
+            }
+
+            string plainText = PassWord_Decrypt(storedPassword);
+            if (string.IsNullOrEmpty(plainText))
+            {
+                // Preserve an unknown legacy value instead of silently erasing
+                // it when the current Windows user cannot unwrap DPAPI data.
+                plainText = storedPassword;
+            }
+
+            return LegacyPassWord_EncryptForCompatibility(plainText);
         }
 
         private static string LegacyPassWord_Decrypt(string encryptedText)
@@ -3504,14 +3608,7 @@ namespace WPELibrary.Lib
 
         public static async Task DoSleepAsync(int MilliSecond, CancellationToken cancellationToken)
         {
-            try
-            {
-                await Task.Delay(MilliSecond, cancellationToken);
-            }
-            catch (TaskCanceledException)
-            {
-                //
-            }
+            await Task.Delay(MilliSecond, cancellationToken);
         }        
 
         #endregion
@@ -3526,12 +3623,26 @@ namespace WPELibrary.Lib
             {
                 if (socket != null && !bData.IsEmpty)
                 {
-                    iReturn = socket.Send(bData.ToArray(), SocketFlags.None);
+                    byte[] data = bData.ToArray();
+                    while (iReturn < data.Length)
+                    {
+                        int bytesSent = socket.Send(
+                            data,
+                            iReturn,
+                            data.Length - iReturn,
+                            SocketFlags.None);
+                        if (bytesSent <= 0)
+                        {
+                            break;
+                        }
+
+                        iReturn += bytesSent;
+                    }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                //
+                Socket_Operation.DoLog_Proxy(nameof(SendTCPData), ex.Message);
             }
 
             return iReturn;
@@ -4521,6 +4632,31 @@ namespace WPELibrary.Lib
 
         #region//发送封包
 
+        private static int SendNativeTcp(
+            int socket,
+            IntPtr buffer,
+            int length,
+            SocketFlags flags,
+            bool useWinsock1)
+        {
+            int totalSent = 0;
+            while (totalSent < length)
+            {
+                IntPtr currentBuffer = IntPtr.Add(buffer, totalSent);
+                int bytesSent = useWinsock1
+                    ? WSock32.send(socket, currentBuffer, length - totalSent, flags)
+                    : WS2_32.send(socket, currentBuffer, length - totalSent, flags);
+                if (bytesSent <= 0)
+                {
+                    break;
+                }
+
+                totalSent += bytesSent;
+            }
+
+            return totalSent;
+        }
+
         public static unsafe bool SendPacket(int Socket, Socket_Cache.SocketPacket.PacketType packetType, string sIPFrom, string sIPTo, byte[] bSendBuffer)
         {
             bool bReturn = false;
@@ -4528,7 +4664,7 @@ namespace WPELibrary.Lib
 
             try
             {
-                if (Socket > 0 && bSendBuffer.Length > 0)
+                if (Socket > 0 && bSendBuffer != null && bSendBuffer.Length > 0)
                 {
                     ipSend = Marshal.AllocHGlobal(bSendBuffer.Length);
                     Marshal.Copy(bSendBuffer, 0, ipSend, bSendBuffer.Length);
@@ -4560,14 +4696,14 @@ namespace WPELibrary.Lib
                     {
                         case Socket_Cache.SocketPacket.PacketType.WS1_Send:
                         case Socket_Cache.SocketPacket.PacketType.WS1_Recv:
-                            res = WSock32.send(Socket, ipSend, bSendBuffer.Length, SocketFlags.None);
+                            res = SendNativeTcp(Socket, ipSend, bSendBuffer.Length, SocketFlags.None, true);
                             break;
                         case Socket_Cache.SocketPacket.PacketType.WS2_Send:
                         case Socket_Cache.SocketPacket.PacketType.WS2_Recv:
                         case Socket_Cache.SocketPacket.PacketType.WSASend:
                         case Socket_Cache.SocketPacket.PacketType.WSARecv:
                         case Socket_Cache.SocketPacket.PacketType.WSARecvEx:
-                            res = WS2_32.send(Socket, ipSend, bSendBuffer.Length, SocketFlags.None);
+                            res = SendNativeTcp(Socket, ipSend, bSendBuffer.Length, SocketFlags.None, false);
                             break;
                         case Socket_Cache.SocketPacket.PacketType.WS1_SendTo:
                         case Socket_Cache.SocketPacket.PacketType.WS1_RecvFrom:
@@ -4589,7 +4725,7 @@ namespace WPELibrary.Lib
                             break;
                     }
 
-                    if (res > 0)
+                    if (res == bSendBuffer.Length)
                     {
                         bReturn = true;
                     }

@@ -44,6 +44,11 @@ namespace WPELibrary.Lib.WebAPI
         {
             try
             {
+                if (pai == null)
+                {
+                    return BadRequest(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_181));
+                }
+
                 if (Socket_Cache.ProxyAccount.CheckProxyAccount_Exist(pai.UserName))
                 {
                     return BadRequest(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_177));
@@ -57,30 +62,33 @@ namespace WPELibrary.Lib.WebAPI
                 }
 
                 pai.PassWord = Socket_Operation.PassWord_Encrypt(pai.PassWord);
-                bool bOK = Socket_Cache.ProxyAccount.AddProxyAccount(
-                    Guid.NewGuid(), 
-                    pai.IsEnable, 
-                    pai.UserName, 
-                    pai.PassWord, 
-                    pai.LoginTime, 
-                    string.Empty, 
-                    string.Empty, 
-                    pai.IsLimitLinks,
-                    pai.LimitLinks,
-                    pai.IsLimitDevices,
-                    pai.LimitDevices,
-                    pai.IsExpiry, 
-                    pai.ExpiryTime, 
-                    DateTime.Now);
+                bool mutationSucceeded = false;
+                bool saved = Socket_Cache.ProxyAccount.TryApplyListChangeAndSave(
+                    () => mutationSucceeded = Socket_Cache.ProxyAccount.AddProxyAccount(
+                        Guid.NewGuid(),
+                        pai.IsEnable,
+                        pai.UserName,
+                        pai.PassWord,
+                        pai.LoginTime,
+                        string.Empty,
+                        string.Empty,
+                        pai.IsLimitLinks,
+                        pai.LimitLinks,
+                        pai.IsLimitDevices,
+                        pai.LimitDevices,
+                        pai.IsExpiry,
+                        pai.ExpiryTime,
+                        DateTime.Now));
 
-                if (bOK)
+                if (mutationSucceeded && saved)
                 {
                     return Ok(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_183));
                 }
-                else
+                if (!mutationSucceeded)
                 {
                     return BadRequest(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_181));
                 }
+                return InternalServerError();
             }
             catch (Exception ex)
             {
@@ -99,16 +107,19 @@ namespace WPELibrary.Lib.WebAPI
 
         public IHttpActionResult DeleteProxyAccount([FromBody] Guid AID)
         {
-            bool bOK = Socket_Cache.ProxyAccount.DeleteProxyAccount_ByAccountID(AID);
+            bool mutationSucceeded = false;
+            bool saved = Socket_Cache.ProxyAccount.TryApplyListChangeAndSave(
+                () => mutationSucceeded = Socket_Cache.ProxyAccount.DeleteProxyAccount_ByAccountID(AID));
 
-            if (bOK)
+            if (mutationSucceeded && saved)
             {
                 return Ok(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_184));
             }
-            else
+            if (!mutationSucceeded)
             {
                 return BadRequest(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_182));
             }
+            return InternalServerError();
         }
 
         #endregion
@@ -120,6 +131,11 @@ namespace WPELibrary.Lib.WebAPI
 
         public IHttpActionResult UpdateProxyAccount([FromBody] Proxy_AccountInfo pai)
         {
+            if (pai == null)
+            {
+                return BadRequest(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_195));
+            }
+
             if (pai.ExpiryTime == null)
             {
                 pai.ExpiryTime = DateTime.Now;
@@ -140,25 +156,28 @@ namespace WPELibrary.Lib.WebAPI
                 pai.PassWord = existing.PassWord;
             }
 
-            bool bOK = Socket_Cache.ProxyAccount.UpdateProxyAccount_ByAccountID(
-                pai.AID, 
-                pai.IsEnable, 
-                pai.PassWord, 
-                pai.IsLimitLinks,
-                pai.LimitLinks,
-                pai.IsLimitDevices,
-                pai.LimitDevices,
-                pai.IsExpiry, 
-                pai.ExpiryTime);
+            bool mutationSucceeded = false;
+            bool saved = Socket_Cache.ProxyAccount.TryApplyListChangeAndSave(
+                () => mutationSucceeded = Socket_Cache.ProxyAccount.UpdateProxyAccount_ByAccountID(
+                    pai.AID,
+                    pai.IsEnable,
+                    pai.PassWord,
+                    pai.IsLimitLinks,
+                    pai.LimitLinks,
+                    pai.IsLimitDevices,
+                    pai.LimitDevices,
+                    pai.IsExpiry,
+                    pai.ExpiryTime));
 
-            if (bOK)
+            if (mutationSucceeded && saved)
             {
                 return Ok(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_194));
             }
-            else
+            if (!mutationSucceeded)
             {
                 return BadRequest(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_195));
-            }            
+            }
+            return InternalServerError();
         }
 
         #endregion

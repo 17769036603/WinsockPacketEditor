@@ -213,6 +213,12 @@
     <Compile Include="Lib\NativeMethods\WS2_32.cs" />
     <Compile Include="Lib\NativeMethods\WSock32.cs" />
     <Compile Include="Lib\Socket_Send.cs" />
+    <Compile Include="Lib\DynamicVariableModels.cs" />
+    <Compile Include="Lib\DynamicVariableEngine.cs" />
+    <Compile Include="Lib\DynamicVariablePersistence.cs" />
+    <Compile Include="Lib\DynamicVariableSerialization.cs" />
+    <Compile Include="DynamicVariableUi.cs" />
+    <Compile Include="DynamicVariableCenterControl.cs" />
     <Compile Include="Lib\Socket_ByteSweepEngine.cs" />
     <Compile Include="Lib\Socket_ByteSweepPresetInfo.cs" />
     <Compile Include="Lib\Socket_ByteSweepRuntime.cs" />
@@ -226,9 +232,11 @@
     <Compile Include="Lib\WebAPI\CCProxy_Controller.cs" />
     <Compile Include="Lib\WebAPI\SocketInfo_Controller.cs" />
     <Compile Include="Lib\WebAPI\Socket_Web.cs" />
+    <Compile Include="Lib\WebAPI\Socket_TcpOwinHost.cs" />
     <Compile Include="Lib\WebAPI\ProxyInfo_Controller.cs" />
     <Compile Include="Lib\WebAPI\ProxyAccount_Controller.cs" />
     <Compile Include="Lib\WebAPI\SystemInfo_Controller.cs" />
+    <Compile Include="Lib\WebAPI\MobileSync_Controller.cs" />
     <Compile Include="Properties\Resources.Designer.cs">
       <AutoGen>True</AutoGen>
       <DesignTime>True</DesignTime>

@@ -11,6 +11,43 @@ using WPELibrary.Lib;
 
 namespace WPELibrary
 {
+    public sealed class MobileByteSweepStartResult
+    {
+        public bool Accepted { get; set; }
+        public Guid JobId { get; set; }
+        public string Error { get; set; }
+        public string ErrorCode { get; set; }
+
+        public static MobileByteSweepStartResult Failure(string error)
+        {
+            return Failure(error, "preset_invalid");
+        }
+
+        public static MobileByteSweepStartResult Failure(string error, string errorCode)
+        {
+            return new MobileByteSweepStartResult
+            {
+                Accepted = false,
+                JobId = Guid.Empty,
+                Error = error ?? string.Empty,
+                ErrorCode = string.IsNullOrWhiteSpace(errorCode)
+                    ? "preset_invalid"
+                    : errorCode
+            };
+        }
+
+        public static MobileByteSweepStartResult Success(Guid jobId)
+        {
+            return new MobileByteSweepStartResult
+            {
+                Accepted = true,
+                JobId = jobId,
+                Error = string.Empty,
+                ErrorCode = string.Empty
+            };
+        }
+    }
+
     public partial class Socket_Form
     {
         private TabPage tpByteSweepList;
@@ -473,10 +510,19 @@ namespace WPELibrary
                 return;
             }
 
-            if (!Socket_Cache.ByteSweepList.AddFolder(folder.Trim()))
+            bool added = false;
+            bool saved = Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                () => added = Socket_Cache.ByteSweepList.AddFolder(folder.Trim()));
+            if (!added)
             {
                 MessageBox.Show(this, UiText("UI_GroupExists"), UiText("UI_SweepGroups"),
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (!saved)
+            {
+                MessageBox.Show(this, UiText("UI_PresetSaveFailed"), UiText("UI_Save"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
             this.selectedByteSweepFolder = folder.Trim();
@@ -506,7 +552,13 @@ namespace WPELibrary
                 return;
             }
 
-            Socket_Cache.ByteSweepList.RenameFolder(oldName, newName.Trim());
+            if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                () => Socket_Cache.ByteSweepList.RenameFolder(oldName, newName.Trim())))
+            {
+                MessageBox.Show(this, UiText("UI_PresetSaveFailed"), UiText("UI_Save"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
             this.selectedByteSweepFolder = newName.Trim();
             this.RefreshByteSweepFolderTree();
         }
@@ -526,7 +578,13 @@ namespace WPELibrary
                 return;
             }
 
-            Socket_Cache.ByteSweepList.RemoveFolder(this.selectedByteSweepFolder);
+            if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                () => Socket_Cache.ByteSweepList.RemoveFolder(this.selectedByteSweepFolder)))
+            {
+                MessageBox.Show(this, UiText("UI_PresetSaveFailed"), UiText("UI_Save"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
             this.selectedByteSweepFolder = "__ALL__";
             this.RefreshByteSweepFolderTree();
         }
@@ -596,8 +654,13 @@ namespace WPELibrary
             {
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
-                    Socket_Cache.ByteSweepList.AddPreset(dialog.Result);
-                    Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
+                    if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                        () => Socket_Cache.ByteSweepList.AddPreset(dialog.Result)))
+                    {
+                        MessageBox.Show(this, UiText("UI_PresetSaveFailed"), UiText("UI_Save"),
+                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
                     this.selectedByteSweepFolder = dialog.Result.BFolder;
                     this.RefreshByteSweepFolderTree();
                     this.tcAutomation.SelectedTab = this.tpByteSweepList;
@@ -625,8 +688,13 @@ namespace WPELibrary
             {
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
-                    Socket_Cache.ByteSweepList.UpdatePreset(preset, dialog.Result);
-                    Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
+                    if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                        () => Socket_Cache.ByteSweepList.UpdatePreset(preset, dialog.Result)))
+                    {
+                        MessageBox.Show(this, UiText("UI_PresetSaveFailed"), UiText("UI_Save"),
+                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
                     this.selectedByteSweepFolder = preset.BFolder;
                     this.RefreshByteSweepFolderTree();
                     if (dialog.EditDetailsRequested)
@@ -684,8 +752,13 @@ namespace WPELibrary
             if (MessageBox.Show(this, UiText("UI_ConfirmDeleteSweepPreset"), UiText("UI_DeleteSweepPreset"),
                 MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK)
             {
-                Socket_Cache.ByteSweepList.lstPresets.Remove(preset);
-                Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
+                if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                    () => Socket_Cache.ByteSweepList.lstPresets.Remove(preset)))
+                {
+                    MessageBox.Show(this, UiText("UI_PresetSaveFailed"), UiText("UI_Save"),
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
                 this.RefreshByteSweepView();
             }
         }
@@ -694,11 +767,18 @@ namespace WPELibrary
         {
             List<Socket_ByteSweepPresetInfo> items = this.GetCurrentByteSweepPresets();
             bool select = !items.Any() || !items.All(item => item.IsEnable);
-            foreach (Socket_ByteSweepPresetInfo item in items)
+            if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(() =>
             {
-                item.IsEnable = select;
+                foreach (Socket_ByteSweepPresetInfo item in items)
+                {
+                    item.IsEnable = select;
+                }
+            }))
+            {
+                MessageBox.Show(this, UiText("UI_PresetSaveFailed"), UiText("UI_Save"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
             }
-            Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
             this.RefreshByteSweepView();
         }
 
@@ -718,8 +798,13 @@ namespace WPELibrary
 
             if (columnName == "cByteSweepEnable" && !this.byteSweepRunning)
             {
-                preset.IsEnable = !preset.IsEnable;
-                Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
+                if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                    () => preset.IsEnable = !preset.IsEnable))
+                {
+                    MessageBox.Show(this, UiText("UI_PresetSaveFailed"), UiText("UI_Save"),
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
                 this.RefreshByteSweepView();
             }
             else if (columnName == "cByteSweepSend")
@@ -771,11 +856,18 @@ namespace WPELibrary
                 .Where(item => item != null && item != edited)
                 .ToList();
             items.Insert(Math.Min(requestedOrder - 1, items.Count), edited);
-            for (int index = 0; index < items.Count; index++)
+            if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(() =>
             {
-                items[index].BSortOrder = index + 1;
+                for (int index = 0; index < items.Count; index++)
+                {
+                    items[index].BSortOrder = index + 1;
+                }
+            }))
+            {
+                MessageBox.Show(this, UiText("UI_PresetSaveFailed"), UiText("UI_Save"),
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
             }
-            Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
             this.RefreshByteSweepView();
         }
 
@@ -1175,14 +1267,52 @@ namespace WPELibrary
 
         private async void StartByteSweepPresets(IEnumerable<Socket_ByteSweepPresetInfo> source)
         {
+            Guid jobId;
+            Task execution;
+            string error;
+            if (!this.TryBeginByteSweepPresets(source, out jobId, out execution, out error))
+            {
+                if (!string.IsNullOrEmpty(error))
+                {
+                    MessageBox.Show(
+                        this,
+                        error,
+                        UiText("ByteSweep_BatchTitle"),
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+                return;
+            }
+
+            await execution;
+        }
+
+        private bool TryBeginByteSweepPresets(
+            IEnumerable<Socket_ByteSweepPresetInfo> source,
+            out Guid jobId,
+            out Task execution,
+            out string error,
+            string revision = null)
+        {
+            jobId = Guid.Empty;
+            execution = null;
+            error = string.Empty;
+
             List<Socket_ByteSweepPresetInfo> presets = source
                 .Where(item => item != null)
                 .OrderBy(item => item.BSortOrder)
                 .Select(item => item.Clone())
                 .ToList();
-            if (this.byteSweepRunning || presets.Count == 0)
+            if (this.byteSweepRunning || Socket_ByteSweepRuntime.Current.IsBusy)
             {
-                return;
+                error = UiText("ByteSweep_RuntimeBusy");
+                return false;
+            }
+
+            if (presets.Count == 0)
+            {
+                error = UiText("UI_CurrentSocketRequired");
+                return false;
             }
 
             this.byteSweepParallelMode = this.tsByteSweepParallel != null &&
@@ -1191,12 +1321,8 @@ namespace WPELibrary
             Socket_ByteSweepPresetInfo invalid = presets.FirstOrDefault(item => !item.IsValid);
             if (invalid != null)
             {
-                MessageBox.Show(
-                    this,
-                    string.Format(UiText("ByteSweep_BatchInvalid"), invalid.BName),
-                    UiText("ByteSweep_BatchTitle"),
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
+                error = string.Format(UiText("ByteSweep_BatchInvalid"), invalid.BName);
+                return false;
             }
 
             Socket_ByteSweepPresetInfo unresolvedPreset;
@@ -1205,9 +1331,8 @@ namespace WPELibrary
                 out unresolvedPreset);
             if (presetSockets == null)
             {
-                MessageBox.Show(this, UiText("UI_CurrentSocketRequired"), UiText("ByteSweep_BatchTitle"),
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
+                error = UiText("UI_CurrentSocketRequired");
+                return false;
             }
 
             long plannedTotal = presets.Sum(item =>
@@ -1215,7 +1340,6 @@ namespace WPELibrary
                 (item.BMode == Socket_ByteSweepMode.PairCombination
                     ? Math.Max(1L, (long)item.BCombinationFirstLength * item.BCombinationSecondLength)
                     : Math.Max(1L, (long)item.BLength * 255L)));
-            Guid jobId;
             CancellationTokenSource sharedCancellation;
             Socket_ByteSweepPresetInfo firstPreset = presets[0];
             if (!Socket_ByteSweepRuntime.Current.TryStart(
@@ -1229,18 +1353,15 @@ namespace WPELibrary
                 out jobId,
                 out sharedCancellation))
             {
-                MessageBox.Show(this, UiText("ByteSweep_RuntimeBusy"), UiText("ByteSweep_BatchTitle"),
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
+                error = UiText("ByteSweep_RuntimeBusy");
+                return false;
             }
 
             this.byteSweepRunning = true;
             this.byteSweepOriginalSelectionStart = this.hbPacketData.SelectionStart;
             this.byteSweepOriginalSelectionLength = this.hbPacketData.SelectionLength;
             this.byteSweepLiveSelectionStart = this.byteSweepOriginalSelectionStart;
-            this.byteSweepLiveSelectionLength = Math.Max(
-                1,
-                this.byteSweepOriginalSelectionLength);
+            this.byteSweepLiveSelectionLength = Math.Max(1, this.byteSweepOriginalSelectionLength);
             this.byteSweepJobId = jobId;
             this.byteSweepPlannedTotal = plannedTotal;
             this.byteSweepTotalSend = 0;
@@ -1251,8 +1372,20 @@ namespace WPELibrary
                 ? Guid.Empty
                 : firstPreset.BID;
             this.RefreshByteSweepView();
+            // Publish the revision before the worker can report its first runtime
+            // snapshot. Mobile polling must never observe a busy job with an empty
+            // revision and reject an otherwise valid action as stale.
+            Socket_ByteSweepRuntime.Current.SetRevision(jobId, revision);
             Socket_ByteSweepRuntime.Current.MarkRunning(jobId);
+            execution = this.RunByteSweepPresetsAsync(presets, presetSockets, jobId);
+            return true;
+        }
 
+        private async Task RunByteSweepPresetsAsync(
+            List<Socket_ByteSweepPresetInfo> presets,
+            Dictionary<Guid, int> presetSockets,
+            Guid jobId)
+        {
             Exception runtimeError = null;
 
             try
@@ -1321,11 +1454,6 @@ namespace WPELibrary
             {
                 runtimeError = ex;
                 Socket_Operation.DoLog(nameof(StartByteSweepPresets), ex.Message);
-                MessageBox.Show(
-                    this,
-                    string.Format(UiText("ByteSweep_BatchError"), ex.Message),
-                    UiText("ByteSweep_BatchTitle"),
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             finally
             {
@@ -1367,6 +1495,9 @@ namespace WPELibrary
 
             try
             {
+                Socket_ByteSweepRuntime.Current.WaitIfPaused(
+                    this.byteSweepJobId,
+                    this.byteSweepCts == null ? CancellationToken.None : this.byteSweepCts.Token);
                 Socket_ByteSweepRuntime.Current.PublishProgress(
                     this.byteSweepJobId,
                     preset.BID,
@@ -1452,5 +1583,124 @@ namespace WPELibrary
                 this.byteSweepCts.Cancel();
             }
         }
+
+        public MobileByteSweepStartResult StartByteSweepFromMobile(Guid presetId)
+        {
+            return this.StartByteSweepFromMobile(presetId, string.Empty);
+        }
+
+        public MobileByteSweepStartResult StartByteSweepFromMobile(Guid presetId, string revision)
+        {
+            if (this.IsDisposed || this.Disposing)
+            {
+                return MobileByteSweepStartResult.Failure(
+                    "The packet window is closing.",
+                    "runtime_not_connected");
+            }
+
+            if (this.InvokeRequired)
+            {
+                try
+                {
+                    return (MobileByteSweepStartResult)this.Invoke(
+                        new Func<MobileByteSweepStartResult>(() =>
+                            this.StartByteSweepFromMobile(presetId, revision)));
+                }
+                catch (ObjectDisposedException)
+                {
+                    return MobileByteSweepStartResult.Failure(
+                        "The packet window is closing.",
+                        "runtime_not_connected");
+                }
+                catch (InvalidOperationException)
+                {
+                    return MobileByteSweepStartResult.Failure(
+                        "The packet window is not ready.",
+                        "runtime_not_connected");
+                }
+            }
+
+            if (!this.IsHandleCreated)
+            {
+                return MobileByteSweepStartResult.Failure(
+                    "The packet window is not ready.",
+                    "runtime_not_connected");
+            }
+
+            if (this.byteSweepRunning || Socket_ByteSweepRuntime.Current.IsBusy)
+            {
+                return MobileByteSweepStartResult.Failure(
+                    UiText("ByteSweep_RuntimeBusy"),
+                    "runtime_busy");
+            }
+
+            Socket_ByteSweepPresetInfo preset = Socket_Cache.ByteSweepList.lstPresets
+                .FirstOrDefault(item => item.BID == presetId);
+            if (preset == null || !preset.IsValid)
+            {
+                return MobileByteSweepStartResult.Failure(
+                    "The progression preset is invalid or missing.");
+            }
+
+            Guid jobId;
+            Task execution;
+            string error;
+            if (!this.TryBeginByteSweepPresets(
+                new[] { preset },
+                out jobId,
+                out execution,
+                out error,
+                revision))
+            {
+                string errorCode = string.Equals(
+                    error,
+                    UiText("ByteSweep_RuntimeBusy"),
+                    StringComparison.Ordinal)
+                    ? "runtime_busy"
+                    : string.Equals(
+                        error,
+                        UiText("UI_CurrentSocketRequired"),
+                        StringComparison.Ordinal)
+                        ? "runtime_not_connected"
+                        : "preset_invalid";
+                return MobileByteSweepStartResult.Failure(error, errorCode);
+            }
+
+            return MobileByteSweepStartResult.Success(jobId);
+        }
+
+        public bool StopByteSweepFromMobile()
+        {
+            if (this.IsDisposed || this.Disposing)
+            {
+                return false;
+            }
+
+            if (this.InvokeRequired)
+            {
+                try
+                {
+                    return (bool)this.Invoke(new Func<bool>(this.StopByteSweepFromMobile));
+                }
+                catch (ObjectDisposedException)
+                {
+                    return false;
+                }
+                catch (InvalidOperationException)
+                {
+                    return false;
+                }
+            }
+
+            if (!this.IsHandleCreated)
+            {
+                return false;
+            }
+
+            bool wasBusy = this.byteSweepRunning || Socket_ByteSweepRuntime.Current.IsBusy;
+            this.StopByteSweep();
+            return wasBusy;
+        }
+
     }
 }

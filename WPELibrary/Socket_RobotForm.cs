@@ -29,6 +29,10 @@ namespace WPELibrary
         private Label lSelectedSendPreset;
         private Label lSelectedSendFolder;
         private Button bSelectSendPreset;
+        private Button bToggleRobotInstructionPanel;
+        private bool robotInstructionPanelExpanded;
+        private bool robotInstructionPanelManuallyCollapsed;
+        private bool robotInstructionPanelManuallyExpanded;
         private TableLayoutPanel executeLogHost;
         private Button bToggleExecuteLog;
         private bool executeLogExpanded;
@@ -242,6 +246,7 @@ namespace WPELibrary
                 dgvRobotInstruction.CellToolTipTextNeeded += this.dgvRobotInstruction_CellToolTipTextNeeded;
                 dgvRobotInstruction.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvRobotInstruction, true, null);
                 dgvRobotInstruction.DataSource = this.dtRobotInstruction;
+                this.InitRobotInstructionPanel();
                 this.txtExecute.BackColor = Color.FromArgb(248, 248, 248);
                 this.txtExecute.ForeColor = Color.FromArgb(55, 65, 81);
                 if (string.IsNullOrEmpty(this.txtExecute.Text))
@@ -252,6 +257,120 @@ namespace WPELibrary
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
+        private void InitRobotInstructionPanel()
+        {
+            if (this.tlpListInfo == null || this.gbRobotInstruction == null)
+            {
+                return;
+            }
+
+            if (this.bToggleRobotInstructionPanel == null)
+            {
+                this.bToggleRobotInstructionPanel = new Button
+                {
+                    Name = "bToggleRobotInstructionPanel",
+                    Dock = DockStyle.Fill,
+                    AutoSize = false,
+                    Margin = new Padding(4, 3, 3, 3),
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    AccessibleRole = AccessibleRole.PushButton,
+                    UseVisualStyleBackColor = false,
+                    BackColor = Color.FromArgb(245, 247, 250),
+                    ForeColor = Color.FromArgb(55, 65, 81),
+                    FlatStyle = FlatStyle.Flat
+                };
+                this.bToggleRobotInstructionPanel.FlatAppearance.BorderColor =
+                    Color.FromArgb(209, 213, 219);
+                this.bToggleRobotInstructionPanel.Click +=
+                    this.bToggleRobotInstructionPanel_Click;
+            }
+
+            if (!this.tlpListInfo.Controls.Contains(this.bToggleRobotInstructionPanel))
+            {
+                this.tlpListInfo.Controls.Add(this.bToggleRobotInstructionPanel, 1, 0);
+            }
+
+            this.UpdateRobotInstructionPanel();
+        }
+
+        private void bToggleRobotInstructionPanel_Click(object sender, EventArgs e)
+        {
+            if (this.robotInstructionPanelExpanded)
+            {
+                this.robotInstructionPanelManuallyCollapsed = true;
+                this.robotInstructionPanelManuallyExpanded = false;
+            }
+            else
+            {
+                this.robotInstructionPanelManuallyCollapsed = false;
+                this.robotInstructionPanelManuallyExpanded = true;
+            }
+
+            this.SetRobotInstructionPanelExpanded(!this.robotInstructionPanelExpanded);
+        }
+
+        private void UpdateRobotInstructionPanel()
+        {
+            if (this.tlpListInfo == null || this.gbRobotInstruction == null ||
+                this.bToggleRobotInstructionPanel == null)
+            {
+                return;
+            }
+
+            int instructionCount = this.dtRobotInstruction == null
+                ? 0
+                : this.dtRobotInstruction.Rows.Count;
+            bool expand = instructionCount > 0
+                ? !this.robotInstructionPanelManuallyCollapsed
+                : this.robotInstructionPanelManuallyExpanded;
+            this.SetRobotInstructionPanelExpanded(expand, instructionCount);
+        }
+
+        private void SetRobotInstructionPanelExpanded(bool expanded, int? instructionCount = null)
+        {
+            if (this.tlpListInfo == null || this.gbRobotInstruction == null ||
+                this.bToggleRobotInstructionPanel == null)
+            {
+                return;
+            }
+
+            int count = instructionCount.HasValue
+                ? instructionCount.Value
+                : (this.dtRobotInstruction == null ? 0 : this.dtRobotInstruction.Rows.Count);
+            this.robotInstructionPanelExpanded = expanded;
+            this.gbRobotInstruction.Visible = expanded;
+            this.bToggleRobotInstructionPanel.Visible = !expanded;
+            this.bToggleRobotInstructionPanel.Text = string.Format(
+                UiText(expanded
+                    ? "Robot_InstructionPanelHide"
+                    : "Robot_InstructionPanelShow"),
+                count);
+            this.bToggleRobotInstructionPanel.AccessibleName =
+                this.bToggleRobotInstructionPanel.Text;
+
+            if (this.tlpListInfo.ColumnStyles.Count >= 2)
+            {
+                this.tlpListInfo.ColumnStyles[0] = expanded
+                    ? new ColumnStyle(SizeType.Percent, 100F)
+                    : new ColumnStyle(SizeType.Percent, 100F);
+                this.tlpListInfo.ColumnStyles[1] = expanded
+                    ? new ColumnStyle(SizeType.Absolute, 280F)
+                    : new ColumnStyle(SizeType.Absolute, 280F);
+            }
+
+            this.tlpListInfo.PerformLayout();
+            // A hidden Dock=Fill control keeps its previous bounds in WinForms;
+            // keep the instruction column's measured width in sync for the next
+            // expansion and for accessibility/UI audits.
+            this.gbRobotInstruction.Width = 280;
+            if (!expanded)
+            {
+                this.gbRobotInstruction.Location = new Point(
+                    Math.Max(0, this.tlpListInfo.ClientSize.Width - this.gbRobotInstruction.Width),
+                    this.gbRobotInstruction.Location.Y);
             }
         }
 
@@ -4304,12 +4423,37 @@ namespace WPELibrary
 
         private void bSaveVisionProfile_Click(object sender, EventArgs e)
         {
+            DataTable originalRobotInstructions = this.sriSelect == null
+                ? new DataTable()
+                : CopyInstructions(this.sriSelect.RInstruction);
+            DataTable originalEditorInstructions = CopyInstructions(this.dtRobotInstruction);
+            string originalName = this.sriSelect == null ? string.Empty : this.sriSelect.RName;
+            Socket_VisionProfile originalProfile = this.sriSelect == null ||
+                this.sriSelect.VisionProfile == null
+                ? null
+                : this.sriSelect.VisionProfile.Clone();
+
             if (!this.TryApplyVisionProfile())
             {
+                this.RestoreRobotEditorState(
+                    originalName,
+                    originalRobotInstructions,
+                    originalEditorInstructions,
+                    originalProfile);
                 return;
             }
 
-            Socket_Cache.RobotList.SaveRobotList_ToDB();
+            if (!Socket_Cache.RobotList.SaveRobotList_ToDB())
+            {
+                this.RestoreRobotEditorState(
+                    originalName,
+                    originalRobotInstructions,
+                    originalEditorInstructions,
+                    originalProfile);
+                this.SetVisionStatus(UiText("UI_AssistantSaveFailed"));
+                return;
+            }
+            this.DisposeVisionProfileTemplates(originalProfile);
             this.SetVisionStatus(UiText("Vision_ProfileSaved"));
         }
 
@@ -5186,6 +5330,51 @@ namespace WPELibrary
 
         #region//保存按钮
 
+        private void RestoreRobotEditorState(
+            string originalName,
+            DataTable originalRobotInstructions,
+            DataTable originalEditorInstructions,
+            Socket_VisionProfile originalProfile)
+        {
+            if (this.sriSelect == null)
+            {
+                return;
+            }
+
+            Socket_VisionProfile currentProfile = this.sriSelect.VisionProfile;
+            if (currentProfile != null && !object.ReferenceEquals(currentProfile, originalProfile))
+            {
+                this.DisposeVisionProfileTemplates(currentProfile);
+            }
+
+            this.sriSelect.RName = originalName;
+            this.sriSelect.RInstruction = originalRobotInstructions == null
+                ? new DataTable()
+                : originalRobotInstructions.Copy();
+            this.sriSelect.VisionProfile = originalProfile;
+            this.txtRobotName.Text = originalName;
+
+            if (this.dgvRobotInstruction != null)
+            {
+                this.dgvRobotInstruction.DataSource = null;
+            }
+            this.dtRobotInstruction = originalEditorInstructions == null
+                ? new DataTable()
+                : originalEditorInstructions.Copy();
+            if (this.dgvRobotInstruction != null)
+            {
+                this.dgvRobotInstruction.DataSource = this.dtRobotInstruction;
+            }
+
+            this.InitVisionProfile();
+            this.UpdateRobotInstructionPanel();
+        }
+
+        private static DataTable CopyInstructions(DataTable source)
+        {
+            return source == null ? new DataTable() : source.Copy();
+        }
+
         private void bSave_Click(object sender, EventArgs e)
         {
             try
@@ -5211,14 +5400,44 @@ namespace WPELibrary
                     }
                 }
 
+                string originalName = this.sriSelect == null
+                    ? string.Empty
+                    : this.sriSelect.RName;
+                DataTable originalRobotInstructions = this.sriSelect == null
+                    ? new DataTable()
+                    : CopyInstructions(this.sriSelect.RInstruction);
+                DataTable originalEditorInstructions = CopyInstructions(this.dtRobotInstruction);
+                Socket_VisionProfile originalProfile = this.sriSelect == null ||
+                    this.sriSelect.VisionProfile == null
+                    ? null
+                    : this.sriSelect.VisionProfile.Clone();
                 bool hasVisionConfiguration = this.HasVisionInstructionRows() ||
                     (this.cbbVisionWindows != null && this.cbbVisionWindows.SelectedItem != null);
                 if (hasVisionConfiguration && !this.TryApplyVisionProfile())
                 {
+                    this.RestoreRobotEditorState(
+                        originalName,
+                        originalRobotInstructions,
+                        originalEditorInstructions,
+                        originalProfile);
                     return;
                 }
 
                 Socket_Cache.Robot.UpdateRobot(sriSelect, RName_New, this.dtRobotInstruction);
+
+                if (!Socket_Cache.RobotList.SaveRobotList_ToDB())
+                {
+                    this.RestoreRobotEditorState(
+                        originalName,
+                        originalRobotInstructions,
+                        originalEditorInstructions,
+                        originalProfile);
+                    Socket_Operation.ShowMessageBox(
+                        Socket_Operation.GetUiText("UI_AssistantSaveFailed"));
+                    return;
+                }
+
+                this.DisposeVisionProfileTemplates(originalProfile);
 
                 this.Close();
             }
@@ -5497,6 +5716,8 @@ namespace WPELibrary
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
 
+            this.UpdateRobotInstructionPanel();
+
             return iReturn;
         }
 
@@ -5588,6 +5809,9 @@ namespace WPELibrary
                 {
                     this.dtRobotInstruction.Rows.Add(dr);                   
                 }
+                this.robotInstructionPanelManuallyCollapsed = false;
+                this.robotInstructionPanelManuallyExpanded = false;
+                this.UpdateRobotInstructionPanel();
             }
             catch (Exception ex)
             {

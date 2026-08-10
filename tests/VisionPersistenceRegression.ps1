@@ -26,8 +26,17 @@ $databaseType = [WPELibrary.Lib.Socket_Cache+DataBase]
 $flags = [System.Reflection.BindingFlags]::Static -bor
     [System.Reflection.BindingFlags]::NonPublic
 $connectionField = $databaseType.GetField("conStr", $flags)
+$connectionProperty = $databaseType.GetProperty("conStr", $flags)
 $createRobot = $databaseType.GetMethod("CreateTable_Robot", $flags)
-$originalConnection = $connectionField.GetValue($null)
+if ($null -eq $connectionField -and $null -eq $connectionProperty) {
+    throw "The database connection member was not found."
+}
+$originalConnection = if ($null -ne $connectionField) {
+    $connectionField.GetValue($null)
+}
+else {
+    $connectionProperty.GetValue($null, $null)
+}
 $tempDatabase = Join-Path ([System.IO.Path]::GetTempPath()) (
     "wpe-vision-" + [Guid]::NewGuid().ToString("N") + ".db")
 $tempConnection = "Data Source=$tempDatabase;Version=3;"
@@ -37,7 +46,12 @@ $loadedTemplate = $null
 $loadedXmlProfile = $null
 
 try {
-    $connectionField.SetValue($null, $tempConnection)
+    if ($null -ne $connectionField) {
+        $connectionField.SetValue($null, $tempConnection)
+    }
+    else {
+        $connectionProperty.SetValue($null, $tempConnection, $null)
+    }
     Assert-True ([bool]$createRobot.Invoke($null, @())) `
         "Vision database schema creation must succeed."
 
@@ -308,7 +322,12 @@ finally {
     if ($null -ne $sourceTemplate) { $sourceTemplate.Dispose() }
     if ($null -ne $sourceVariant) { $sourceVariant.Dispose() }
     [WPELibrary.Lib.Socket_Cache+RobotList]::RobotListClear()
-    $connectionField.SetValue($null, $originalConnection)
+    if ($null -ne $connectionField) {
+        $connectionField.SetValue($null, $originalConnection)
+    }
+    else {
+        $connectionProperty.SetValue($null, $originalConnection, $null)
+    }
     if (Test-Path -LiteralPath $tempDatabase) {
         Remove-Item -LiteralPath $tempDatabase -Force
     }

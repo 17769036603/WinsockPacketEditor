@@ -2,6 +2,7 @@
 using System.ComponentModel;
 using System.IO;
 using System.Reflection;
+using System.Collections.Generic;
 using System.Windows.Forms;
 using WPELibrary;
 using WPELibrary.Lib;
@@ -115,6 +116,28 @@ namespace WinsockPacketEditor
                     startInfo.UseShellExecute = true;
                     startInfo.WorkingDirectory = Environment.CurrentDirectory;
                     startInfo.FileName = Application.ExecutablePath;
+                    // Preserve explicit unattended switches when the normal
+                    // non-elevated launcher hands off to the administrator
+                    // process. Without this, --auto-inject was silently
+                    // dropped at the UAC boundary and the elevated injector
+                    // opened with no action pending.
+                    string[] commandLineArguments = Environment.GetCommandLineArgs();
+                    if (commandLineArguments.Length > 1)
+                    {
+                        List<string> forwardedArguments = new List<string>();
+                        for (int index = 1; index < commandLineArguments.Length; index++)
+                        {
+                            string argument = commandLineArguments[index];
+                            if (string.IsNullOrWhiteSpace(argument))
+                            {
+                                continue;
+                            }
+
+                            forwardedArguments.Add(QuoteProcessArgument(argument));
+                        }
+
+                        startInfo.Arguments = string.Join(" ", forwardedArguments.ToArray());
+                    }
                     
                     startInfo.Verb = "runas";
 
@@ -154,6 +177,16 @@ namespace WinsockPacketEditor
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
             }            
+        }
+
+        private static string QuoteProcessArgument(string argument)
+        {
+            if (argument.IndexOfAny(new[] { ' ', '\t', '\"' }) < 0)
+            {
+                return argument;
+            }
+
+            return "\"" + argument.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
         }
 
         #endregion        

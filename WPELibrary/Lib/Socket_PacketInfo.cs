@@ -7,6 +7,11 @@ namespace WPELibrary.Lib
         public System.Collections.Generic.List<Socket_ByteAnnotationInfo> ByteAnnotations { get; set; } =
             new System.Collections.Generic.List<Socket_ByteAnnotationInfo>();
 
+        public System.Collections.Generic.List<PresetVariableBinding> VariableBindings { get; set; } =
+            new System.Collections.Generic.List<PresetVariableBinding>();
+
+        public int SortOrder { get; set; }
+
         #region//时间戳
 
         protected DateTime packettime;

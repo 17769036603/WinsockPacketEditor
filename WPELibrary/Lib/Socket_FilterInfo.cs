@@ -401,5 +401,78 @@ namespace WPELibrary.Lib
         }
 
         #endregion
+
+        public Socket_FilterInfo Clone()
+        {
+            Socket_FilterInfo copy = new Socket_FilterInfo(
+                this.IsEnable,
+                this.FID,
+                this.FName,
+                this.AppointHeader,
+                this.HeaderContent,
+                this.AppointSocket,
+                this.SocketContent,
+                this.AppointLength,
+                this.LengthContent,
+                this.AppointPort,
+                this.PortContent,
+                this.FMode,
+                this.FAction,
+                this.IsExecute,
+                this.FEType,
+                this.SID,
+                this.RID,
+                this.FFunction,
+                this.FStartFrom,
+                this.IsProgressionDone,
+                this.IsProgressionContinuous,
+                this.ProgressionStep,
+                this.IsProgressionCarry,
+                this.ProgressionCarryNumber,
+                this.ProgressionPosition,
+                this.ProgressionCount,
+                this.FSearch,
+                this.FModify);
+            copy.ExecutionCount = this.ExecutionCount;
+            return copy;
+        }
+
+        public void CopyFrom(Socket_FilterInfo source)
+        {
+            if (source == null)
+            {
+                return;
+            }
+
+            this.IsEnable = source.IsEnable;
+            this.FID = source.FID;
+            this.FName = source.FName;
+            this.ExecutionCount = source.ExecutionCount;
+            this.AppointHeader = source.AppointHeader;
+            this.HeaderContent = source.HeaderContent;
+            this.AppointSocket = source.AppointSocket;
+            this.SocketContent = source.SocketContent;
+            this.AppointLength = source.AppointLength;
+            this.LengthContent = source.LengthContent;
+            this.AppointPort = source.AppointPort;
+            this.PortContent = source.PortContent;
+            this.FMode = source.FMode;
+            this.FAction = source.FAction;
+            this.IsExecute = source.IsExecute;
+            this.FEType = source.FEType;
+            this.SID = source.SID;
+            this.RID = source.RID;
+            this.FFunction = source.FFunction;
+            this.FStartFrom = source.FStartFrom;
+            this.IsProgressionDone = source.IsProgressionDone;
+            this.IsProgressionContinuous = source.IsProgressionContinuous;
+            this.ProgressionStep = source.ProgressionStep;
+            this.IsProgressionCarry = source.IsProgressionCarry;
+            this.ProgressionCarryNumber = source.ProgressionCarryNumber;
+            this.ProgressionPosition = source.ProgressionPosition;
+            this.ProgressionCount = source.ProgressionCount;
+            this.FSearch = source.FSearch;
+            this.FModify = source.FModify;
+        }
     }
 }

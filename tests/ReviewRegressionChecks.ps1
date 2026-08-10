@@ -41,10 +41,10 @@ function Assert-NotContains {
 
 $socketForm = Read-SourceFile "WPELibrary\Socket_Form.cs"
 $socketCache = Read-SourceFile "WPELibrary\Lib\Socket_Cache.cs"
-Assert-Contains $socketForm "Socket_Cache.System.IsRemote = false;" `
-    "Injection-only startup must disable persisted remote-management configuration."
-Assert-NotContains $socketForm "Socket_Operation.StartRemoteMGT();" `
-    "Injection-only startup must not start the remote-management HTTP service."
+Assert-NotContains $socketForm "Socket_Cache.System.IsRemote = false;" `
+    "Startup must not discard the persisted remote-management configuration."
+Assert-Contains $socketForm "Socket_Operation.StartRemoteMGT();" `
+    "Startup must start the configured HTTPS remote-management service."
 
 $byteSweepForm = Read-SourceFile "WPELibrary\Socket_Form.ByteSweep.cs"
 Assert-Contains $byteSweepForm "await Task.Delay(preset.BNextInterval, this.byteSweepCts.Token);" `
@@ -77,8 +77,8 @@ Assert-Contains $sendForm "throw;" `
     "The send worker must propagate unexpected exceptions to its completion handler."
 Assert-Contains $sendForm "this.byteSweepProviderHadChanges =" `
     "Temporary live display must preserve the provider's original dirty state."
-Assert-Contains $sendForm "Socket_Cache.SendList.SaveSendList_ToDB();" `
-    "Confirmed normal preset saves must persist immediately."
+Assert-Contains $sendForm "Socket_Cache.SendList.TryApplyListChangeAndSave(" `
+    "Confirmed normal preset saves must persist immediately with rollback on failure."
 Assert-Contains $sendForm "this.StartSend(false, false);" `
     "The left Start action must always launch normal sending."
 Assert-Contains $sendForm "this.StartSend(true, false);" `
@@ -210,10 +210,26 @@ Assert-Contains $processList "private bool ShowEmulatorOnly = true;" `
     "Injection target selection must default to approved emulator processes."
 Assert-Contains $processList "IsSupportedInjectionProcess" `
     "Injection target selection must validate the live process name."
+Assert-Contains $processList "AppendDirectEmulatorRows" `
+    "Injection target selection must recover when the general process snapshot is empty."
 Assert-NotContains $processList "OpenFileDialog" `
     "Injection-only process selection must not expose arbitrary EXE selection."
 Assert-Contains $processList "PArch" `
     "Process selection must expose target architecture."
+
+$injector = Read-SourceFile "WinsockPacketEditor\Injector_Form.cs"
+Assert-Contains $injector "TrySelectSingleEmulator" `
+    "A single approved emulator must be selected without opening a redundant process chooser."
+Assert-Contains $injector "HasAutoInjectSwitch" `
+    "Unattended desktop restart must have an explicit auto-inject switch."
+Assert-Contains $injector "this.bInject.PerformClick()" `
+    "The explicit auto-inject switch must invoke the existing injection button path."
+
+$program = Read-SourceFile "WinsockPacketEditor\Lib\Program.cs"
+Assert-Contains $program "Environment.GetCommandLineArgs()" `
+    "The elevated launcher must inspect explicit unattended switches."
+Assert-Contains $program 'startInfo.Arguments = string.Join(" ", forwardedArguments.ToArray());' `
+    "The elevated launcher must preserve unattended switches across the UAC handoff."
 
 Assert-Contains $sendForm "private enum SendUiMode" `
     "The send editor must expose explicit execution modes."
@@ -465,6 +481,59 @@ Assert-Contains $processList "IndexOf(searchText, StringComparison.CurrentCultur
     "Process search must compare names and paths without using a DataView expression."
 Assert-NotContains $processList "RowFilter =" `
     "Process search must not concatenate user input into a DataView RowFilter."
+
+$mobileController = Read-SourceFile "WPELibrary\Lib\WebAPI\MobileSync_Controller.cs"
+Assert-Contains $mobileController "public sealed class MobilePresetDescriptor" `
+    "Mobile synchronization must expose a catalog DTO instead of full preset XML."
+Assert-NotContains $mobileController "SendXml" `
+    "Mobile synchronization must not expose raw send-preset XML."
+Assert-NotContains $mobileController "ProgressionXml" `
+    "Mobile synchronization must not expose raw progression-preset XML."
+Assert-NotContains $mobileController "AssistantXml" `
+    "Mobile synchronization must not expose raw assistant XML."
+Assert-Contains $mobileController "Socket_Cache.SendList.lstSend" `
+    "The mobile revision must change when send preset content changes."
+Assert-Contains $mobileController "Socket_Cache.ByteSweepList.lstPresets" `
+    "The mobile revision must change when progression preset content changes."
+Assert-Contains $mobileController "Socket_Cache.RobotList.lstRobot" `
+    "The mobile revision must change when assistant preset content changes."
+Assert-Contains $mobileController "string canonical = Canonicalize(payload)" `
+    "Preset content used for revision hashing must remain local and deterministic."
+Assert-Contains $web 'if (isMobileSync)' `
+    "MobileSync must have an explicit passwordless route boundary."
+Assert-NotContains $web 'IsValidMobile(username, password)' `
+    "MobileSync must not depend on proxy-account credentials."
+Assert-Contains $web 'IsValidAdmin(username, password)' `
+    "Non-mobile Web API routes must remain protected by administrator credentials."
+Assert-Contains $cache 'Socket_Cache.ProxyAccount.LoadProxyAccountList_FromDB();' `
+    "Proxy accounts must be loaded before the remote service can authenticate mobile clients."
+Assert-NotContains $cache 'LoadProxyAccountList_FromDB().GetAwaiter().GetResult()' `
+    "Startup proxy-account loading must not deadlock the UI dispatcher."
+Assert-Contains $cache "AtomicSaveGate" `
+    "Atomic configuration saves must gate concurrent connection-string readers."
+Assert-Contains $byteSweepForm "public sealed class MobileByteSweepStartResult" `
+    "The mobile progression API must return a structured start result."
+$mobileManifest = Read-SourceFile "mobile\app\src\main\AndroidManifest.xml"
+Assert-NotContains $mobileManifest 'android:usesCleartextTraffic="true"' `
+    "The Android client must reject clear-text transport."
+$mobileClient = Read-SourceFile "mobile\app\src\main\java\com\xnas\wpe\mobile\WpeSyncClient.java"
+Assert-Contains $mobileClient "setInstanceFollowRedirects(false)" `
+    "The mobile client must not follow credential-bearing redirects."
+Assert-Contains $mobileClient '"https://"' `
+    "The mobile client must enforce HTTPS endpoints."
+$mobileCoordinator = Read-SourceFile "mobile\app\src\main\java\com\xnas\wpe\mobile\SyncCoordinator.java"
+Assert-Contains $mobileCoordinator "private void postToMain(Runnable action)" `
+    "Mobile network callbacks must be guarded after Activity destruction."
+Assert-Contains $mobileCoordinator "if (!destroyed && action != null)" `
+    "Mobile coordinator must drop stale UI callbacks after teardown."
+$mobileMain = Read-SourceFile "mobile\app\src\main\java\com\xnas\wpe\mobile\MainActivity.java"
+Assert-Contains $mobileMain "coordinator.detachListener(this)" `
+    "Mobile Activity teardown must detach listeners while the overlay remains alive."
+$injector = Read-SourceFile "WinsockPacketEditor\Injector_Form.cs"
+Assert-Contains $injector 'bRemoteSettings' `
+    "The fixed injector entry must expose remote service settings."
+Assert-Contains $injector 'bMobileAccountSettings' `
+    "The fixed injector entry must expose the dedicated mobile account manager."
 
 $mainAssembly = Read-SourceFile "WinsockPacketEditor\Properties\AssemblyInfo.cs"
 $libraryAssembly = Read-SourceFile "WPELibrary\Properties\AssemblyInfo.cs"

@@ -37,12 +37,30 @@ namespace WPELibrary.Lib
 
     public class WinSockHook : IEntryPoint
     {        
+        private const int WsaErrorInterrupted = 10004;
+
         private LocalHook lhWS1_Send, lhWS1_SendTo, lhWS1_Recv, lhWS1_RecvFrom;
         private LocalHook lhWS2_Send, lhWS2_SendTo, lhWS2_Recv, lhWS2_RecvFrom;
         private LocalHook lhWSA_Send, lhWSA_SendTo, lhWSA_Recv, lhWSA_RecvFrom;
         private LocalHook lhWSA_RecvEx;
 
         public bool IsRunning { get; private set; }
+
+        private static void SetReceiveInterceptError(IntPtr lpNumberOfBytes)
+        {
+            if (lpNumberOfBytes != IntPtr.Zero)
+            {
+                Marshal.WriteInt32(lpNumberOfBytes, 0);
+            }
+
+            WS2_32.WSASetLastError(WsaErrorInterrupted);
+        }
+
+        private static int ReturnReceiveInterceptError()
+        {
+            WS2_32.WSASetLastError(WsaErrorInterrupted);
+            return -1;
+        }
 
         #region//EasyHook
 
@@ -103,6 +121,8 @@ namespace WPELibrary.Lib
             Socket_Cache.SocketPacket.PacketType packetType,
             Socket_Cache.SocketPacket.SockAddr address)
         {
+            Socket_Cache.Filter.DeferredExecutionBatch deferredBatch =
+                Socket_Cache.Filter.BeginPacketDeferredExecution();
             try
             {
                 Socket_Cache.Filter.FilterAction action = Socket_Cache.FilterList.DoFilterList(
@@ -117,6 +137,21 @@ namespace WPELibrary.Lib
                     newBuffer = buffer.ToArray();
                 }
 
+                if (action != Socket_Cache.Filter.FilterAction.Intercept &&
+                    action != Socket_Cache.Filter.FilterAction.NoModify_NoDisplay &&
+                    !Socket_Cache.SocketPacket.SpeedMode &&
+                    newBuffer != null)
+                {
+                    try
+                    {
+                        DynamicVariableRuntime.ProcessPacket(packetType, newBuffer);
+                    }
+                    catch (Exception dynamicException)
+                    {
+                        Socket_Operation.DoLog(nameof(DynamicVariableRuntime), dynamicException.Message);
+                    }
+                }
+
                 return action;
             }
             catch (Exception ex)
@@ -124,6 +159,10 @@ namespace WPELibrary.Lib
                 Socket_Operation.DoLog(nameof(ApplyFilterSafely), ex.Message);
                 newBuffer = buffer.ToArray();
                 return Socket_Cache.Filter.FilterAction.NoModify_Display;
+            }
+            finally
+            {
+                Socket_Cache.Filter.CommitPacketDeferredExecution(deferredBatch);
             }
         }
 
@@ -458,7 +497,7 @@ namespace WPELibrary.Lib
 
                     if (FilterAction == Socket_Cache.Filter.FilterAction.Intercept)
                     {
-                        res = 0;
+                        res = ReturnReceiveInterceptError();
                     }
                     else
                     {
@@ -573,7 +612,7 @@ namespace WPELibrary.Lib
 
                     if (FilterAction == Socket_Cache.Filter.FilterAction.Intercept)
                     {
-                        res = 0;
+                        res = ReturnReceiveInterceptError();
                     }
                     else
                     {
@@ -609,6 +648,21 @@ namespace WPELibrary.Lib
 
             try
             {
+                // The caller owns WSABUF and completion state until an overlapped
+                // operation completes. This synchronous filter path cannot safely
+                // rewrite those structures, so pass asynchronous calls through.
+                if (lpOverlapped != IntPtr.Zero || lpCompletionRoutine != IntPtr.Zero)
+                {
+                    return WS2_32.WSASend(
+                        socket,
+                        lpWSABuffer,
+                        bufferCount,
+                        lpNumberOfBytesSent,
+                        flags,
+                        lpOverlapped,
+                        lpCompletionRoutine);
+                }
+
                 DateTime packetTime = DateTime.Now;
                 Socket_Cache.SocketPacket.WSABUF* pWSABuffers = (Socket_Cache.SocketPacket.WSABUF*)lpWSABuffer;
 
@@ -646,16 +700,21 @@ namespace WPELibrary.Lib
                             int WSABufferLen = pWSABuffers[0].len;
                             pWSABuffers[0].len = BytesSent;
 
-                            res = WS2_32.WSASend(
-                                socket,
-                                lpWSABuffer,
-                                bufferCount,
-                                lpNumberOfBytesSent,
-                                flags,
-                                lpOverlapped,
-                                lpCompletionRoutine);
-
-                            pWSABuffers[0].len = WSABufferLen;
+                            try
+                            {
+                                res = WS2_32.WSASend(
+                                    socket,
+                                    lpWSABuffer,
+                                    bufferCount,
+                                    lpNumberOfBytesSent,
+                                    flags,
+                                    lpOverlapped,
+                                    lpCompletionRoutine);
+                            }
+                            finally
+                            {
+                                pWSABuffers[0].len = WSABufferLen;
+                            }
                         }
 
                         BytesSent = Marshal.ReadInt32(lpNumberOfBytesSent);
@@ -712,45 +771,50 @@ namespace WPELibrary.Lib
                             Marshal.WriteInt32(lpNumberOfBytesSent, totalBytes);
                             res = SocketError.Success;
                         }
-                        else if (bNewBuffer != null && bNewBuffer.Length > 0)
+                        else if (bNewBuffer != null)
                         {
-                            int remainingBytes = Math.Min(bNewBuffer.Length, totalBytes);
-                            int bufferIndex = 0;
-                            int bytesCopied = 0;
-
                             int[] originalLengths = new int[bufferCount];
                             for (int i = 0; i < bufferCount; i++)
                             {
                                 originalLengths[i] = pWSABuffers[i].len;
                             }
 
-                            while (remainingBytes > 0 && bufferIndex < bufferCount)
+                            try
                             {
-                                int copyLength = Math.Min(pWSABuffers[bufferIndex].len, remainingBytes);
-                                if (copyLength > 0)
+                                int remainingBytes = Math.Min(bNewBuffer.Length, totalBytes);
+                                int bytesCopied = 0;
+
+                                for (int i = 0; i < bufferCount; i++)
                                 {
-                                    Span<byte> destSpan = new Span<byte>((byte*)pWSABuffers[bufferIndex].buf, pWSABuffers[bufferIndex].len);
-                                    bNewBuffer.AsSpan(bytesCopied, copyLength).CopyTo(destSpan);
-                                    pWSABuffers[bufferIndex].len = copyLength;
-                                    bytesCopied += copyLength;
-                                    remainingBytes -= copyLength;
+                                    int copyLength = Math.Min(originalLengths[i], remainingBytes);
+                                    if (copyLength > 0)
+                                    {
+                                        Span<byte> destSpan = new Span<byte>((byte*)pWSABuffers[i].buf, originalLengths[i]);
+                                        bNewBuffer.AsSpan(bytesCopied, copyLength).CopyTo(destSpan);
+                                        bytesCopied += copyLength;
+                                        remainingBytes -= copyLength;
+                                    }
+
+                                    // Prevent the original tail in every unused buffer
+                                    // from being included in the native send call.
+                                    pWSABuffers[i].len = copyLength;
                                 }
 
-                                bufferIndex++;
+                                res = WS2_32.WSASend(
+                                    socket,
+                                    lpWSABuffer,
+                                    bufferCount,
+                                    lpNumberOfBytesSent,
+                                    flags,
+                                    lpOverlapped,
+                                    lpCompletionRoutine);
                             }
-
-                            res = WS2_32.WSASend(
-                                socket,
-                                lpWSABuffer,
-                                bufferCount,
-                                lpNumberOfBytesSent,
-                                flags,
-                                lpOverlapped,
-                                lpCompletionRoutine);
-
-                            for (int i = 0; i < bufferCount; i++)
+                            finally
                             {
-                                pWSABuffers[i].len = originalLengths[i];
+                                for (int i = 0; i < bufferCount; i++)
+                                {
+                                    pWSABuffers[i].len = originalLengths[i];
+                                }
                             }
                         }
                         else
@@ -803,10 +867,31 @@ namespace WPELibrary.Lib
             [In] IntPtr lpCompletionRoutine)
         {
             Socket_Cache.SocketPacket.PacketType packetType = Socket_Cache.SocketPacket.PacketType.WSARecv;
-            SocketError res = WS2_32.WSARecv(socket, lpWSABuffer, bufferCount, lpNumberOfBytesRecvd, ref flags, lpOverlapped, lpCompletionRoutine);
+            SocketError res = SocketError.SocketError;
 
             try
             {
+                if (lpOverlapped != IntPtr.Zero || lpCompletionRoutine != IntPtr.Zero)
+                {
+                    return WS2_32.WSARecv(
+                        socket,
+                        lpWSABuffer,
+                        bufferCount,
+                        lpNumberOfBytesRecvd,
+                        ref flags,
+                        lpOverlapped,
+                        lpCompletionRoutine);
+                }
+
+                res = WS2_32.WSARecv(
+                    socket,
+                    lpWSABuffer,
+                    bufferCount,
+                    lpNumberOfBytesRecvd,
+                    ref flags,
+                    lpOverlapped,
+                    lpCompletionRoutine);
+
                 if (res == SocketError.Success)
                 {
                     int BytesRecvd = Marshal.ReadInt32(lpNumberOfBytesRecvd);
@@ -839,8 +924,16 @@ namespace WPELibrary.Lib
                                 bytesToWrite = Math.Min(bNewBuffer.Length, BytesRecvd);
                                 bNewBuffer.AsSpan(0, bytesToWrite).CopyTo(bufferSpan);
                             }
+                            else
+                            {
+                                SetReceiveInterceptError(lpNumberOfBytesRecvd);
+                                res = SocketError.SocketError;
+                            }
 
-                            Marshal.WriteInt32(lpNumberOfBytesRecvd, bytesToWrite);
+                            if (filterAction != Socket_Cache.Filter.FilterAction.Intercept)
+                            {
+                                Marshal.WriteInt32(lpNumberOfBytesRecvd, bytesToWrite);
+                            }
 
                             _ = Socket_Operation.ProcessingHookResultAsync(
                                 socket,
@@ -906,8 +999,16 @@ namespace WPELibrary.Lib
                                     }
                                 }
                             }
+                            else if (filterAction == Socket_Cache.Filter.FilterAction.Intercept)
+                            {
+                                SetReceiveInterceptError(lpNumberOfBytesRecvd);
+                                res = SocketError.SocketError;
+                            }
 
-                            Marshal.WriteInt32(lpNumberOfBytesRecvd, bytesToWrite);
+                            if (filterAction != Socket_Cache.Filter.FilterAction.Intercept)
+                            {
+                                Marshal.WriteInt32(lpNumberOfBytesRecvd, bytesToWrite);
+                            }
 
                             _ = Socket_Operation.ProcessingHookResultAsync(
                                 socket,
@@ -952,6 +1053,20 @@ namespace WPELibrary.Lib
 
             try
             {
+                if (lpOverlapped != IntPtr.Zero || lpCompletionRoutine != IntPtr.Zero)
+                {
+                    return WS2_32.WSASendTo(
+                        socket,
+                        lpWSABuffer,
+                        bufferCount,
+                        lpNumberOfBytesSent,
+                        flags,
+                        ref To,
+                        lpToLen,
+                        lpOverlapped,
+                        lpCompletionRoutine);
+                }
+
                 DateTime packetTime = DateTime.Now;
                 Socket_Cache.SocketPacket.WSABUF* pWSABuffers = (Socket_Cache.SocketPacket.WSABUF*)lpWSABuffer;
 
@@ -989,18 +1104,23 @@ namespace WPELibrary.Lib
                             int WSABufferLen = pWSABuffers[0].len;
                             pWSABuffers[0].len = BytesSent;
 
-                            res = WS2_32.WSASendTo(
-                                socket,
-                                lpWSABuffer,
-                                bufferCount,
-                                lpNumberOfBytesSent,
-                                flags,
-                                ref To,
-                                lpToLen,
-                                lpOverlapped,
-                                lpCompletionRoutine);
-
-                            pWSABuffers[0].len = WSABufferLen;
+                            try
+                            {
+                                res = WS2_32.WSASendTo(
+                                    socket,
+                                    lpWSABuffer,
+                                    bufferCount,
+                                    lpNumberOfBytesSent,
+                                    flags,
+                                    ref To,
+                                    lpToLen,
+                                    lpOverlapped,
+                                    lpCompletionRoutine);
+                            }
+                            finally
+                            {
+                                pWSABuffers[0].len = WSABufferLen;
+                            }
                         }
 
                         BytesSent = Marshal.ReadInt32(lpNumberOfBytesSent);
@@ -1057,46 +1177,50 @@ namespace WPELibrary.Lib
                             Marshal.WriteInt32(lpNumberOfBytesSent, totalBytes);
                             res = SocketError.Success;
                         }
-                        else if (bNewBuffer != null && bNewBuffer.Length > 0)
+                        else if (bNewBuffer != null)
                         {
-                            int remainingBytes = Math.Min(bNewBuffer.Length, totalBytes);
-                            int bufferIndex = 0;
-                            int bytesCopied = 0;
-
                             int[] originalLengths = new int[bufferCount];
                             for (int i = 0; i < bufferCount; i++)
                             {
                                 originalLengths[i] = pWSABuffers[i].len;
                             }
 
-                            while (remainingBytes > 0 && bufferIndex < bufferCount)
+                            try
                             {
-                                int copyLength = Math.Min(pWSABuffers[bufferIndex].len, remainingBytes);
-                                if (copyLength > 0)
+                                int remainingBytes = Math.Min(bNewBuffer.Length, totalBytes);
+                                int bytesCopied = 0;
+
+                                for (int i = 0; i < bufferCount; i++)
                                 {
-                                    Span<byte> destSpan = new Span<byte>((byte*)pWSABuffers[bufferIndex].buf, pWSABuffers[bufferIndex].len);
-                                    bNewBuffer.AsSpan(bytesCopied, copyLength).CopyTo(destSpan);
-                                    pWSABuffers[bufferIndex].len = copyLength;
-                                    bytesCopied += copyLength;
-                                    remainingBytes -= copyLength;
+                                    int copyLength = Math.Min(originalLengths[i], remainingBytes);
+                                    if (copyLength > 0)
+                                    {
+                                        Span<byte> destSpan = new Span<byte>((byte*)pWSABuffers[i].buf, originalLengths[i]);
+                                        bNewBuffer.AsSpan(bytesCopied, copyLength).CopyTo(destSpan);
+                                        bytesCopied += copyLength;
+                                        remainingBytes -= copyLength;
+                                    }
+
+                                    pWSABuffers[i].len = copyLength;
                                 }
-                                bufferIndex++;
+
+                                res = WS2_32.WSASendTo(
+                                    socket,
+                                    lpWSABuffer,
+                                    bufferCount,
+                                    lpNumberOfBytesSent,
+                                    flags,
+                                    ref To,
+                                    lpToLen,
+                                    lpOverlapped,
+                                    lpCompletionRoutine);
                             }
-
-                            res = WS2_32.WSASendTo(
-                                socket,
-                                lpWSABuffer,
-                                bufferCount,
-                                lpNumberOfBytesSent,
-                                flags,
-                                ref To,
-                                lpToLen,
-                                lpOverlapped,
-                                lpCompletionRoutine);
-
-                            for (int i = 0; i < bufferCount; i++)
+                            finally
                             {
-                                pWSABuffers[i].len = originalLengths[i];
+                                for (int i = 0; i < bufferCount; i++)
+                                {
+                                    pWSABuffers[i].len = originalLengths[i];
+                                }
                             }
                         }
                         else
@@ -1152,10 +1276,35 @@ namespace WPELibrary.Lib
             [In] IntPtr lpCompletionRoutine)
         {
             Socket_Cache.SocketPacket.PacketType packetType = Socket_Cache.SocketPacket.PacketType.WSARecvFrom;
-            SocketError res = WS2_32.WSARecvFrom(socket, lpWSABuffer, bufferCount, lpNumberOfBytesRecvd, ref flags, ref from, lpFromlen, lpOverlapped, lpCompletionRoutine);
+            SocketError res = SocketError.SocketError;
 
             try
             {
+                if (lpOverlapped != IntPtr.Zero || lpCompletionRoutine != IntPtr.Zero)
+                {
+                    return WS2_32.WSARecvFrom(
+                        socket,
+                        lpWSABuffer,
+                        bufferCount,
+                        lpNumberOfBytesRecvd,
+                        ref flags,
+                        ref from,
+                        lpFromlen,
+                        lpOverlapped,
+                        lpCompletionRoutine);
+                }
+
+                res = WS2_32.WSARecvFrom(
+                    socket,
+                    lpWSABuffer,
+                    bufferCount,
+                    lpNumberOfBytesRecvd,
+                    ref flags,
+                    ref from,
+                    lpFromlen,
+                    lpOverlapped,
+                    lpCompletionRoutine);
+
                 if (res == SocketError.Success)
                 {
                     int BytesRecvd = Marshal.ReadInt32(lpNumberOfBytesRecvd);
@@ -1188,8 +1337,16 @@ namespace WPELibrary.Lib
                                 bytesToWrite = Math.Min(bNewBuffer.Length, BytesRecvd);
                                 bNewBuffer.AsSpan(0, bytesToWrite).CopyTo(bufferSpan);
                             }
+                            else
+                            {
+                                SetReceiveInterceptError(lpNumberOfBytesRecvd);
+                                res = SocketError.SocketError;
+                            }
 
-                            Marshal.WriteInt32(lpNumberOfBytesRecvd, bytesToWrite);
+                            if (filterAction != Socket_Cache.Filter.FilterAction.Intercept)
+                            {
+                                Marshal.WriteInt32(lpNumberOfBytesRecvd, bytesToWrite);
+                            }
 
                             _ = Socket_Operation.ProcessingHookResultAsync(
                                 socket,
@@ -1255,8 +1412,16 @@ namespace WPELibrary.Lib
                                     }
                                 }
                             }
+                            else if (filterAction == Socket_Cache.Filter.FilterAction.Intercept)
+                            {
+                                SetReceiveInterceptError(lpNumberOfBytesRecvd);
+                                res = SocketError.SocketError;
+                            }
 
-                            Marshal.WriteInt32(lpNumberOfBytesRecvd, bytesToWrite);
+                            if (filterAction != Socket_Cache.Filter.FilterAction.Intercept)
+                            {
+                                Marshal.WriteInt32(lpNumberOfBytesRecvd, bytesToWrite);
+                            }
 
                             _ = Socket_Operation.ProcessingHookResultAsync(
                                 socket,

@@ -113,12 +113,26 @@ Add-Type -Path $sqliteDll
 $databaseType = [WPELibrary.Lib.Socket_Cache+DataBase]
 $bindingFlags = [System.Reflection.BindingFlags]::Static -bor [System.Reflection.BindingFlags]::NonPublic
 $connectionField = $databaseType.GetField("conStr", $bindingFlags)
+$connectionProperty = $databaseType.GetProperty("conStr", $bindingFlags)
 $createSend = $databaseType.GetMethod("CreateTable_Send", $bindingFlags)
 $createByteSweep = $databaseType.GetMethod("CreateTable_ByteSweep", $bindingFlags)
-$originalConnection = $connectionField.GetValue($null)
+if ($null -eq $connectionField -and $null -eq $connectionProperty) {
+    throw "The database connection member was not found."
+}
+$originalConnection = if ($null -ne $connectionField) {
+    $connectionField.GetValue($null)
+}
+else {
+    $connectionProperty.GetValue($null, $null)
+}
 $tempDatabase = Join-Path ([System.IO.Path]::GetTempPath()) ("wpe-byte-annotation-" + [Guid]::NewGuid().ToString("N") + ".db")
 $tempConnection = "Data Source=$tempDatabase;Version=3;"
-$connectionField.SetValue($null, $tempConnection)
+if ($null -ne $connectionField) {
+    $connectionField.SetValue($null, $tempConnection)
+}
+else {
+    $connectionProperty.SetValue($null, $tempConnection, $null)
+}
 
 try {
     $connection = New-Object System.Data.SQLite.SQLiteConnection($tempConnection)
@@ -194,7 +208,12 @@ CREATE TABLE ByteSweepPreset (GUID TEXT NOT NULL PRIMARY KEY, IsEnable BOOLEAN D
     Assert-Equal 1 $presetRoundTrip.Count "byte-sweep annotations must survive SQLite persistence"
 }
 finally {
-    $connectionField.SetValue($null, $originalConnection)
+    if ($null -ne $connectionField) {
+        $connectionField.SetValue($null, $originalConnection)
+    }
+    else {
+        $connectionProperty.SetValue($null, $originalConnection, $null)
+    }
     if (Test-Path -LiteralPath $tempDatabase) {
         Remove-Item -LiteralPath $tempDatabase -Force
     }

@@ -13,6 +13,9 @@ namespace WPELibrary.Lib.NativeMethods
         [DllImport("WS2_32.dll", CharSet = CharSet.Unicode, SetLastError = true, CallingConvention = CallingConvention.StdCall)]
         public static extern SocketError WSAGetLastError();
 
+        [DllImport("WS2_32.dll", CharSet = CharSet.Unicode, SetLastError = true, CallingConvention = CallingConvention.StdCall)]
+        public static extern void WSASetLastError(int errorCode);
+
         #endregion
 
         #region//WSAGetOverlappedResult

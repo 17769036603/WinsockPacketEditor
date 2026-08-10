@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
 using System.Reflection;
+using System.Linq;
 using System.Threading;
 
 namespace WPELibrary.Lib
@@ -22,6 +23,7 @@ namespace WPELibrary.Lib
         private int resolvedSystemSocket;
         private List<Socket_PacketInfo> SendCollection;
         private readonly ManualResetEventSlim sendStopped = new ManualResetEventSlim(true);
+        private readonly ManualResetEventSlim sendPauseGate = new ManualResetEventSlim(true);
         public BackgroundWorker Worker = new BackgroundWorker();
 
         #region//初始化
@@ -45,12 +47,12 @@ namespace WPELibrary.Lib
 
         #region//启动发送
 
-        public void StartSend(string SendName, bool SystemSocket, int LoopCNT, int LoopINT, BindingList<Socket_PacketInfo> SendCollection)
+        public bool StartSend(string SendName, bool SystemSocket, int LoopCNT, int LoopINT, BindingList<Socket_PacketInfo> SendCollection)
         {
             int socketSnapshot = SystemSocket
                 ? Socket_Cache.System.SystemSocket
                 : 0;
-            this.StartSend(
+            return this.StartSend(
                 SendName,
                 SystemSocket,
                 socketSnapshot,
@@ -59,9 +61,9 @@ namespace WPELibrary.Lib
                 SendCollection);
         }
 
-        public void StartSend(string SendName, int ResolvedSystemSocket, int LoopCNT, int LoopINT, BindingList<Socket_PacketInfo> SendCollection)
+        public bool StartSend(string SendName, int ResolvedSystemSocket, int LoopCNT, int LoopINT, BindingList<Socket_PacketInfo> SendCollection)
         {
-            this.StartSend(
+            return this.StartSend(
                 SendName,
                 true,
                 ResolvedSystemSocket,
@@ -70,7 +72,7 @@ namespace WPELibrary.Lib
                 SendCollection);
         }
 
-        private void StartSend(
+        public bool StartSend(
             string SendName,
             bool SystemSocket,
             int ResolvedSystemSocket,
@@ -80,41 +82,51 @@ namespace WPELibrary.Lib
         {
             try
             {
-                if (SendCollection.Count > 0)
+                if (SendCollection == null || SendCollection.Count == 0)
                 {
-                    if (!this.Worker.IsBusy)
-                    {
-                        this.Total_Send = 0;
-                        this.Send_Success = 0;
-                        this.Send_Failure = 0;
+                    return false;
+                }
+                if (LoopCNT < 0 || LoopINT < 0)
+                {
+                    return false;
+                }
+                if (this.Worker.IsBusy)
+                {
+                    return false;
+                }
 
-                        this.SendName = SendName;
-                        this.SystemSocket = SystemSocket;
-                        this.resolvedSystemSocket = Math.Max(0, ResolvedSystemSocket);
-                        this.LoopCNT = LoopCNT;
-                        this.LoopINT = LoopINT;
-                        this.SendCollection = CreateSendSnapshot(SendCollection);
+                this.Total_Send = 0;
+                this.Send_Success = 0;
+                this.Send_Failure = 0;
 
-                        this.cts = new CancellationTokenSource();
-                        this.sendStopped.Reset();
-                        try
-                        {
-                            this.Worker.RunWorkerAsync();
-                        }
-                        catch
-                        {
-                            this.sendStopped.Set();
-                            throw;
-                        }
+                this.SendName = SendName;
+                this.SystemSocket = SystemSocket;
+                this.resolvedSystemSocket = Math.Max(0, ResolvedSystemSocket);
+                this.LoopCNT = LoopCNT;
+                this.LoopINT = LoopINT;
+                this.SendCollection = CreateSendSnapshot(SendCollection);
 
-                        string sLog = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_84), this.SendName);
-                        Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, sLog);
-                    }
-                }                
+                this.cts = new CancellationTokenSource();
+                this.sendPauseGate.Set();
+                this.sendStopped.Reset();
+                try
+                {
+                    this.Worker.RunWorkerAsync();
+                }
+                catch
+                {
+                    this.sendStopped.Set();
+                    throw;
+                }
+
+                string sLog = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_84), this.SendName);
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, sLog);
+                return true;
             }
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                return false;
             }
         }
 
@@ -145,12 +157,44 @@ namespace WPELibrary.Lib
         public bool WaitForStop(int millisecondsTimeout)
         {
             this.StopSend();
+            if (millisecondsTimeout == Timeout.Infinite)
+            {
+                this.sendStopped.Wait();
+                return true;
+            }
             return this.sendStopped.Wait(Math.Max(0, millisecondsTimeout));
         }
 
         public bool WaitForCompletion(int millisecondsTimeout)
         {
+            if (millisecondsTimeout == Timeout.Infinite)
+            {
+                this.sendStopped.Wait();
+                return true;
+            }
             return this.sendStopped.Wait(Math.Max(0, millisecondsTimeout));
+        }
+
+        public bool PauseSend()
+        {
+            if (!this.Worker.IsBusy)
+            {
+                return false;
+            }
+
+            this.sendPauseGate.Reset();
+            return true;
+        }
+
+        public bool ResumeSend()
+        {
+            this.sendPauseGate.Set();
+            return true;
+        }
+
+        public bool IsPaused
+        {
+            get { return !this.sendPauseGate.IsSet && this.Worker.IsBusy; }
         }
 
         private static List<Socket_PacketInfo> CreateSendSnapshot(BindingList<Socket_PacketInfo> source)
@@ -158,6 +202,12 @@ namespace WPELibrary.Lib
             List<Socket_PacketInfo> snapshot = new List<Socket_PacketInfo>(source.Count);
             foreach (Socket_PacketInfo packet in source)
             {
+                if (packet == null)
+                {
+                    snapshot.Add(null);
+                    continue;
+                }
+
                 snapshot.Add(new Socket_PacketInfo
                 {
                     PacketTime = packet.PacketTime,
@@ -169,7 +219,13 @@ namespace WPELibrary.Lib
                     PacketBuffer = packet.PacketBuffer == null ? null : (byte[])packet.PacketBuffer.Clone(),
                     PacketData = packet.PacketData,
                     PacketLen = packet.PacketLen,
-                    FilterAction = packet.FilterAction
+                    FilterAction = packet.FilterAction,
+                    ByteAnnotations = Socket_ByteAnnotationEngine.Clone(packet.ByteAnnotations),
+                    VariableBindings = (packet.VariableBindings ?? new List<PresetVariableBinding>())
+                        .Where(item => item != null)
+                        .Select(item => item.Clone())
+                        .ToList(),
+                    SortOrder = packet.SortOrder
                 });
             }
 
@@ -198,6 +254,7 @@ namespace WPELibrary.Lib
                 {
                     foreach (Socket_PacketInfo spi in this.SendCollection)
                     {
+                        this.sendPauseGate.Wait(this.cts.Token);
                         if (Worker.CancellationPending)
                         {
                             e.Cancel = true;
@@ -205,13 +262,18 @@ namespace WPELibrary.Lib
                         }
                         else
                         {
-                            int Socket = spi.PacketSocket;
-                            if (this.SystemSocket)
+                            int Socket = spi == null ? 0 : spi.PacketSocket;
+                            if (this.SystemSocket && spi != null)
                             {
                                 Socket = this.resolvedSystemSocket;
                             }
 
-                            if (Socket > 0)
+                            if (Socket <= 0 || spi == null || spi.PacketBuffer == null || spi.PacketBuffer.Length == 0)
+                            {
+                                this.Send_Failure++;
+                                this.Total_Send++;
+                            }
+                            else
                             {
                                 bool bOK = Socket_Operation.SendPacket(Socket, spi.PacketType, string.Empty, spi.PacketTo, spi.PacketBuffer);
 
@@ -225,14 +287,14 @@ namespace WPELibrary.Lib
                                 }
 
                                 this.Total_Send++;
+                            }
 
-                                if (this.LoopINT > 0)
-                                {
-                                    Worker.ReportProgress(loopIndex);
-                                    Socket_Operation.DoSleepAsync(this.LoopINT, this.cts.Token)
-                                        .GetAwaiter()
-                                        .GetResult();
-                                }
+                            if (this.LoopINT > 0)
+                            {
+                                Worker.ReportProgress(loopIndex);
+                                Socket_Operation.DoSleepAsync(this.LoopINT, this.cts.Token)
+                                    .GetAwaiter()
+                                    .GetResult();
                             }
                         }
                     }
@@ -293,6 +355,7 @@ namespace WPELibrary.Lib
 
                 this.cts?.Dispose();
                 this.cts = null;
+                this.sendPauseGate.Set();
             }
             catch (Exception ex)
             {
