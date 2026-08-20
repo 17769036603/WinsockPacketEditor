@@ -1,5 +1,5 @@
 <div align="center">
-<p><img src="https://www.wpe64.com/web_images/wpe.png" height="150"></p>
+<p><img src="https://www.wpe64.com/assets/img/wpe.ico" height="150"></p>
 
 # Winsock Packet Editor（WPE x64）
 
@@ -13,10 +13,6 @@
 &bull; <a href="https://www.wpe64.com">Official website</a>
 
 </div>
-
-## [⭐] 星星历史
-
-[![Star History Chart](https://api.star-history.com/svg?repos=x-nas/WinsockPacketEditor&type=Date)](https://www.star-history.com/#x-nas/WinsockPacketEditor&Date)
 
 ## [📚] 软件简介
 
