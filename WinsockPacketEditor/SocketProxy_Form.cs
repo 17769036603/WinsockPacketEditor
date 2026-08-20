@@ -908,7 +908,7 @@ namespace WinsockPacketEditor
 
         #region//显示代理列表（异步）
 
-        private async void Event_RecProxyData(Socket_ProxyData spd)
+        private void Event_RecProxyData(Socket_ProxyData spd)
         {
             try
             {
@@ -944,34 +944,31 @@ namespace WinsockPacketEditor
                             break;
                     }
 
-                    await Task.Run(() =>
+                    RootNode = Socket_Operation.FindNodeSync(this.tvProxyData.Nodes, spd.Domain);
+                    if (RootNode == null)
                     {
-                        RootNode = Socket_Operation.FindNodeSync(this.tvProxyData.Nodes, spd.Domain);
-                        if (RootNode == null)
+                        RootNode = Socket_Operation.AddTreeNode(this.tvProxyData, this.tvProxyData.Nodes, spd.Domain, RootImgIndex, null);
+                        Socket_Operation.AddTreeNode(this.tvProxyData, RootNode.Nodes, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_138), RequestImgIndex, null);
+                        Socket_Operation.AddTreeNode(this.tvProxyData, RootNode.Nodes, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_139), ResponseImgIndex, null);
+                    }
+
+                    if (!this.cbNoRecordData.Checked)
+                    {
+                        TreeNode DataNode = new TreeNode();
+                        switch (spd.DataType)
                         {
-                            RootNode = Socket_Operation.AddTreeNode(this.tvProxyData, this.tvProxyData.Nodes, spd.Domain, RootImgIndex, null);
-                            Socket_Operation.AddTreeNode(this.tvProxyData, RootNode.Nodes, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_138), RequestImgIndex, null);
-                            Socket_Operation.AddTreeNode(this.tvProxyData, RootNode.Nodes, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_139), ResponseImgIndex, null);
+                            case Socket_Cache.SocketProxy.DataType.Request:
+                                DataNode = RootNode.Nodes[0];
+                                break;
+
+                            case Socket_Cache.SocketProxy.DataType.Response:
+                                DataNode = RootNode.Nodes[1];
+                                break;
                         }
 
-                        if (!this.cbNoRecordData.Checked)
-                        {
-                            TreeNode DataNode = new TreeNode();
-                            switch (spd.DataType)
-                            {
-                                case Socket_Cache.SocketProxy.DataType.Request:
-                                    DataNode = RootNode.Nodes[0];
-                                    break;
-
-                                case Socket_Cache.SocketProxy.DataType.Response:
-                                    DataNode = RootNode.Nodes[1];
-                                    break;
-                            }
-
-                            string sDataNodeName = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_140), spd.Buffer.Length);
-                            Socket_Operation.AddTreeNode(this.tvProxyData, DataNode.Nodes, sDataNodeName, DataImgIndex, spd.Buffer);
-                        }
-                    });
+                        string sDataNodeName = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_140), spd.Buffer.Length);
+                        Socket_Operation.AddTreeNode(this.tvProxyData, DataNode.Nodes, sDataNodeName, DataImgIndex, spd.Buffer);
+                    }
 
                     if (tvProxyData.InvokeRequired)
                     {
@@ -996,7 +993,7 @@ namespace WinsockPacketEditor
 
         #region//显示客户端列表（异步）
 
-        private async void Event_RecProxyInfo(Socket_ProxyTCP spt)
+        private void Event_RecProxyInfo(Socket_ProxyTCP spt)
         {
             try
             {
@@ -1015,23 +1012,20 @@ namespace WinsockPacketEditor
                         {
                             string sChildName = spt.Client.Address;
 
-                            await Task.Run(() =>
+                            TreeNode RootNode = Socket_Operation.FindNodeSync(this.tvProxyInfo.Nodes, sRootName);
+                            if (RootNode == null)
                             {
-                                TreeNode RootNode = Socket_Operation.FindNodeSync(this.tvProxyInfo.Nodes, sRootName);
-                                if (RootNode == null)
-                                {
-                                    RootNode = Socket_Operation.AddTreeNode(this.tvProxyInfo, this.tvProxyInfo.Nodes, sRootName, iRootImgIndex, null);
-                                }
+                                RootNode = Socket_Operation.AddTreeNode(this.tvProxyInfo, this.tvProxyInfo.Nodes, sRootName, iRootImgIndex, null);
+                            }
 
-                                if (RootNode != null)
+                            if (RootNode != null)
+                            {
+                                TreeNode ChildNode = Socket_Operation.FindNodeSync(RootNode.Nodes, sChildName);
+                                if (ChildNode == null)
                                 {
-                                    TreeNode ChildNode = Socket_Operation.FindNodeSync(RootNode.Nodes, sChildName);
-                                    if (ChildNode == null)
-                                    {
-                                        ChildNode = Socket_Operation.AddTreeNode(this.tvProxyInfo, RootNode.Nodes, sChildName, iChildImgIndex, null);
-                                    }
-                                }                                
-                            });
+                                    ChildNode = Socket_Operation.AddTreeNode(this.tvProxyInfo, RootNode.Nodes, sChildName, iChildImgIndex, null);
+                                }
+                            }
 
                             if (tvProxyInfo.InvokeRequired)
                             {
@@ -1058,112 +1052,97 @@ namespace WinsockPacketEditor
 
         #region//更新客户端链接（异步）
 
-        private async Task UpdateClientLinks()
+        private Task UpdateClientLinks()
         {
-            await Task.Run(() =>
+            try
             {
-                try
+                ConcurrentBag<Socket_ProxyTCP> sptRemove = new ConcurrentBag<Socket_ProxyTCP>();
+
+                var snapshot = Socket_Cache.SocketProxyList.lstProxyTCP.ToArray();
+                foreach (Socket_ProxyTCP spt in snapshot)
                 {
-                    ConcurrentBag<Socket_ProxyTCP> sptRemove = new ConcurrentBag<Socket_ProxyTCP>();
-
-                    var snapshot = Socket_Cache.SocketProxyList.lstProxyTCP.ToArray();
-                    foreach (Socket_ProxyTCP spt in snapshot)
+                    if (spt.Client.Socket == null)
                     {
-                        if (spt.Client.Socket == null)
-                        {
-                            string ClientIP = Socket_Cache.SocketProxy.GetClientIPAddress(spt);
-                            string ClientUserName = Socket_Cache.ProxyAccount.GetUserName_ByAccountID(spt.AID);
+                        string ClientIP = Socket_Cache.SocketProxy.GetClientIPAddress(spt);
+                        string ClientUserName = Socket_Cache.ProxyAccount.GetUserName_ByAccountID(spt.AID);
 
-                            if (string.IsNullOrEmpty(ClientUserName))
+                        if (string.IsNullOrEmpty(ClientUserName))
+                        {
+                            TreeNode ClientNode = Socket_Operation.FindNodeSync(this.tvProxyInfo.Nodes, spt.Client.Address);
+                            if (ClientNode != null)
                             {
-                                TreeNode ClientNode = Socket_Operation.FindNodeSync(this.tvProxyInfo.Nodes, spt.Client.Address);
+                                ClientNode.Remove();
+                            }
+
+                            sptRemove.Add(spt);
+                        }
+                        else
+                        {
+                            string sRootName = Socket_Operation.GetClientListName(ClientIP, ClientUserName);
+
+                            TreeNode RootNode = Socket_Operation.FindNodeSync(this.tvProxyInfo.Nodes, sRootName);
+                            if (RootNode != null)
+                            {
+                                TreeNode ClientNode = Socket_Operation.FindNodeSync(RootNode.Nodes, spt.Client.Address);
                                 if (ClientNode != null)
                                 {
-                                    if (!tvProxyInfo.IsDisposed)
-                                    {
-                                        tvProxyInfo.Invoke(new MethodInvoker(delegate
-                                        {
-                                            ClientNode.Remove();
-                                        }));
-                                    }
+                                    ClientNode.Remove();
+                                    sptRemove.Add(spt);
                                 }
 
-                                sptRemove.Add(spt);
-                            }
-                            else
-                            {
-                                string sRootName = Socket_Operation.GetClientListName(ClientIP, ClientUserName);
-
-                                TreeNode RootNode = Socket_Operation.FindNodeSync(this.tvProxyInfo.Nodes, sRootName);
-                                if (RootNode != null)
+                                if (RootNode.Nodes.Count == 0)
                                 {
-                                    TreeNode ClientNode = Socket_Operation.FindNodeSync(RootNode.Nodes, spt.Client.Address);
+                                    Socket_Cache.ProxyAccount.DeleteProxyAuthInfo_ByAIDAndIP(spt.AID, ClientIP);
 
-                                    if (!tvProxyInfo.IsDisposed)
+                                    if (this.cbDeleteClosed.Checked)
                                     {
-                                        tvProxyInfo.Invoke(new MethodInvoker(delegate
-                                        {
-                                            if (ClientNode != null)
-                                            {
-                                                ClientNode.Remove();
-                                                sptRemove.Add(spt);
-                                            }
+                                        RootNode.Remove();
+                                    }
 
-                                            if (RootNode.Nodes.Count == 0)
-                                            {
-                                                Socket_Cache.ProxyAccount.DeleteProxyAuthInfo_ByAIDAndIP(spt.AID, ClientIP);
-
-                                                if (this.cbDeleteClosed.Checked)
-                                                {
-                                                    RootNode.Remove();
-                                                }
-
-                                                if (spt.AID != null && spt.AID != Guid.Empty)
-                                                {
-                                                    Socket_Cache.ProxyAccount.SetOnline_ByAccountID(spt.AID, false);
-                                                }
-                                            }
-                                        }));
+                                    if (spt.AID != null && spt.AID != Guid.Empty)
+                                    {
+                                        Socket_Cache.ProxyAccount.SetOnline_ByAccountID(spt.AID, false);
                                     }
                                 }
                             }
-                        }                        
+                        }
                     }
+                }
 
-                    foreach (Socket_ProxyTCP spt in sptRemove)
-                    {
-                        Socket_Cache.SocketProxyList.ClearTCP(spt);
-                    }
-                }
-                catch (Exception ex)
+                foreach (Socket_ProxyTCP spt in sptRemove)
                 {
-                    Socket_Operation.DoLog_Proxy(nameof(UpdateClientLinks), ex.Message);
+                    Socket_Cache.SocketProxyList.ClearTCP(spt);
                 }
-            });
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog_Proxy(nameof(UpdateClientLinks), ex.Message);
+            }
+
+            return Task.CompletedTask;
         }
 
         #endregion
 
         #region//更新账号链接数和设备数（异步）
 
-        private async Task UpdateAccountLinksAndDevices()
+        private Task UpdateAccountLinksAndDevices()
         {
-            await Task.Run(() =>
+            try
             {
-                try
+                foreach (Proxy_AuthInfo pai in Socket_Cache.ProxyAccount.lstProxyAuth.ToList())
                 {
-                    foreach (Proxy_AuthInfo pai in Socket_Cache.ProxyAccount.lstProxyAuth.ToList())
-                    {
-                        string ClientIP = pai.IPAddress.ToString();
-                        pai.LinksNumber = Socket_Cache.ProxyAccount.GetLinksNumber_ByAccountID(pai.AID, ClientIP, this.tvProxyInfo.Nodes);
-                        pai.DevicesNumber = Socket_Cache.ProxyAccount.GetDevicesNumber_ByAccountID(pai.AID);
-                    }
+                    string ClientIP = pai.IPAddress.ToString();
+                    pai.LinksNumber = Socket_Cache.ProxyAccount.GetLinksNumber_ByAccountID(pai.AID, ClientIP, this.tvProxyInfo.Nodes);
+                    pai.DevicesNumber = Socket_Cache.ProxyAccount.GetDevicesNumber_ByAccountID(pai.AID);
                 }
-                catch (Exception ex)
-                {
-                    Socket_Operation.DoLog_Proxy(nameof(UpdateAccountLinksAndDevices), ex.Message);
-                }
-            });
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog_Proxy(nameof(UpdateAccountLinksAndDevices), ex.Message);
+            }
+
+            return Task.CompletedTask;
         }
 
         #endregion        

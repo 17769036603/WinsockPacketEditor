@@ -102,9 +102,17 @@ namespace WPELibrary
             {
                 if (dgvMapRemote.Columns[e.ColumnIndex] is DataGridViewCheckBoxColumn && e.RowIndex >= 0)
                 {
-                    bool bCheck = Convert.ToBoolean(dgvMapRemote.Rows[e.RowIndex].Cells[e.ColumnIndex].Value);
-                    dgvMapRemote.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = !bCheck;
-                    Socket_Cache.ProxyMapping.lstMapRemote[e.RowIndex].IsEnable = !bCheck;
+                    Proxy_MapRemote rule = Socket_Cache.ProxyMapping.lstMapRemote[e.RowIndex];
+                    bool originalValue = rule.IsEnable;
+                    bool newValue = !originalValue;
+                    if (!Socket_Cache.ProxyMapping.TryApplyMapRemoteChangeAndSave(() =>
+                        rule.IsEnable = newValue))
+                    {
+                        dgvMapRemote.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = originalValue;
+                        Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                        return;
+                    }
+                    dgvMapRemote.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = newValue;
                 }
             }
             catch (Exception ex)
@@ -136,7 +144,13 @@ namespace WPELibrary
                     int iSelectIndex = this.dgvMapRemote.SelectedRows[0].Index;
                     if (iSelectIndex >= 0 && iSelectIndex < Socket_Cache.ProxyMapping.lstMapRemote.Count)
                     {
-                        Socket_Cache.ProxyMapping.DelMapRemote(Socket_Cache.ProxyMapping.lstMapRemote[iSelectIndex]);
+                        Proxy_MapRemote rule = Socket_Cache.ProxyMapping.lstMapRemote[iSelectIndex];
+                        if (!Socket_Cache.ProxyMapping.TryApplyMapRemoteChangeAndSave(() =>
+                            Socket_Cache.ProxyMapping.DelMapRemote(rule)))
+                        {
+                            Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                            return;
+                        }
                         bindingSource.ResetBindings(false);
                     }
                 }
@@ -183,7 +197,13 @@ namespace WPELibrary
 
                         if (pmr != null)
                         {
-                            Socket_Cache.ProxyMapping.UpdateMapRemote_ByListAction(Socket_Cache.System.ListAction.Top, pmr);
+                            if (!Socket_Cache.ProxyMapping.TryApplyMapRemoteChangeAndSave(() =>
+                                Socket_Cache.ProxyMapping.UpdateMapRemote_ByListAction(
+                                    Socket_Cache.System.ListAction.Top, pmr)))
+                            {
+                                Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                                return;
+                            }
                         }
 
                         break;
@@ -192,7 +212,13 @@ namespace WPELibrary
 
                         if (pmr != null)
                         {
-                            Socket_Cache.ProxyMapping.UpdateMapRemote_ByListAction(Socket_Cache.System.ListAction.Up, pmr);
+                            if (!Socket_Cache.ProxyMapping.TryApplyMapRemoteChangeAndSave(() =>
+                                Socket_Cache.ProxyMapping.UpdateMapRemote_ByListAction(
+                                    Socket_Cache.System.ListAction.Up, pmr)))
+                            {
+                                Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                                return;
+                            }
                         }
 
                         break;
@@ -201,7 +227,13 @@ namespace WPELibrary
 
                         if (pmr != null)
                         {
-                            Socket_Cache.ProxyMapping.UpdateMapRemote_ByListAction(Socket_Cache.System.ListAction.Down, pmr);
+                            if (!Socket_Cache.ProxyMapping.TryApplyMapRemoteChangeAndSave(() =>
+                                Socket_Cache.ProxyMapping.UpdateMapRemote_ByListAction(
+                                    Socket_Cache.System.ListAction.Down, pmr)))
+                            {
+                                Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                                return;
+                            }
                         }
 
                         break;
@@ -210,7 +242,13 @@ namespace WPELibrary
 
                         if (pmr != null)
                         {
-                            Socket_Cache.ProxyMapping.UpdateMapRemote_ByListAction(Socket_Cache.System.ListAction.Bottom, pmr);
+                            if (!Socket_Cache.ProxyMapping.TryApplyMapRemoteChangeAndSave(() =>
+                                Socket_Cache.ProxyMapping.UpdateMapRemote_ByListAction(
+                                    Socket_Cache.System.ListAction.Bottom, pmr)))
+                            {
+                                Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                                return;
+                            }
                         }
 
                         break;

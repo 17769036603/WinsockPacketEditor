@@ -10,6 +10,7 @@ namespace Be.Windows.Forms
 		/// <summary>Initializes a byte style.</summary>
 		public ByteStyle(Color foreColor, Color backColor)
 		{
+			this = new ByteStyle();
 			ForeColor = foreColor;
 			BackColor = backColor;
 		}

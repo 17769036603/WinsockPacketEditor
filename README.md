@@ -20,11 +20,19 @@ WPE x64 是一款可以拦截并修改 WinSock 封包的 Windows 软件，自适
 
 WPE x64 支持直接注入 Windows 进程来拦截 Winsock 封包，也可以通过 SOCKS 代理模式来拦截 Winsock 封包.
 
+当前桌面入口默认使用进程注入模式；远程管理在系统配置已启用并填写 HTTPS 地址、账号和密码后随注入目标中的封包窗口启动，注入器主窗体不会提前占用移动端 HTTPS 端口；未注入目标时不会监听端口。SOCKS 代理仍未通过默认入口启用，未纳入真实业务验收。
+
+雷电模拟器端使用 `mobile/` Android 客户端，仅同步发送、递进和助手预设目录，并请求电脑端执行或停止。`/MobileSync/*` 在局域网内完全免账号、免密码；其他桌面 Web API 仍使用远程管理管理员账号。远程服务需要有效 HTTPS 证书绑定，客户端不允许明文 HTTP。Android 配置页已永久隐藏，应用启动或开机恢复后会直接连接并只显示悬浮控制。
+
 ## [📚] Introduction
 
 WPE x64 is a Windows software that can intercept and modify WinSock packets, with adaptive support for 32-bit and 64-bit target programs. The software supports two modes: SOCKS proxy and process injection, and has advanced filters and automated robots. It uses C# multi threading and message queue technology in development, and has intercepted over 1 million packets without freezing or exiting. 
 
 WPE x64 supports direct injection into Windows processes to intercept Winsock packets, and can also intercept Winsock packets through SOCKS proxy mode.
+
+The current desktop entry defaults to process-injection mode. When enabled with an HTTPS address, username, and password, remote management starts with the packet window inside the injected target; the injector main window does not reserve the mobile HTTPS port before that execution context exists. Without an injected target, no port is opened. SOCKS proxy mode is still not enabled by the default entry and is not covered by real-business acceptance.
+
+The Android client under `mobile/` synchronizes only send, progression, and assistant preset catalogs and requests execution or stop on the desktop. It must use a separate enabled proxy account; the desktop administrator credential is rejected by the mobile endpoints. The remote service requires a valid HTTPS certificate binding, and the client refuses cleartext HTTP.
 
 ## [🎖️] 软件特色
 

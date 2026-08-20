@@ -248,6 +248,8 @@ namespace WPELibrary.Lib
         public static string[] MutiLan_236 = { "逐字节递进已完成：{0} 个字节，共发送 {1} 次", "Byte sweep completed: {0} bytes, {1} sends" };
         public static string[] MutiLan_237 = { "逐字节递进已停止", "Byte sweep stopped" };
         public static string[] MutiLan_238 = { "逐字节递进发生错误：{0}", "Byte sweep failed: {0}" };
+        public static string[] MutiLan_239 = { "视觉等待", "Vision wait" };
+        public static string[] MutiLan_240 = { "等待识别结果：{0}", "Wait for vision result: {0}" };
 
         #endregion
 

@@ -62,6 +62,38 @@ namespace WPELibrary.Lib
             this.Path_To = Path_To;           
         }
 
+        public Proxy_MapRemote Clone()
+        {
+            return new Proxy_MapRemote(
+                this.IsEnable,
+                this.ProtocolType_From,
+                this.Host_From,
+                this.Port_From,
+                this.Path_From,
+                this.ProtocolType_To,
+                this.Host_To,
+                this.Port_To,
+                this.Path_To);
+        }
+
+        public void CopyFrom(Proxy_MapRemote source)
+        {
+            if (source == null)
+            {
+                return;
+            }
+
+            this.IsEnable = source.IsEnable;
+            this.ProtocolType_From = source.ProtocolType_From;
+            this.Host_From = source.Host_From;
+            this.Port_From = source.Port_From;
+            this.Path_From = source.Path_From;
+            this.ProtocolType_To = source.ProtocolType_To;
+            this.Host_To = source.Host_To;
+            this.Port_To = source.Port_To;
+            this.Path_To = source.Path_To;
+        }
+
         #endregion
     }
 }

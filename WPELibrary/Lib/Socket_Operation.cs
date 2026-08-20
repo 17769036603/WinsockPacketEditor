@@ -4,6 +4,7 @@ using Microsoft.Win32;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -33,6 +34,13 @@ namespace WPELibrary.Lib
 {   
     public static class Socket_Operation
     {
+        private static readonly object RemoteMgtSync = new object();
+
+        public static string GetUiText(string key)
+        {
+            return WPELibrary.Properties.Resources.ResourceManager.GetString(key) ?? key;
+        }
+
         public static Color col_Del = Color.Red;
         public static Color col_Add = Color.Green;
         public static bool bDoLog = true;
@@ -40,6 +48,46 @@ namespace WPELibrary.Lib
         public static DataTable ProcessTable;
         public static DataTable dtSearchFrom = new DataTable();
         public static DataTable dtPacketFormat = new DataTable();
+
+        private sealed class HookResultWorkItem
+        {
+            public HookResultWorkItem(
+                int socket,
+                byte[] rawBuffer,
+                byte[] buffer,
+                Socket_Cache.SocketPacket.PacketType packetType,
+                Socket_Cache.Filter.FilterAction filterAction,
+                Socket_Cache.SocketPacket.SockAddr address,
+                DateTime packetTime)
+            {
+                this.Socket = socket;
+                this.RawBuffer = rawBuffer;
+                this.Buffer = buffer;
+                this.PacketType = packetType;
+                this.FilterAction = filterAction;
+                this.Address = address;
+                this.PacketTime = packetTime;
+            }
+
+            public int Socket { get; private set; }
+            public byte[] RawBuffer { get; private set; }
+            public byte[] Buffer { get; private set; }
+            public Socket_Cache.SocketPacket.PacketType PacketType { get; private set; }
+            public Socket_Cache.Filter.FilterAction FilterAction { get; private set; }
+            public Socket_Cache.SocketPacket.SockAddr Address { get; private set; }
+            public DateTime PacketTime { get; private set; }
+        }
+
+        // Hook callbacks must return quickly. A bounded single consumer keeps high-frequency
+        // traffic from creating one ThreadPool work item per packet.
+        private const int MaxHookResultQueueCount = 20000;
+        private static readonly ConcurrentQueue<HookResultWorkItem> hookResultQueue =
+            new ConcurrentQueue<HookResultWorkItem>();
+        private static readonly AutoResetEvent hookResultQueueSignal = new AutoResetEvent(false);
+        private static readonly object hookResultWorkerSync = new object();
+        private static Thread hookResultWorker;
+        private static bool hookResultWorkerStopping;
+        private static int hookResultQueueCount;
 
         #region//密码字典
 
@@ -289,55 +337,122 @@ namespace WPELibrary.Lib
 
         #region//启动远程管理
 
-        public static void StartRemoteMGT()
+        public static bool StartRemoteMGT()
         {
-            try
+            lock (RemoteMgtSync)
             {
-                if (Socket_Cache.System.IsRemote)
+                if (Socket_Cache.System.WebServer != null)
                 {
-                    if (!string.IsNullOrEmpty(Socket_Cache.System.Remote_URL) &&
-                        !string.IsNullOrEmpty(Socket_Cache.System.Remote_UserName) &&
-                        !string.IsNullOrEmpty(Socket_Cache.System.Remote_PassWord))
-                    {
-                        string sLog = string.Empty;
+                    return true;
+                }
 
+                if (!Socket_Cache.System.IsRemote)
+                {
+                    return false;
+                }
+
+                if (string.IsNullOrWhiteSpace(Socket_Cache.System.Remote_URL) ||
+                    string.IsNullOrWhiteSpace(Socket_Cache.System.Remote_UserName) ||
+                    string.IsNullOrWhiteSpace(Socket_Cache.System.Remote_PassWord))
+                {
+                    Socket_Operation.DoLog_Proxy(
+                        nameof(StartRemoteMGT),
+                        "远程管理配置不完整，服务未启动。");
+                    return false;
+                }
+
+                if (!Uri.TryCreate(
+                        Socket_Cache.System.Remote_URL,
+                        UriKind.Absolute,
+                        out Uri remoteUri) ||
+                    !string.Equals(remoteUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+                {
+                    Socket_Operation.DoLog_Proxy(
+                        nameof(StartRemoteMGT),
+                        "远程管理仅允许使用 HTTPS 地址。");
+                    return false;
+                }
+
+                IDisposable server = null;
+                try
+                {
+                    server = WebApp.Start<Socket_Web>(Socket_Cache.System.Remote_URL);
+                    Socket_Operation.InitCCProxy_HTML();
+                    Socket_Cache.System.WebServer = server;
+
+                    Socket_Operation.DoLog(
+                        MethodBase.GetCurrentMethod().Name,
+                        string.Format(
+                            MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_178),
+                            Socket_Cache.System.Remote_URL));
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    if (server != null)
+                    {
                         try
                         {
-                            Socket_Cache.System.WebServer = WebApp.Start<Socket_Web>(Socket_Cache.System.Remote_URL);
-                            Socket_Operation.InitCCProxy_HTML();
-
-                            sLog = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_178), Socket_Cache.System.Remote_URL);
+                            server.Dispose();
                         }
-                        catch
+                        catch (Exception disposeException)
                         {
-                            sLog = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_179), Process.GetCurrentProcess().ProcessName);
+                            Socket_Operation.DoLog(
+                                nameof(StartRemoteMGT),
+                                disposeException.Message);
                         }
+                    }
 
-                        Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, sLog);
+                    Socket_Cache.System.WebServer = null;
+                    try
+                    {
+                        IDisposable tcpServer = Socket_TcpOwinHost.Start(remoteUri);
+                        Socket_Operation.InitCCProxy_HTML();
+                        Socket_Cache.System.WebServer = tcpServer;
+                        Socket_Operation.DoLog(
+                            nameof(StartRemoteMGT),
+                            string.Format(
+                                "HTTP.sys 监听启动失败（{0}），已切换到无需 URL ACL 的 HTTPS 后备主机：{1}",
+                                ex.Message,
+                                Socket_Cache.System.Remote_URL));
+                        return true;
+                    }
+                    catch (Exception fallbackException)
+                    {
+                        Socket_Operation.DoLog(
+                            nameof(StartRemoteMGT),
+                            string.Format(
+                                "远程管理启动失败：HTTP.sys={0}；HTTPS 后备主机={1}。请检查证书和端口占用。",
+                                ex.Message,
+                                fallbackException.Message));
+                        return false;
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
         }
 
         public static void StopRemoteMGT(Socket_Cache.System.SystemMode FromMode)
         {
-            try
+            StopRemoteMGT();
+        }
+
+        public static void StopRemoteMGT()
+        {
+            lock (RemoteMgtSync)
             {
-                if (FromMode == Socket_Cache.System.StartMode)
+                IDisposable server = Socket_Cache.System.WebServer;
+                Socket_Cache.System.WebServer = null;
+                if (server != null)
                 {
-                    if (Socket_Cache.System.WebServer != null)
+                    try
                     {
-                        Socket_Cache.System.WebServer.Dispose();
+                        server.Dispose();
                     }
-                }                         
-            }
-            catch (Exception ex)
-            {
-                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    catch (Exception ex)
+                    {
+                        Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    }
+                }
             }
         }
 
@@ -408,6 +523,8 @@ namespace WPELibrary.Lib
             dtProcessList.Columns.Add("PName", typeof(string));
             dtProcessList.Columns.Add("PID", typeof(int));
             dtProcessList.Columns.Add("PPath", typeof(string));
+            dtProcessList.Columns.Add("PArch", typeof(string));
+            dtProcessList.Columns.Add("PCompatibility", typeof(string));
 
             try
             {
@@ -418,17 +535,34 @@ namespace WPELibrary.Lib
 
                     foreach (Process p in procesArr)
                     {
-                        string sPName = p.ProcessName;
-                        string sPPath = Socket_Operation.GetProcessPath(p);                        
-                        int iPID = p.Id;
-                        Image iICO = IconFromFile(p);
+                        try
+                        {
+                            string sPName = p.ProcessName;
+                            string sPPath = Socket_Operation.GetProcessPath(p);
+                            int iPID = p.Id;
+                            Image iICO = IconFromFile(p);
+                            bool isWin64 = Socket_Operation.IsWin64Process(iPID);
+                            string injectionLibrary = Path.Combine(
+                                Path.GetDirectoryName(typeof(Socket_Operation).Assembly.Location),
+                                Socket_Cache.System.WPE64_DLL);
 
-                        DataRow dr = dtProcessList.NewRow();
-                        dr["ICO"] = iICO;
-                        dr["PName"] = sPName;
-                        dr["PID"] = iPID;
-                        dr["PPath"] = sPPath;
-                        dtProcessList.Rows.Add(dr);
+                            DataRow dr = dtProcessList.NewRow();
+                            dr["ICO"] = iICO;
+                            dr["PName"] = sPName;
+                            dr["PID"] = iPID;
+                            dr["PPath"] = sPPath;
+                            dr["PArch"] = isWin64 ? "x64" : "x86";
+                            dr["PCompatibility"] = File.Exists(injectionLibrary)
+                                ? (MultiLanguage.DefaultLanguage == "en-US" ? "Ready" : "可注入")
+                                : (MultiLanguage.DefaultLanguage == "en-US" ? "Missing DLL" : "缺少 DLL");
+                            dtProcessList.Rows.Add(dr);
+                        }
+                        catch (Exception ex)
+                        {
+                            Socket_Operation.DoLog(
+                                nameof(GetProcess),
+                                string.Format("跳过进程 {0}：{1}", p.Id, ex.Message));
+                        }
                     }
 
                     DataView dv = dtProcessList.DefaultView;
@@ -526,6 +660,8 @@ namespace WPELibrary.Lib
 
         #region//密码字典        
 
+        private const string ProtectedPasswordPrefix = "DPAPI1:";
+
         public static string PassWord_Encrypt(string plainText)
         {
             try
@@ -533,22 +669,13 @@ namespace WPELibrary.Lib
                 if (string.IsNullOrEmpty(plainText))
                 {
                     return string.Empty;
-                }                    
-
-                StringBuilder encrypted = new StringBuilder();
-                foreach (char c in plainText)
-                {
-                    if (encryptionMap.TryGetValue(c, out string code))
-                    {
-                        encrypted.Append(code);
-                    }
-                    else
-                    {
-                        encrypted.Append(c);
-                    }
                 }
 
-                return encrypted.ToString();
+                byte[] protectedBytes = ProtectedData.Protect(
+                    Encoding.UTF8.GetBytes(plainText),
+                    null,
+                    DataProtectionScope.CurrentUser);
+                return ProtectedPasswordPrefix + Convert.ToBase64String(protectedBytes);
             }
             catch (Exception ex)
             {
@@ -565,29 +692,29 @@ namespace WPELibrary.Lib
                 if (string.IsNullOrEmpty(encryptedText))
                 {
                     return string.Empty;
-                }                    
-
-                StringBuilder plainText = new StringBuilder();
-
-                int i = 0;
-                while (i < encryptedText.Length)
-                {
-                    if (i + 3 <= encryptedText.Length)
-                    {
-                        string code = encryptedText.Substring(i, 3);
-                        if (decryptionMap.TryGetValue(code, out char c))
-                        {
-                            plainText.Append(c);
-                            i += 3;
-                            continue;
-                        }
-                    }
-
-                    plainText.Append(encryptedText[i]);
-                    i++;
                 }
 
-                return plainText.ToString();
+                if (encryptedText.StartsWith(ProtectedPasswordPrefix, StringComparison.Ordinal))
+                {
+                    byte[] protectedBytes = Convert.FromBase64String(
+                        encryptedText.Substring(ProtectedPasswordPrefix.Length));
+                    byte[] plainBytes = ProtectedData.Unprotect(
+                        protectedBytes,
+                        null,
+                        DataProtectionScope.CurrentUser);
+                    return Encoding.UTF8.GetString(plainBytes);
+                }
+
+                // Import and authenticate passwords written by older releases. Some
+                // database/XML files also stored this field as plain text before
+                // password protection was introduced, so keep that format usable.
+                string legacyPlainText = LegacyPassWord_Decrypt(encryptedText);
+                return string.Equals(
+                        LegacyPassWord_Encrypt(legacyPlainText),
+                        encryptedText,
+                        StringComparison.Ordinal)
+                    ? legacyPlainText
+                    : encryptedText;
             }
             catch (Exception ex)
             {
@@ -595,6 +722,71 @@ namespace WPELibrary.Lib
             }
 
             return string.Empty;
+        }
+
+        private static string LegacyPassWord_Encrypt(string plainText)
+        {
+            StringBuilder encrypted = new StringBuilder();
+            foreach (char c in plainText)
+            {
+                if (encryptionMap.TryGetValue(c, out string code))
+                {
+                    encrypted.Append(code);
+                }
+                else
+                {
+                    encrypted.Append(c);
+                }
+            }
+
+            return encrypted.ToString();
+        }
+
+        internal static string LegacyPassWord_EncryptForCompatibility(string plainText)
+        {
+            return string.IsNullOrEmpty(plainText) ? string.Empty : LegacyPassWord_Encrypt(plainText);
+        }
+
+        internal static string PassWord_EncryptForPortableExport(string storedPassword)
+        {
+            if (string.IsNullOrEmpty(storedPassword))
+            {
+                return string.Empty;
+            }
+
+            string plainText = PassWord_Decrypt(storedPassword);
+            if (string.IsNullOrEmpty(plainText))
+            {
+                // Preserve an unknown legacy value instead of silently erasing
+                // it when the current Windows user cannot unwrap DPAPI data.
+                plainText = storedPassword;
+            }
+
+            return LegacyPassWord_EncryptForCompatibility(plainText);
+        }
+
+        private static string LegacyPassWord_Decrypt(string encryptedText)
+        {
+            StringBuilder plainText = new StringBuilder();
+            int i = 0;
+            while (i < encryptedText.Length)
+            {
+                if (i + 3 <= encryptedText.Length)
+                {
+                    string code = encryptedText.Substring(i, 3);
+                    if (decryptionMap.TryGetValue(code, out char c))
+                    {
+                        plainText.Append(c);
+                        i += 3;
+                        continue;
+                    }
+                }
+
+                plainText.Append(encryptedText[i]);
+                i++;
+            }
+
+            return plainText.ToString();
         }
 
         #endregion        
@@ -2007,6 +2199,82 @@ namespace WPELibrary.Lib
 
         #region//处理 Hook 结果（异步）
 
+        private static void EnsureHookResultWorker()
+        {
+            lock (hookResultWorkerSync)
+            {
+                if (hookResultWorkerStopping ||
+                    (hookResultWorker != null && hookResultWorker.IsAlive))
+                {
+                    return;
+                }
+
+                hookResultWorker = new Thread(ProcessHookResults)
+                {
+                    IsBackground = true,
+                    Name = "WPE Hook Result Queue"
+                };
+                hookResultWorker.Start();
+            }
+        }
+
+        private static void ProcessHookResults()
+        {
+            while (!Volatile.Read(ref hookResultWorkerStopping))
+            {
+                HookResultWorkItem workItem;
+                if (!hookResultQueue.TryDequeue(out workItem))
+                {
+                    hookResultQueueSignal.WaitOne(100);
+                    continue;
+                }
+
+                Interlocked.Decrement(ref hookResultQueueCount);
+                try
+                {
+                    Socket_Cache.SocketQueue.SocketPacket_ToQueue(
+                        workItem.Socket,
+                        workItem.RawBuffer,
+                        workItem.Buffer,
+                        workItem.PacketType,
+                        workItem.Address,
+                        workItem.FilterAction,
+                        workItem.PacketTime);
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(ProcessHookResults), ex.Message);
+                }
+            }
+
+            // Shutdown is deliberately non-blocking for the target process; pending display
+            // work is discarded after the hooks have stopped.
+            while (hookResultQueue.TryDequeue(out HookResultWorkItem discarded))
+            {
+                Interlocked.Decrement(ref hookResultQueueCount);
+            }
+        }
+
+        public static void StopHookResultProcessing()
+        {
+            Thread worker;
+            lock (hookResultWorkerSync)
+            {
+                hookResultWorkerStopping = true;
+                worker = hookResultWorker;
+                while (hookResultQueue.TryDequeue(out HookResultWorkItem discarded))
+                {
+                    Interlocked.Decrement(ref hookResultQueueCount);
+                }
+            }
+
+            hookResultQueueSignal.Set();
+            if (worker != null && worker != Thread.CurrentThread)
+            {
+                worker.Join(1000);
+            }
+        }
+
         public static Task ProcessingHookResultAsync(
             int socket,
             byte[] bRawBuffer,
@@ -2023,17 +2291,28 @@ namespace WPELibrary.Lib
             if (filterAction != Socket_Cache.Filter.FilterAction.Intercept && res <= 0)
                 return Task.CompletedTask;
 
-            return Task.Run(() =>
+            lock (hookResultWorkerSync)
             {
-                try
-                {                   
-                    Socket_Cache.SocketQueue.SocketPacket_ToQueue(socket, bRawBuffer, bBuffer, ptType, sockaddr, filterAction, packetTime);
-                }
-                catch (Exception ex)
+                if (hookResultWorkerStopping ||
+                    Volatile.Read(ref hookResultQueueCount) >= MaxHookResultQueueCount)
                 {
-                    Socket_Operation.DoLog(nameof(ProcessingHookResultAsync), ex.Message);                    
+                    Interlocked.Increment(ref Socket_Cache.SocketQueue.Dropped_CNT);
+                    return Task.CompletedTask;
                 }
-            });
+
+                EnsureHookResultWorker();
+                hookResultQueue.Enqueue(new HookResultWorkItem(
+                    socket,
+                    bRawBuffer,
+                    bBuffer,
+                    ptType,
+                    filterAction,
+                    sockaddr,
+                    packetTime));
+                Interlocked.Increment(ref hookResultQueueCount);
+            }
+            hookResultQueueSignal.Set();
+            return Task.CompletedTask;
         }
 
         #endregion
@@ -3329,14 +3608,7 @@ namespace WPELibrary.Lib
 
         public static async Task DoSleepAsync(int MilliSecond, CancellationToken cancellationToken)
         {
-            try
-            {
-                await Task.Delay(MilliSecond, cancellationToken);
-            }
-            catch (TaskCanceledException)
-            {
-                //
-            }
+            await Task.Delay(MilliSecond, cancellationToken);
         }        
 
         #endregion
@@ -3351,12 +3623,26 @@ namespace WPELibrary.Lib
             {
                 if (socket != null && !bData.IsEmpty)
                 {
-                    iReturn = socket.Send(bData.ToArray(), SocketFlags.None);
+                    byte[] data = bData.ToArray();
+                    while (iReturn < data.Length)
+                    {
+                        int bytesSent = socket.Send(
+                            data,
+                            iReturn,
+                            data.Length - iReturn,
+                            SocketFlags.None);
+                        if (bytesSent <= 0)
+                        {
+                            break;
+                        }
+
+                        iReturn += bytesSent;
+                    }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                //
+                Socket_Operation.DoLog_Proxy(nameof(SendTCPData), ex.Message);
             }
 
             return iReturn;
@@ -4042,7 +4328,14 @@ namespace WPELibrary.Lib
             return bReturn;
         }
 
-        private static byte[] GetAESKeyFromString(string Password)
+        private static readonly byte[] EncryptedXmlMagic = Encoding.ASCII.GetBytes("WPEXML2");
+        private const int EncryptedXmlSaltSize = 16;
+        private const int EncryptedXmlIvSize = 16;
+        private const int EncryptedXmlMacSize = 32;
+        private const int EncryptedXmlDerivedKeySize = 64;
+        private const int EncryptedXmlPbkdf2Iterations = 100000;
+
+        private static byte[] GetLegacyAESKeyFromString(string Password)
         {
             byte[] bReturn = null;
 
@@ -4070,25 +4363,71 @@ namespace WPELibrary.Lib
         {
             try
             {
-                byte[] bAES = Socket_Operation.GetAESKeyFromString(Password);
+                if (string.IsNullOrEmpty(Password))
+                {
+                    throw new ArgumentException("An export password is required.", nameof(Password));
+                }
+
+                XDocument xmlDoc = XDocument.Load(FilePath);
+                byte[] plainBytes;
+                using (MemoryStream xmlStream = new MemoryStream())
+                {
+                    xmlDoc.Save(xmlStream, SaveOptions.DisableFormatting);
+                    plainBytes = xmlStream.ToArray();
+                }
+
+                byte[] salt = new byte[EncryptedXmlSaltSize];
+                byte[] iv = new byte[EncryptedXmlIvSize];
+                using (RandomNumberGenerator random = RandomNumberGenerator.Create())
+                {
+                    random.GetBytes(salt);
+                    random.GetBytes(iv);
+                }
+
+                byte[] derived = DeriveEncryptedXmlKeys(Password, salt, EncryptedXmlPbkdf2Iterations);
+                byte[] cipherBytes;
 
                 using (Aes aesAlg = Aes.Create())
                 {
-                    aesAlg.Key = bAES;
-                    aesAlg.IV = bAES;
-
-                    XDocument xmlDoc = XDocument.Load(FilePath);
+                    aesAlg.KeySize = 256;
+                    aesAlg.BlockSize = 128;
+                    aesAlg.Mode = CipherMode.CBC;
+                    aesAlg.Padding = PaddingMode.PKCS7;
+                    aesAlg.Key = derived.Take(32).ToArray();
+                    aesAlg.IV = iv;
 
                     using (MemoryStream ms = new MemoryStream())
                     {
                         using (CryptoStream cs = new CryptoStream(ms, aesAlg.CreateEncryptor(), CryptoStreamMode.Write))
                         {
-                            xmlDoc.Save(cs);
+                            cs.Write(plainBytes, 0, plainBytes.Length);
+                            cs.FlushFinalBlock();
                         }
 
-                        File.WriteAllBytes(FilePath, ms.ToArray());
+                        cipherBytes = ms.ToArray();
                     }
                 }
+
+                int headerLength = EncryptedXmlMagic.Length + sizeof(int) + salt.Length + iv.Length;
+                byte[] envelope = new byte[headerLength + cipherBytes.Length + EncryptedXmlMacSize];
+                int offset = 0;
+                Buffer.BlockCopy(EncryptedXmlMagic, 0, envelope, offset, EncryptedXmlMagic.Length);
+                offset += EncryptedXmlMagic.Length;
+                Buffer.BlockCopy(BitConverter.GetBytes(EncryptedXmlPbkdf2Iterations), 0, envelope, offset, sizeof(int));
+                offset += sizeof(int);
+                Buffer.BlockCopy(salt, 0, envelope, offset, salt.Length);
+                offset += salt.Length;
+                Buffer.BlockCopy(iv, 0, envelope, offset, iv.Length);
+                offset += iv.Length;
+                Buffer.BlockCopy(cipherBytes, 0, envelope, offset, cipherBytes.Length);
+
+                using (HMACSHA256 hmac = new HMACSHA256(derived.Skip(32).Take(32).ToArray()))
+                {
+                    byte[] mac = hmac.ComputeHash(envelope, 0, headerLength + cipherBytes.Length);
+                    Buffer.BlockCopy(mac, 0, envelope, headerLength + cipherBytes.Length, mac.Length);
+                }
+
+                File.WriteAllBytes(FilePath, envelope);
             }
             catch (Exception ex)
             {
@@ -4098,31 +4437,32 @@ namespace WPELibrary.Lib
 
         public static XDocument DecryptXMLFile(string FilterList_Path, string Password)
         {
-            XDocument xdReturn = new XDocument();
-
             try
             {
-                byte[] bAES = Socket_Operation.GetAESKeyFromString(Password);
+                if (string.IsNullOrEmpty(Password))
+                {
+                    return null;
+                }
+
+                byte[] xmlBytes = File.ReadAllBytes(FilterList_Path);
+                if (IsCurrentEncryptedXml(xmlBytes))
+                {
+                    return DecryptCurrentXML(xmlBytes, Password);
+                }
+
+                // Keep importing files created by older releases.
+                byte[] bAES = Socket_Operation.GetLegacyAESKeyFromString(Password);
 
                 using (Aes aesAlg = Aes.Create())
                 {
                     aesAlg.Key = bAES;
                     aesAlg.IV = bAES;
 
-                    byte[] xmlBytes = File.ReadAllBytes(FilterList_Path);
-
                     using (MemoryStream ms = new MemoryStream(xmlBytes))
                     {
-                        try
+                        using (CryptoStream cs = new CryptoStream(ms, aesAlg.CreateDecryptor(), CryptoStreamMode.Read))
                         {
-                            using (CryptoStream cs = new CryptoStream(ms, aesAlg.CreateDecryptor(), CryptoStreamMode.Read))
-                            {
-                                xdReturn = XDocument.Load(cs);
-                            }
-                        }
-                        catch
-                        {
-                            xdReturn = null;
+                            return XDocument.Load(cs);
                         }
                     }
                 }
@@ -4132,7 +4472,108 @@ namespace WPELibrary.Lib
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
 
-            return xdReturn;
+            return null;
+        }
+
+        private static byte[] DeriveEncryptedXmlKeys(string password, byte[] salt, int iterations)
+        {
+            using (Rfc2898DeriveBytes derive = new Rfc2898DeriveBytes(password, salt, iterations))
+            {
+                return derive.GetBytes(EncryptedXmlDerivedKeySize);
+            }
+        }
+
+        private static bool IsCurrentEncryptedXml(byte[] data)
+        {
+            if (data == null || data.Length < EncryptedXmlMagic.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < EncryptedXmlMagic.Length; i++)
+            {
+                if (data[i] != EncryptedXmlMagic[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static XDocument DecryptCurrentXML(byte[] envelope, string password)
+        {
+            int headerLength = EncryptedXmlMagic.Length + sizeof(int) + EncryptedXmlSaltSize + EncryptedXmlIvSize;
+            if (envelope.Length < headerLength + EncryptedXmlMacSize + 16)
+            {
+                throw new CryptographicException("Encrypted XML payload is incomplete.");
+            }
+
+            int offset = EncryptedXmlMagic.Length;
+            int iterations = BitConverter.ToInt32(envelope, offset);
+            offset += sizeof(int);
+            if (iterations < 10000 || iterations > 10000000)
+            {
+                throw new CryptographicException("Encrypted XML iteration count is invalid.");
+            }
+
+            byte[] salt = new byte[EncryptedXmlSaltSize];
+            Buffer.BlockCopy(envelope, offset, salt, 0, salt.Length);
+            offset += salt.Length;
+            byte[] iv = new byte[EncryptedXmlIvSize];
+            Buffer.BlockCopy(envelope, offset, iv, 0, iv.Length);
+
+            int macOffset = envelope.Length - EncryptedXmlMacSize;
+            byte[] derived = DeriveEncryptedXmlKeys(password, salt, iterations);
+            byte[] expectedMac;
+            using (HMACSHA256 hmac = new HMACSHA256(derived.Skip(32).Take(32).ToArray()))
+            {
+                expectedMac = hmac.ComputeHash(envelope, 0, macOffset);
+            }
+
+            byte[] actualMac = new byte[EncryptedXmlMacSize];
+            Buffer.BlockCopy(envelope, macOffset, actualMac, 0, actualMac.Length);
+            if (!FixedTimeEquals(expectedMac, actualMac))
+            {
+                throw new CryptographicException("Encrypted XML authentication failed.");
+            }
+
+            byte[] cipherBytes = new byte[macOffset - headerLength];
+            Buffer.BlockCopy(envelope, headerLength, cipherBytes, 0, cipherBytes.Length);
+            using (Aes aesAlg = Aes.Create())
+            {
+                aesAlg.KeySize = 256;
+                aesAlg.BlockSize = 128;
+                aesAlg.Mode = CipherMode.CBC;
+                aesAlg.Padding = PaddingMode.PKCS7;
+                aesAlg.Key = derived.Take(32).ToArray();
+                aesAlg.IV = iv;
+
+                using (MemoryStream input = new MemoryStream(cipherBytes))
+                using (CryptoStream cs = new CryptoStream(input, aesAlg.CreateDecryptor(), CryptoStreamMode.Read))
+                using (MemoryStream plain = new MemoryStream())
+                {
+                    cs.CopyTo(plain);
+                    plain.Position = 0;
+                    return XDocument.Load(plain);
+                }
+            }
+        }
+
+        private static bool FixedTimeEquals(byte[] left, byte[] right)
+        {
+            if (left == null || right == null || left.Length != right.Length)
+            {
+                return false;
+            }
+
+            int difference = 0;
+            for (int i = 0; i < left.Length; i++)
+            {
+                difference |= left[i] ^ right[i];
+            }
+
+            return difference == 0;
         }
 
         #endregion
@@ -4173,29 +4614,48 @@ namespace WPELibrary.Lib
 
         public static void DoLog(string sFuncName, string sLogContent)
         {
-            Task.Run(() =>
+            if (bDoLog)
             {
-                if (bDoLog)
-                {
-                    Socket_Cache.LogQueue.LogToQueue(Socket_Cache.System.LogType.Socket, sFuncName, sLogContent);
-                }
-            });                                
+                Socket_Cache.LogQueue.LogToQueue(Socket_Cache.System.LogType.Socket, sFuncName, sLogContent);
+            }
         }
 
         public static void DoLog_Proxy(string sFuncName, string sLogContent)
         {
-            Task.Run(() =>
+            if (bDoLog)
             {
-                if (bDoLog)
-                {
-                    Socket_Cache.LogQueue.LogToQueue(Socket_Cache.System.LogType.Proxy, sFuncName, sLogContent);
-                }
-            });            
+                Socket_Cache.LogQueue.LogToQueue(Socket_Cache.System.LogType.Proxy, sFuncName, sLogContent);
+            }
         }
 
         #endregion
 
         #region//发送封包
+
+        private static int SendNativeTcp(
+            int socket,
+            IntPtr buffer,
+            int length,
+            SocketFlags flags,
+            bool useWinsock1)
+        {
+            int totalSent = 0;
+            while (totalSent < length)
+            {
+                IntPtr currentBuffer = IntPtr.Add(buffer, totalSent);
+                int bytesSent = useWinsock1
+                    ? WSock32.send(socket, currentBuffer, length - totalSent, flags)
+                    : WS2_32.send(socket, currentBuffer, length - totalSent, flags);
+                if (bytesSent <= 0)
+                {
+                    break;
+                }
+
+                totalSent += bytesSent;
+            }
+
+            return totalSent;
+        }
 
         public static unsafe bool SendPacket(int Socket, Socket_Cache.SocketPacket.PacketType packetType, string sIPFrom, string sIPTo, byte[] bSendBuffer)
         {
@@ -4204,7 +4664,7 @@ namespace WPELibrary.Lib
 
             try
             {
-                if (Socket > 0 && bSendBuffer.Length > 0)
+                if (Socket > 0 && bSendBuffer != null && bSendBuffer.Length > 0)
                 {
                     ipSend = Marshal.AllocHGlobal(bSendBuffer.Length);
                     Marshal.Copy(bSendBuffer, 0, ipSend, bSendBuffer.Length);
@@ -4236,14 +4696,14 @@ namespace WPELibrary.Lib
                     {
                         case Socket_Cache.SocketPacket.PacketType.WS1_Send:
                         case Socket_Cache.SocketPacket.PacketType.WS1_Recv:
-                            res = WSock32.send(Socket, ipSend, bSendBuffer.Length, SocketFlags.None);
+                            res = SendNativeTcp(Socket, ipSend, bSendBuffer.Length, SocketFlags.None, true);
                             break;
                         case Socket_Cache.SocketPacket.PacketType.WS2_Send:
                         case Socket_Cache.SocketPacket.PacketType.WS2_Recv:
                         case Socket_Cache.SocketPacket.PacketType.WSASend:
                         case Socket_Cache.SocketPacket.PacketType.WSARecv:
                         case Socket_Cache.SocketPacket.PacketType.WSARecvEx:
-                            res = WS2_32.send(Socket, ipSend, bSendBuffer.Length, SocketFlags.None);
+                            res = SendNativeTcp(Socket, ipSend, bSendBuffer.Length, SocketFlags.None, false);
                             break;
                         case Socket_Cache.SocketPacket.PacketType.WS1_SendTo:
                         case Socket_Cache.SocketPacket.PacketType.WS1_RecvFrom:
@@ -4265,7 +4725,7 @@ namespace WPELibrary.Lib
                             break;
                     }
 
-                    if (res > 0)
+                    if (res == bSendBuffer.Length)
                     {
                         bReturn = true;
                     }

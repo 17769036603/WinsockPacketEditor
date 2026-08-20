@@ -35,6 +35,11 @@
   <data name="ByteAnnotation_CollapseButton" xml:space="preserve"><value>Collapse byte annotations</value></data>
   <data name="ByteAnnotation_ExpandButton" xml:space="preserve"><value>Expand byte annotations</value></data>
   <data name="Main_Settings" xml:space="preserve"><value>Settings</value></data>
+  <data name="Startup_AdminRequired" xml:space="preserve"><value>Administrator permission is required to start injection mode.</value></data>
+  <data name="Startup_AdminRestartFailed" xml:space="preserve"><value>Failed to restart with administrator permission: {0}</value></data>
+  <data name="Startup_Failed" xml:space="preserve"><value>Startup failed: {0}</value></data>
+  <data name="Injector_TargetNotApproved" xml:space="preserve"><value>The selected process is no longer an approved injection target. Refresh the process list.</value></data>
+  <data name="Injector_LibraryMissing" xml:space="preserve"><value>WPELibrary.dll is missing from the application directory.</value></data>
   <data name="Main_Start" xml:space="preserve"><value>Start (&amp;K)</value></data>
   <data name="Main_Stop" xml:space="preserve"><value>Stop (&amp;T)</value></data>
   <data name="Main_Clear" xml:space="preserve"><value>Clear capture (&amp;C)</value></data>
@@ -51,12 +56,49 @@
   <data name="UI_GroupName" xml:space="preserve"><value>Group name</value></data>
   <data name="UI_Edit" xml:space="preserve"><value>Edit</value></data>
   <data name="UI_AssistantEmpty" xml:space="preserve"><value>No assistant in this group. Click “Add robot”.</value></data>
+  <data name="Robot_InstructionEmpty" xml:space="preserve"><value>No robot instructions yet. Select one from the left and insert it.</value></data>
+  <data name="Robot_ExecuteEmpty" xml:space="preserve"><value>No execution log yet. Click “Execute” to see the log.</value></data>
+  <data name="UI_FilterEmpty" xml:space="preserve"><value>No filters yet. Click “Add filter”.</value></data>
+  <data name="UI_ByteSweepEmpty" xml:space="preserve"><value>No byte-sweep presets in this group. Click “New preset”.</value></data>
   <data name="UI_MoveToGroup" xml:space="preserve"><value>Move to group</value></data>
+  <data name="UI_DeleteAssistant" xml:space="preserve"><value>Delete assistant</value></data>
+  <data name="UI_ConfirmDeleteAssistant" xml:space="preserve"><value>Delete assistant "{0}"?</value></data>
+  <data name="UI_DeleteAssistantFailed" xml:space="preserve"><value>Assistant deletion failed; the original list was restored.</value></data>
+  <data name="UI_AssistantSaveFailed" xml:space="preserve"><value>Assistant settings could not be saved; the original state was restored.</value></data>
   <data name="UI_GroupMustBeEmpty" xml:space="preserve"><value>Only empty groups can be deleted. Move assistants first.</value></data>
   <data name="Main_GeneralSettings" xml:space="preserve"><value>General</value></data>
   <data name="Main_AdvancedTools" xml:space="preserve"><value>Advanced tools</value></data>
   <data name="Main_PacketList" xml:space="preserve"><value>Packet list</value></data>
   <data name="Main_PacketData" xml:space="preserve"><value>Packet data</value></data>
+  <data name="UI_ReadableContentTitle" xml:space="preserve"><value>Readable content (auto detected)</value></data>
+  <data name="UI_ReadableContentMetaLabel" xml:space="preserve"><value>Readable content information</value></data>
+  <data name="UI_ReadableContentPreview" xml:space="preserve"><value>Readable content preview</value></data>
+  <data name="UI_ReadableContentNone" xml:space="preserve"><value>No packet selected</value></data>
+  <data name="UI_ReadableContentMeta" xml:space="preserve"><value>Type: {0} | Encoding: {1} | Length: {2} bytes</value></data>
+  <data name="UI_ReadableContentEmpty" xml:space="preserve"><value>The selected packet has no data.</value></data>
+  <data name="UI_ReadableContentBinaryNotice" xml:space="preserve"><value>This is binary data and cannot be shown as ordinary text.</value></data>
+  <data name="UI_ReadableContentDetails" xml:space="preserve"><value>Detection details: {0}</value></data>
+  <data name="UI_ReadableContentStrings" xml:space="preserve"><value>Readable strings:</value></data>
+  <data name="UI_ReadableContentNoStrings" xml:space="preserve"><value>No continuous readable strings were found.</value></data>
+  <data name="UI_ReadableContentTruncated" xml:space="preserve"><value>The content is long and has been truncated; the original data remains in the Hex area below.</value></data>
+  <data name="UI_ReadableEncodingNone" xml:space="preserve"><value>None</value></data>
+  <data name="UI_ReadableKind_Empty" xml:space="preserve"><value>Empty data</value></data>
+  <data name="UI_ReadableKind_PE" xml:space="preserve"><value>Windows PE/EXE</value></data>
+  <data name="UI_ReadableKind_MZ" xml:space="preserve"><value>Possible MZ header</value></data>
+  <data name="UI_ReadableKind_PNG" xml:space="preserve"><value>PNG image</value></data>
+  <data name="UI_ReadableKind_JPEG" xml:space="preserve"><value>JPEG image</value></data>
+  <data name="UI_ReadableKind_GIF" xml:space="preserve"><value>GIF image</value></data>
+  <data name="UI_ReadableKind_BMP" xml:space="preserve"><value>BMP image</value></data>
+  <data name="UI_ReadableKind_PDF" xml:space="preserve"><value>PDF document</value></data>
+  <data name="UI_ReadableKind_ZIP" xml:space="preserve"><value>ZIP archive data</value></data>
+  <data name="UI_ReadableKind_GZip" xml:space="preserve"><value>GZip compressed data</value></data>
+  <data name="UI_ReadableKind_RAR" xml:space="preserve"><value>RAR archive data</value></data>
+  <data name="UI_ReadableKind_7z" xml:space="preserve"><value>7z archive data</value></data>
+  <data name="UI_ReadableKind_HTTP" xml:space="preserve"><value>HTTP text</value></data>
+  <data name="UI_ReadableKind_JSON" xml:space="preserve"><value>JSON data</value></data>
+  <data name="UI_ReadableKind_XML" xml:space="preserve"><value>XML data</value></data>
+  <data name="UI_ReadableKind_Text" xml:space="preserve"><value>Plain text</value></data>
+  <data name="UI_ReadableKind_Binary" xml:space="preserve"><value>Binary data</value></data>
   <data name="Main_Automation" xml:space="preserve"><value>Send and byte sweep</value></data>
   <data name="UI_NewGroup" xml:space="preserve"><value>New group</value></data>
   <data name="UI_RenameGroup" xml:space="preserve"><value>Rename group</value></data>
@@ -92,6 +134,10 @@
   <data name="SendPreset_Required" xml:space="preserve"><value>Enter a preset name and group.</value></data>
   <data name="SendPreset_Duplicate" xml:space="preserve"><value>A preset with this name already exists in the group.</value></data>
   <data name="UI_SendSelected" xml:space="preserve"><value>Send selected</value></data>
+  <data name="UI_SequentialSend" xml:space="preserve"><value>Sequential</value></data>
+  <data name="UI_ConcurrentSend" xml:space="preserve"><value>Concurrent</value></data>
+  <data name="UI_SequentialSendTip" xml:space="preserve"><value>Run selected presets in order</value></data>
+  <data name="UI_ConcurrentSendTip" xml:space="preserve"><value>Start selected presets together; each preset keeps its own intervals</value></data>
   <data name="UI_StopBatch" xml:space="preserve"><value>Stop batch</value></data>
   <data name="UI_SelectAll" xml:space="preserve"><value>Select all</value></data>
   <data name="UI_ClearSelection" xml:space="preserve"><value>Clear selection</value></data>
@@ -99,6 +145,14 @@
   <data name="UI_Name" xml:space="preserve"><value>Name</value></data>
   <data name="UI_Order" xml:space="preserve"><value>Order</value></data>
   <data name="UI_Send" xml:space="preserve"><value>Send</value></data>
+  <data name="UI_Sending" xml:space="preserve"><value>Sending...</value></data>
+  <data name="UI_NoSendData" xml:space="preserve"><value>This packet has no data to send.</value></data>
+  <data name="UI_BatchSendBusy" xml:space="preserve"><value>A batch send is in progress. Stop it first.</value></data>
+  <data name="UI_SortOrderPositive" xml:space="preserve"><value>The order must be greater than 0.</value></data>
+  <data name="UI_LoopCountNonNegative" xml:space="preserve"><value>Count cannot be negative; 0 means continuous sending.</value></data>
+  <data name="UI_LoopIntervalNonNegative" xml:space="preserve"><value>Interval cannot be negative.</value></data>
+  <data name="UI_CharlesSessionFilter" xml:space="preserve"><value>Charles session (*.chlsx)|*.chlsx</value></data>
+  <data name="UI_FilterFileFilter" xml:space="preserve"><value>FILT filter (*.filt)|*.filt</value></data>
   <data name="UI_PacketDetails" xml:space="preserve"><value>Packet details</value></data>
   <data name="UI_Stop" xml:space="preserve"><value>Stop</value></data>
   <data name="UI_SendCount" xml:space="preserve"><value>Send count</value></data>
@@ -107,7 +161,6 @@
   <data name="UI_Loop" xml:space="preserve"><value>Loops</value></data>
   <data name="UI_SweepInterval" xml:space="preserve"><value>Sweep delay</value></data>
   <data name="UI_NextInterval" xml:space="preserve"><value>Next delay</value></data>
-  <data name="UI_MoveToGroup" xml:space="preserve"><value>Move to group</value></data>
   <data name="UI_EditPacket" xml:space="preserve"><value>Edit packet data</value></data>
   <data name="UI_EditMove" xml:space="preserve"><value>Edit / Move</value></data>
   <data name="UI_DeletePreset" xml:space="preserve"><value>Delete preset</value></data>
@@ -117,7 +170,6 @@
   <data name="UI_NoGroupTip" xml:space="preserve"><value>No group is selected</value></data>
   <data name="UI_SelectedContext" xml:space="preserve"><value>{0} · {1} selected</value></data>
   <data name="UI_SelectedContextTip" xml:space="preserve"><value>Current group: {0}; selected: {1}</value></data>
-  <data name="UI_GroupName" xml:space="preserve"><value>Group name</value></data>
   <data name="UI_OK" xml:space="preserve"><value>OK</value></data>
   <data name="UI_Cancel" xml:space="preserve"><value>Cancel</value></data>
   <data name="UI_SelectAllTip" xml:space="preserve"><value>Select every item in the current group</value></data>
@@ -143,6 +195,9 @@
   <data name="UI_CreateGroupFirst" xml:space="preserve"><value>Use “New group” below to create and select a group first.</value></data>
   <data name="UI_NewSendList" xml:space="preserve"><value>New send list</value></data>
   <data name="UI_CurrentGroupEmpty" xml:space="preserve"><value>No packets in the current group</value></data>
+  <data name="UI_PacketListEmpty" xml:space="preserve"><value>No packets yet. Start capture to see packets.</value></data>
+  <data name="UI_SettingsHint" xml:space="preserve"><value>Settings are grouped as General, Filter, Assistant, and Advanced tools. Select a tab to continue.</value></data>
+  <data name="UI_Close" xml:space="preserve"><value>Close</value></data>
   <data name="UI_CreatePacketGroup" xml:space="preserve"><value>Create a packet group first</value></data>
   <data name="UI_NewSweepGroup" xml:space="preserve"><value>New sweep group</value></data>
   <data name="UI_RenameSweepGroup" xml:space="preserve"><value>Rename sweep group</value></data>
@@ -190,9 +245,11 @@
   <data name="ByteSweep_CombinationEstimate" xml:space="preserve"><value>Combination / planned</value></data>
   <data name="ByteSweep_NoSelection" xml:space="preserve"><value>No range selected</value></data>
   <data name="ByteSweep_NormalInterval" xml:space="preserve"><value>Normal interval (ms)</value></data>
+  <data name="ByteSweep_FirstByte" xml:space="preserve"><value>Byte A</value></data>
   <data name="ByteSweep_FirstPosition" xml:space="preserve"><value>Byte A position</value></data>
   <data name="ByteSweep_FirstLength" xml:space="preserve"><value>Byte A length</value></data>
   <data name="ByteSweep_FirstInterval" xml:space="preserve"><value>Byte A interval (ms)</value></data>
+  <data name="ByteSweep_SecondByte" xml:space="preserve"><value>Byte B</value></data>
   <data name="ByteSweep_SecondPosition" xml:space="preserve"><value>Byte B position</value></data>
   <data name="ByteSweep_SecondLength" xml:space="preserve"><value>Byte B length</value></data>
   <data name="ByteSweep_SecondInterval" xml:space="preserve"><value>Byte B interval (ms)</value></data>
@@ -200,7 +257,10 @@
   <data name="ByteSweep_Idle" xml:space="preserve"><value>Idle</value></data>
   <data name="ByteSweep_Running" xml:space="preserve"><value>Sweeping</value></data>
   <data name="ByteSweep_StartAction" xml:space="preserve"><value>Start sweep</value></data>
+  <data name="ByteSweep_PauseAction" xml:space="preserve"><value>Pause sweep</value></data>
+  <data name="ByteSweep_ResumeAction" xml:space="preserve"><value>Resume sweep</value></data>
   <data name="ByteSweep_StopAction" xml:space="preserve"><value>Stop sweep</value></data>
+  <data name="ByteSweep_Paused" xml:space="preserve"><value>Sweep paused</value></data>
   <data name="ByteSweep_SequentialHeader" xml:space="preserve"><value>Sequential byte sweep</value></data>
   <data name="ByteSweep_SaveSequentialPreset" xml:space="preserve"><value>Save sequential preset</value></data>
   <data name="ByteSweep_UpdateSequentialPreset" xml:space="preserve"><value>Update sequential preset</value></data>
@@ -223,10 +283,18 @@
   <data name="ByteSweep_PickSecond" xml:space="preserve"><value>Pick B</value></data>
   <data name="ByteSweep_PickInstruction" xml:space="preserve"><value>Click a byte in the packet to select byte {0}</value></data>
   <data name="ByteSweep_PickDuplicate" xml:space="preserve"><value>Byte A and byte B must use different positions. Pick another byte.</value></data>
-  <data name="ByteSweep_PickComplete" xml:space="preserve"><value>Byte {0} selected at position {1}</value></data>
+  <data name="ByteSweep_PickComplete" xml:space="preserve"><value>Byte {0} selected: current value {1}</value></data>
+  <data name="ByteSweep_CurrentByteFormat" xml:space="preserve"><value>0x{0:X2}</value></data>
+  <data name="ByteSweep_NoByteValue" xml:space="preserve"><value>Not selected</value></data>
   <data name="ByteSweep_LogTitle" xml:space="preserve"><value>Byte-sweep log</value></data>
   <data name="ByteSweep_LogClear" xml:space="preserve"><value>Clear log</value></data>
   <data name="ByteSweep_LogExport" xml:space="preserve"><value>Export CSV</value></data>
+  <data name="ByteSweep_LogEmpty" xml:space="preserve"><value>No byte-sweep logs yet</value></data>
+  <data name="ByteSweep_LogCsvFilter" xml:space="preserve"><value>CSV files (*.csv)|*.csv|All files (*.*)|*.*</value></data>
+  <data name="ByteSweep_LogDefaultFileName" xml:space="preserve"><value>ByteSweepLog.csv</value></data>
+  <data name="ByteSweep_LogCsvHeader" xml:space="preserve"><value>Time,State,Preset,Mode,Progress,Total,Success,Failure,Detail</value></data>
+  <data name="ByteSweep_LogProgressFormat" xml:space="preserve"><value>Byte {0}/{1} · {2}/255 · {3}/{4}</value></data>
+  <data name="ByteSweep_LogPairProgressFormat" xml:space="preserve"><value>A={0:X2} ({1}/{2}) · B={3:X2} ({4}/{5}) · {6}/{7}</value></data>
   <data name="ByteSweep_LogTime" xml:space="preserve"><value>Time</value></data>
   <data name="ByteSweep_LogState" xml:space="preserve"><value>State</value></data>
   <data name="ByteSweep_LogPreset" xml:space="preserve"><value>Preset</value></data>
@@ -258,4 +326,288 @@
   <data name="Send_Save" xml:space="preserve"><value>Save send presets</value></data>
   <data name="Send_Copy" xml:space="preserve"><value>Copy send preset</value></data>
   <data name="Send_Clear" xml:space="preserve"><value>Clear send presets</value></data>
+  <data name="UI_HookStatusReady" xml:space="preserve"><value>Not listening</value></data>
+  <data name="UI_HookStatusStarting" xml:space="preserve"><value>Starting listener</value></data>
+  <data name="UI_HookStatusListening" xml:space="preserve"><value>Listening</value></data>
+  <data name="UI_HookStatusStopping" xml:space="preserve"><value>Stopping listener</value></data>
+  <data name="UI_HookStatusFailed" xml:space="preserve"><value>Listener start failed</value></data>
+  <data name="UI_QueueDropped" xml:space="preserve"><value>Queue {0} / dropped {1}</value></data>
+  <data name="UI_SendModeNormal" xml:space="preserve"><value>Normal send</value></data>
+  <data name="UI_SendModeSequential" xml:space="preserve"><value>Single-byte sweep</value></data>
+  <data name="UI_SendModePair" xml:space="preserve"><value>Two-byte combination</value></data>
+  <data name="UI_AdvancedEditorCollapse" xml:space="preserve"><value>Advanced editor (collapse)</value></data>
+  <data name="UI_AdvancedEditorExpand" xml:space="preserve"><value>Advanced editor (expand)</value></data>
+  <data name="Vision_Tab" xml:space="preserve"><value>Vision</value></data>
+  <data name="Vision_SectionCapture" xml:space="preserve"><value>1. Window and region</value></data>
+  <data name="Vision_SectionPreview" xml:space="preserve"><value>2. Capture preview</value></data>
+  <data name="Vision_SectionRecognition" xml:space="preserve"><value>3. Recognition mode</value></data>
+  <data name="Vision_SectionAssistant" xml:space="preserve"><value>4. Configure recognition action</value></data>
+  <data name="Vision_SectionSettings" xml:space="preserve"><value>5. Settings</value></data>
+  <data name="Vision_CurrentScreenshot" xml:space="preserve"><value>Current screenshot</value></data>
+  <data name="Vision_RecognitionPreview" xml:space="preserve"><value>Image / processed preview</value></data>
+  <data name="Vision_ModeOcr" xml:space="preserve"><value>Text recognition</value></data>
+  <data name="Vision_ModeTemplate" xml:space="preserve"><value>Image recognition</value></data>
+  <data name="Vision_Condition" xml:space="preserve"><value>Condition</value></data>
+  <data name="Vision_ConditionSourceHint" xml:space="preserve"><value>Text and number conditions use the keyword or range configured above.</value></data>
+  <data name="Vision_ConditionHint" xml:space="preserve"><value></value></data>
+  <data name="Vision_AfterAction" xml:space="preserve"><value>After confirmation</value></data>
+  <data name="Vision_ActionSafetyHint" xml:space="preserve"><value></value></data>
+  <data name="Vision_ActionSafetyPrompt" xml:space="preserve"><value>This run contains real mouse actions. The target window will be activated and the system cursor may move or click. Continue?</value></data>
+  <data name="Vision_ActionSafetyTitle" xml:space="preserve"><value>Confirm real mouse actions</value></data>
+  <data name="Vision_ActionSafetyCancelled" xml:space="preserve"><value>Cancelled: real mouse actions were not authorized.</value></data>
+  <data name="Vision_ActionCancelled" xml:space="preserve"><value>Editor reset; the unconfirmed action was not synced to the right command list.</value></data>
+  <data name="Vision_ActionVerification" xml:space="preserve"><value>Verify after action</value></data>
+  <data name="Vision_ActionVerificationOff" xml:space="preserve"><value>Verify after action: Off</value></data>
+  <data name="Vision_ActionVerificationText" xml:space="preserve"><value>Verify after action: Text</value></data>
+  <data name="Vision_ActionVerificationImage" xml:space="preserve"><value>Verify after action: Image</value></data>
+  <data name="Vision_ConfirmAction" xml:space="preserve"><value>Confirm action</value></data>
+  <data name="Vision_CancelAction" xml:space="preserve"><value>Reset editor</value></data>
+  <data name="Vision_ConfirmActionHint" xml:space="preserve"><value>The instruction is added to the right command list only after confirmation.</value></data>
+  <data name="Vision_VerificationKeyword" xml:space="preserve"><value>Verification text</value></data>
+  <data name="Vision_VerificationType" xml:space="preserve"><value>Verification type</value></data>
+  <data name="Vision_VerificationText" xml:space="preserve"><value>Text</value></data>
+  <data name="Vision_VerificationImage" xml:space="preserve"><value>Image</value></data>
+  <data name="Vision_VerificationNone" xml:space="preserve"><value>No verification</value></data>
+  <data name="Vision_AddTextWait" xml:space="preserve"><value>Add text wait</value></data>
+  <data name="Vision_AddImageWait" xml:space="preserve"><value>Add image wait</value></data>
+  <data name="Vision_VerificationIncomplete" xml:space="preserve"><value>Action verification is incomplete. Enter verification text or prepare an image.</value></data>
+  <data name="Vision_VerificationRegion" xml:space="preserve"><value>Use separate region</value></data>
+  <data name="Vision_SelectVerificationRegion" xml:space="preserve"><value>Select verification region</value></data>
+  <data name="Vision_VerificationTextHint" xml:space="preserve"><value>Verification text is recognized in this region after the action.</value></data>
+  <data name="Vision_VerificationImageHint" xml:space="preserve"><value>Verification image uses the current template from Image recognition.</value></data>
+  <data name="Vision_ActionNone" xml:space="preserve"><value>No action</value></data>
+  <data name="Vision_ActionLeftClick" xml:space="preserve"><value>Left click</value></data>
+  <data name="Vision_ActionRightClick" xml:space="preserve"><value>Right click</value></data>
+  <data name="Vision_ActionDoubleClick" xml:space="preserve"><value>Double click</value></data>
+  <data name="Vision_ActionScroll" xml:space="preserve"><value>Scroll</value></data>
+  <data name="Vision_ScrollUp" xml:space="preserve"><value>Up</value></data>
+  <data name="Vision_ScrollDown" xml:space="preserve"><value>Down</value></data>
+  <data name="Vision_ScrollDirection" xml:space="preserve"><value>Scroll direction</value></data>
+  <data name="Vision_AdvancedSettings" xml:space="preserve"><value>Advanced settings</value></data>
+  <data name="Vision_AdvancedSettingsHint" xml:space="preserve"><value>Capture, history, text recognition, image recognition, and wait parameters are grouped here.</value></data>
+  <data name="Vision_TemplateConditionHint" xml:space="preserve"><value>Prepare a reference image in the Image recognition tab first.</value></data>
+  <data name="Vision_MoreCaptureSettings" xml:space="preserve"><value>More capture settings</value></data>
+  <data name="Vision_LessCaptureSettings" xml:space="preserve"><value>Hide capture settings</value></data>
+  <data name="Vision_MoreOcrSettings" xml:space="preserve"><value>Advanced text recognition settings</value></data>
+  <data name="Vision_LessOcrSettings" xml:space="preserve"><value>Hide text recognition settings</value></data>
+  <data name="Vision_MoreTemplateSettings" xml:space="preserve"><value>Advanced image recognition settings</value></data>
+  <data name="Vision_LessTemplateSettings" xml:space="preserve"><value>Hide image recognition settings</value></data>
+  <data name="Vision_MoreWaitSettings" xml:space="preserve"><value>Advanced wait settings</value></data>
+  <data name="Vision_LessWaitSettings" xml:space="preserve"><value>Hide wait settings</value></data>
+  <data name="Vision_MoreVerificationSettings" xml:space="preserve"><value>More verification settings</value></data>
+  <data name="Vision_LessVerificationSettings" xml:space="preserve"><value>Hide verification settings</value></data>
+  <data name="Vision_TargetWindow" xml:space="preserve"><value>Target window</value></data>
+  <data name="Vision_RefreshWindows" xml:space="preserve"><value>Refresh windows</value></data>
+  <data name="Vision_X" xml:space="preserve"><value>Region X</value></data>
+  <data name="Vision_Y" xml:space="preserve"><value>Region Y</value></data>
+  <data name="Vision_Width" xml:space="preserve"><value>Region width</value></data>
+  <data name="Vision_Height" xml:space="preserve"><value>Region height</value></data>
+  <data name="Vision_Capture" xml:space="preserve"><value>Capture preview</value></data>
+  <data name="Vision_SaveScreenshot" xml:space="preserve"><value>Save screenshot</value></data>
+  <data name="Vision_SaveProfile" xml:space="preserve"><value>Save region</value></data>
+  <data name="Vision_SelectWindowHint" xml:space="preserve"><value>No target window is bound yet. Start and inject the target program first; it will be bound automatically.</value></data>
+  <data name="Vision_WindowSelected" xml:space="preserve"><value>Selected: {0}, client area {1}×{2}</value></data>
+  <data name="Vision_WindowAutoBound" xml:space="preserve"><value>Automatically bound to injected target window: {0}</value></data>
+  <data name="Vision_CaptureSuccess" xml:space="preserve"><value>Capture succeeded: region ({0},{1}) {2}×{3}</value></data>
+  <data name="Vision_CaptureFailed" xml:space="preserve"><value>Capture failed: {0}</value></data>
+  <data name="Vision_ProfileInvalid" xml:space="preserve"><value>Invalid vision region: {0}</value></data>
+  <data name="Vision_ProfileSaved" xml:space="preserve"><value>Target window and region saved.</value></data>
+  <data name="Vision_NoPreview" xml:space="preserve"><value>Capture a preview first.</value></data>
+  <data name="Vision_PngFilter" xml:space="preserve"><value>PNG images (*.png)|*.png|All files (*.*)|*.*</value></data>
+  <data name="Vision_DefaultFileName" xml:space="preserve"><value>vision-region.png</value></data>
+  <data name="Vision_ScreenshotSaved" xml:space="preserve"><value>Screenshot saved: {0}</value></data>
+  <data name="Vision_Template" xml:space="preserve"><value>Reference image</value></data>
+  <data name="Vision_LoadTemplate" xml:space="preserve"><value>Load reference image</value></data>
+  <data name="Vision_SaveTemplate" xml:space="preserve"><value>Save as reference image</value></data>
+  <data name="Vision_Threshold" xml:space="preserve"><value>Threshold (%)</value></data>
+  <data name="Vision_Match" xml:space="preserve"><value>Run image recognition</value></data>
+  <data name="Vision_NoTemplate" xml:space="preserve"><value>Capture a screenshot first; it will be loaded as the reference image automatically.</value></data>
+  <data name="Vision_TemplateLoaded" xml:space="preserve"><value>Reference image loaded: {0}</value></data>
+  <data name="Vision_TemplateAutoLoaded" xml:space="preserve"><value>Current screenshot loaded as the reference image.</value></data>
+  <data name="Vision_TemplateSaved" xml:space="preserve"><value>Reference image saved: {0}</value></data>
+  <data name="Vision_MatchFound" xml:space="preserve"><value>Match found at ({0},{1}), size {2}x{3}, similarity {4:P1}</value></data>
+  <data name="Vision_MatchNotFound" xml:space="preserve"><value>No match reached the threshold; best similarity {0:P1}.</value></data>
+  <data name="Vision_MatchCancelled" xml:space="preserve"><value>Match cancelled.</value></data>
+  <data name="Vision_TemplateLoadFailed" xml:space="preserve"><value>Reference image load failed: {0}</value></data>
+  <data name="Vision_TemplateFilter" xml:space="preserve"><value>Images (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp|All files (*.*)|*.*</value></data>
+  <data name="Vision_Ocr" xml:space="preserve"><value>Text recognition</value></data>
+  <data name="Vision_OcrScale" xml:space="preserve"><value>Scale</value></data>
+  <data name="Vision_OcrBinary" xml:space="preserve"><value>Binary</value></data>
+  <data name="Vision_OcrThreshold" xml:space="preserve"><value>Threshold</value></data>
+  <data name="Vision_OcrKeyword" xml:space="preserve"><value>Keyword</value></data>
+  <data name="Vision_OcrRecognize" xml:space="preserve"><value>Run text recognition</value></data>
+  <data name="Vision_OcrHint" xml:space="preserve"><value>After a screenshot, text is recognized and filled into the keyword box automatically. You can edit it or recognize again.</value></data>
+  <data name="Vision_OcrUnavailable" xml:space="preserve"><value>Text recognition unavailable: {0}</value></data>
+  <data name="Vision_OcrCancelled" xml:space="preserve"><value>Text recognition cancelled.</value></data>
+  <data name="Vision_OcrSuccess" xml:space="preserve"><value>Recognized text: {0}; confidence {1:P1}.</value></data>
+  <data name="Vision_OcrFailed" xml:space="preserve"><value>Text recognition failed: {0}</value></data>
+  <data name="Vision_OcrConditionMatched" xml:space="preserve"><value>Keyword matched.</value></data>
+  <data name="Vision_OcrConditionNotMatched" xml:space="preserve"><value>Keyword not matched: {0}</value></data>
+  <data name="Vision_Steps" xml:space="preserve"><value>Assistant steps</value></data>
+  <data name="Vision_NewStep" xml:space="preserve"><value>New assistant step</value></data>
+  <data name="Vision_AddOcrStep" xml:space="preserve"><value>Add text wait</value></data>
+  <data name="Vision_AddTemplateStep" xml:space="preserve"><value>Add image recognition step</value></data>
+  <data name="Vision_ConfirmStep" xml:space="preserve"><value>Confirm step</value></data>
+  <data name="Vision_RemoveStep" xml:space="preserve"><value>Remove step</value></data>
+  <data name="Vision_SelectStep" xml:space="preserve"><value>Select an assistant step first.</value></data>
+  <data name="Vision_NoKeyword" xml:space="preserve"><value>Enter a text recognition keyword first.</value></data>
+  <data name="Vision_StepAdded" xml:space="preserve"><value>Vision step added; save the robot to persist it.</value></data>
+  <data name="Vision_StepUpdated" xml:space="preserve"><value>Vision step updated; save the robot to persist it.</value></data>
+  <data name="Vision_StepConfirmed" xml:space="preserve"><value>Step confirmed; save the robot to persist it.</value></data>
+  <data name="Vision_StepRemoved" xml:space="preserve"><value>Vision step removed; save the robot to persist it.</value></data>
+  <data name="Vision_TemplateStepName" xml:space="preserve"><value>Wait for image</value></data>
+  <data name="Vision_Assistant" xml:space="preserve"><value>Vision assistant</value></data>
+  <data name="Vision_RunSteps" xml:space="preserve"><value>Test recognition flow</value></data>
+  <data name="Vision_StopSteps" xml:space="preserve"><value>Stop test</value></data>
+  <data name="Vision_AssistantHint" xml:space="preserve"><value>Test the recognition flow first; confirm the action to sync it to the right command list.</value></data>
+  <data name="Vision_AssistantLog" xml:space="preserve"><value>Execution log</value></data>
+  <data name="Vision_AssistantLogShow" xml:space="preserve"><value>Show execution log</value></data>
+  <data name="Vision_AssistantLogHide" xml:space="preserve"><value>Hide execution log</value></data>
+  <data name="Vision_AssistantNoSteps" xml:space="preserve"><value>Add at least one vision step first.</value></data>
+  <data name="Vision_AssistantRunning" xml:space="preserve"><value>Vision steps are running.</value></data>
+  <data name="Vision_AssistantBusy" xml:space="preserve"><value>Vision steps are still running. Please wait.</value></data>
+  <data name="Vision_AssistantStopping" xml:space="preserve"><value>Stopping vision steps.</value></data>
+  <data name="Vision_AssistantCancelled" xml:space="preserve"><value>Vision steps cancelled.</value></data>
+  <data name="Vision_AssistantSucceeded" xml:space="preserve"><value>Vision steps completed: {0}.</value></data>
+  <data name="Vision_AssistantFailed" xml:space="preserve"><value>Vision steps failed: {0}</value></data>
+  <data name="Vision_TemplateDisappearStepName" xml:space="preserve"><value>Wait for image to disappear</value></data>
+  <data name="Vision_TextAppears" xml:space="preserve"><value>Text appears</value></data>
+  <data name="Vision_ColorAppears" xml:space="preserve"><value>Color appears</value></data>
+  <data name="Vision_ColorDisappears" xml:space="preserve"><value>Color disappears</value></data>
+  <data name="Vision_Color" xml:space="preserve"><value>RGB (e.g. 255,255,255)</value></data>
+  <data name="Vision_ColorTolerance" xml:space="preserve"><value>Color tolerance</value></data>
+  <data name="Vision_ColorMinimumPixels" xml:space="preserve"><value>Minimum pixels</value></data>
+  <data name="Vision_ColorMinimumRatio" xml:space="preserve"><value>Minimum ratio</value></data>
+  <data name="Vision_ColorConditionHint" xml:space="preserve"><value>Enter the RGB color, channel tolerance, and minimum matching pixels.</value></data>
+  <data name="Vision_ColorInvalid" xml:space="preserve"><value>Invalid color condition. Enter three RGB values from 0 to 255.</value></data>
+  <data name="Vision_ColorStepName" xml:space="preserve"><value>Wait for color</value></data>
+  <data name="Vision_ColorDisappearStepName" xml:space="preserve"><value>Wait for color to disappear</value></data>
+  <data name="Vision_TextDisappears" xml:space="preserve"><value>Text disappears</value></data>
+  <data name="Vision_NumberRange" xml:space="preserve"><value>Number in range</value></data>
+  <data name="Vision_TemplateAppears" xml:space="preserve"><value>Image appears</value></data>
+  <data name="Vision_TemplateDisappears" xml:space="preserve"><value>Image disappears</value></data>
+  <data name="Vision_SelectOcrCondition" xml:space="preserve"><value>Select a text or number condition.</value></data>
+  <data name="Vision_SelectTemplateCondition" xml:space="preserve"><value>Select an image appears/disappears condition.</value></data>
+  <data name="Vision_Minimum" xml:space="preserve"><value>Min</value></data>
+  <data name="Vision_Maximum" xml:space="preserve"><value>Max</value></data>
+  <data name="Vision_Confirmations" xml:space="preserve"><value>Confirmations</value></data>
+  <data name="Vision_PollMilliseconds" xml:space="preserve"><value>Poll (ms)</value></data>
+  <data name="Vision_TimeoutMilliseconds" xml:space="preserve"><value>Timeout (ms)</value></data>
+  <data name="Vision_Retries" xml:space="preserve"><value>Retries</value></data>
+  <data name="Vision_FailurePolicy" xml:space="preserve"><value>Failure handling</value></data>
+  <data name="Vision_StopPolicy" xml:space="preserve"><value>Stop on failure</value></data>
+  <data name="Vision_SkipPolicy" xml:space="preserve"><value>Skip on failure</value></data>
+  <data name="Vision_CaptureSource" xml:space="preserve"><value>Source</value></data>
+  <data name="Vision_CaptureAuto" xml:space="preserve"><value>Auto</value></data>
+  <data name="Vision_CaptureScreen" xml:space="preserve"><value>Screen</value></data>
+  <data name="Vision_CaptureAirtest" xml:space="preserve"><value>Airtest (Python Worker)</value></data>
+  <data name="Vision_CaptureWindowRender" xml:space="preserve"><value>Window render</value></data>
+  <data name="Vision_CaptureInterval" xml:space="preserve"><value>Min interval</value></data>
+  <data name="Vision_SkipUnchanged" xml:space="preserve"><value>Skip unchanged</value></data>
+  <data name="Vision_NormalizedRegion" xml:space="preserve"><value>Scale with window</value></data>
+  <data name="Vision_HistoryLimit" xml:space="preserve"><value>History</value></data>
+  <data name="Vision_SaveFailureSnapshots" xml:space="preserve"><value>Save failure screenshots</value></data>
+  <data name="Vision_History" xml:space="preserve"><value>Capture history</value></data>
+  <data name="Vision_ClearHistory" xml:space="preserve"><value>Clear</value></data>
+  <data name="Vision_HistoryLoaded" xml:space="preserve"><value>Loaded history capture: {0}</value></data>
+  <data name="Vision_CaptureQuality" xml:space="preserve"><value>Source: {0}; brightness {1:0.0}; contrast {2:0.0}{3}</value></data>
+  <data name="Vision_AddTemplateVariant" xml:space="preserve"><value>Add image variant</value></data>
+  <data name="Vision_SelectTemplateStep" xml:space="preserve"><value>Select an image recognition step and prepare a reference image first.</value></data>
+  <data name="Vision_TemplateVariantAdded" xml:space="preserve"><value>Image variant added; {0} total.</value></data>
+  <data name="Vision_NoSelection" xml:space="preserve"><value>No valid selection.</value></data>
+  <data name="Vision_SelectionApplied" xml:space="preserve"><value>Drag selection applied; it can be saved as a reference image.</value></data>
+  <data name="Vision_OcrContrast" xml:space="preserve"><value>Contrast</value></data>
+  <data name="Vision_OcrCancel" xml:space="preserve"><value>Cancel OCR</value></data>
+  <data name="Vision_OcrRunning" xml:space="preserve"><value>Recognizing...</value></data>
+  <data name="Vision_OcrPreview" xml:space="preserve"><value>Preview preprocessing</value></data>
+  <data name="Vision_RestorePreview" xml:space="preserve"><value>Restore template preview</value></data>
+  <data name="Vision_OcrPreviewReady" xml:space="preserve"><value>Current text recognition preprocessing result is shown.</value></data>
+  <data name="Vision_RestorePreviewReady" xml:space="preserve"><value>Template preview restored.</value></data>
+  <data name="Vision_OcrAdaptive" xml:space="preserve"><value>Adaptive threshold</value></data>
+  <data name="Vision_OcrAdaptiveWindow" xml:space="preserve"><value>Window</value></data>
+  <data name="Vision_OcrAdaptiveOffset" xml:space="preserve"><value>Offset</value></data>
+  <data name="Vision_OcrInvert" xml:space="preserve"><value>Invert</value></data>
+  <data name="Vision_OcrDenoise" xml:space="preserve"><value>Denoise</value></data>
+  <data name="Vision_OcrSharpen" xml:space="preserve"><value>Sharpen</value></data>
+  <data name="Vision_OcrWhitelist" xml:space="preserve"><value>Whitelist</value></data>
+  <data name="Vision_OcrEngine" xml:space="preserve"><value>Engine</value></data>
+  <data name="Vision_OcrEngineAuto" xml:space="preserve"><value>Auto (local ONNX first)</value></data>
+  <data name="Vision_OcrEngineOnnx" xml:space="preserve"><value>Local ONNX</value></data>
+  <data name="Vision_OcrEngineTesseract" xml:space="preserve"><value>Tesseract</value></data>
+  <data name="Vision_OcrEnginePython" xml:space="preserve"><value>Python Worker (RapidOCR)</value></data>
+  <data name="Vision_OcrModelDirectory" xml:space="preserve"><value>Model directory</value></data>
+  <data name="Vision_OcrPythonExecutable" xml:space="preserve"><value>Python path</value></data>
+  <data name="Vision_OcrPythonWorkerScript" xml:space="preserve"><value>Worker script</value></data>
+  <data name="Vision_OcrPythonWorkerTimeout" xml:space="preserve"><value>Worker timeout (ms)</value></data>
+  <data name="Vision_OcrPythonReady" xml:space="preserve"><value>Python Worker ready (models found)</value></data>
+  <data name="Vision_OcrPythonUnavailable" xml:space="preserve"><value>Python Worker unavailable: check runtime, script, and models</value></data>
+  <data name="Vision_OcrPythonBrowse" xml:space="preserve"><value>Browse</value></data>
+  <data name="Vision_OcrPythonReset" xml:space="preserve"><value>Reset defaults</value></data>
+  <data name="Vision_OcrPythonTest" xml:space="preserve"><value>Test Worker</value></data>
+  <data name="Vision_OcrPythonPrewarming" xml:space="preserve"><value>Warming up Python Worker...</value></data>
+  <data name="Vision_OcrPythonTesting" xml:space="preserve"><value>Checking Python Worker...</value></data>
+  <data name="Vision_OcrPythonTestSuccess" xml:space="preserve"><value>Worker test passed.</value></data>
+  <data name="Vision_OcrPythonTestFailed" xml:space="preserve"><value>Worker test failed:</value></data>
+  <data name="Vision_OcrPythonAutoHint" xml:space="preserve"><value>Auto keeps the local ONNX/Tesseract order; select Python Worker when RapidOCR is required.</value></data>
+  <data name="Vision_OcrDetectionThreshold" xml:space="preserve"><value>Detection threshold</value></data>
+  <data name="Vision_OcrRecognitionThreshold" xml:space="preserve"><value>Recognition threshold</value></data>
+  <data name="Vision_OcrMaxImageSide" xml:space="preserve"><value>Max image side</value></data>
+  <data name="Vision_OcrTesseractStatus" xml:space="preserve"><value>Tesseract is selected; Auto falls back to it when ONNX is unavailable.</value></data>
+  <data name="Vision_TemplateNormalize" xml:space="preserve"><value>Normalize brightness</value></data>
+  <data name="Vision_TemplateScale" xml:space="preserve"><value>Allow scale</value></data>
+  <data name="Vision_TemplateTolerance" xml:space="preserve"><value>Tolerance %</value></data>
+  <data name="Vision_MatchCancel" xml:space="preserve"><value>Cancel match</value></data>
+  <data name="Vision_MatchRunning" xml:space="preserve"><value>Matching...</value></data>
+  <data name="Robot_ExecuteLogShow" xml:space="preserve"><value>Show execution log</value></data>
+  <data name="Robot_ExecuteLogHide" xml:space="preserve"><value>Hide execution log</value></data>
+  <data name="Robot_InstructionPanelShow" xml:space="preserve"><value>Show instructions ({0})</value></data>
+  <data name="Robot_InstructionPanelHide" xml:space="preserve"><value>Hide instructions ({0})</value></data>
+  <data name="Vision_SelectRegion" xml:space="preserve"><value>Select recognition area</value></data>
+  <data name="Vision_Recapture" xml:space="preserve"><value>Recapture</value></data>
+  <data name="Vision_AdvancedRegion" xml:space="preserve"><value>Advanced region settings</value></data>
+  <data name="Vision_RegionPickerHint" xml:space="preserve"><value>Drag to select the recognition area. Press Esc to cancel.</value></data>
+  <data name="Vision_RegionPickerNotVisible" xml:space="preserve"><value>The target client area must be fully visible and not minimized before selecting.</value></data>
+  <data name="Vision_RegionSelectionInvalid" xml:space="preserve"><value>Select a larger valid area.</value></data>
+  <data name="Vision_RegionSelectionCancelled" xml:space="preserve"><value>Selection cancelled; the previous region was kept.</value></data>
+  <data name="Vision_RegionSelected" xml:space="preserve"><value>Region selected: ({0},{1}) {2}x{3}</value></data>
+  <data name="Vision_OcrTest" xml:space="preserve"><value>Recognize &amp; fill</value></data>
+  <data name="Vision_OcrKeywordFilled" xml:space="preserve"><value>Keyword filled automatically; you can edit it.</value></data>
+  <data name="Vision_LogAssistantCancelled" xml:space="preserve"><value>Vision assistant cancelled.</value></data>
+  <data name="Vision_LogStepMissingCondition" xml:space="preserve"><value>A state-machine step has no condition.</value></data>
+  <data name="Vision_LogVerificationMissingCondition" xml:space="preserve"><value>An enabled action verification requires a verification condition.</value></data>
+  <data name="Vision_LogWaitingStep" xml:space="preserve"><value>Waiting for step '{0}', attempt {1}.</value></data>
+  <data name="Vision_LogCancelledWaiting" xml:space="preserve"><value>Assistant cancelled while waiting for a vision condition.</value></data>
+  <data name="Vision_LogStepConfirmed" xml:space="preserve"><value>Step '{0}' condition confirmed.</value></data>
+  <data name="Vision_LogActionNoResult" xml:space="preserve"><value>Vision action returned no result.</value></data>
+  <data name="Vision_LogCancelledVerifying" xml:space="preserve"><value>Assistant cancelled while verifying a vision action.</value></data>
+  <data name="Vision_LogVerificationTimeout" xml:space="preserve"><value>Step '{0}' action verification timed out.</value></data>
+  <data name="Vision_LogStepRetry" xml:space="preserve"><value>Step '{0}' timed out; retrying.</value></data>
+  <data name="Vision_LogStepSkipped" xml:space="preserve"><value>Step '{0}' timed out; skipped.</value></data>
+  <data name="Vision_LogStepTimeout" xml:space="preserve"><value>Step '{0}' timed out.</value></data>
+  <data name="Vision_LogCompleted" xml:space="preserve"><value>Assistant state machine completed.</value></data>
+  <data name="Vision_LogConditionConfirmation" xml:space="preserve"><value>Condition confirmation {0}/{1}.</value></data>
+  <data name="Vision_LogConditionNotMatched" xml:space="preserve"><value>Condition not matched.</value></data>
+  <data name="Vision_LogVerificationWaiting" xml:space="preserve"><value>Waiting for action verification, attempt {0}.</value></data>
+  <data name="Vision_LogVerificationRetry" xml:space="preserve"><value>Action verification timed out; retrying verification.</value></data>
+  <data name="Vision_LogVerificationConfirmed" xml:space="preserve"><value>Step '{0}' action verification confirmed.</value></data>
+  <data name="Vision_LogObservationNoResult" xml:space="preserve"><value>Observation: no result.</value></data>
+  <data name="Vision_LogObservationError" xml:space="preserve"><value>Observation error: {0}</value></data>
+  <data name="Vision_LogOcr" xml:space="preserve"><value>OCR text='{0}', confidence={1:P1}, success={2}.</value></data>
+  <data name="Vision_LogTemplate" xml:space="preserve"><value>Template found={0}, similarity={1:P1}, location=({2},{3}).</value></data>
+  <data name="Vision_LogColor" xml:space="preserve"><value>Color found={0}, pixels={1}, ratio={2:P2}, mean-distance={3:0.0}.</value></data>
+  <data name="Vision_LogObservationEmpty" xml:space="preserve"><value>Observation: no OCR, template, or color result.</value></data>
+  <data name="Vision_LogCaptureDiagnostics" xml:space="preserve"><value> capture={0}ms, eval={1}ms, source={2}, cache={3}, brightness={4:0.0}, contrast={5:0.0}{6}{7}.</value></data>
+  <data name="Vision_FixedClientSize" xml:space="preserve"><value>Require exact client size</value></data>
+  <data name="Vision_RequiredWidth" xml:space="preserve"><value>W</value></data>
+  <data name="Vision_RequiredHeight" xml:space="preserve"><value>H</value></data>
+  <data name="Vision_Apply1280x720" xml:space="preserve"><value>Apply 1280x720</value></data>
+  <data name="Vision_Fixed1280Applied" xml:space="preserve"><value>Fixed 1280x720 mode applied; pixel coordinates are enabled.</value></data>
+  <data name="Vision_ClientSizeAny" xml:space="preserve"><value>Exact client size is disabled.</value></data>
+  <data name="Vision_ClientSizeRequiredOnly" xml:space="preserve"><value>Required client area: {0}x{1}</value></data>
+  <data name="Vision_ClientSizeStatus" xml:space="preserve"><value>Current client area: {0}x{1}; required: {2}x{3}; {4}</value></data>
+  <data name="Vision_ClientSizeValid" xml:space="preserve"><value>size matches</value></data>
+  <data name="Vision_ClientSizeInvalid" xml:space="preserve"><value>size mismatch</value></data>
+  <data name="Vision_ClientSizeUnavailable" xml:space="preserve"><value>client area unavailable</value></data>
+  <data name="Vision_FixedCoordinatesRequired" xml:space="preserve"><value>Fixed-size mode requires pixel coordinates.</value></data>
+  <data name="UI_PresetSaveFailed" xml:space="preserve"><value>Preset could not be saved; the original state was restored.</value></data>
 </root>

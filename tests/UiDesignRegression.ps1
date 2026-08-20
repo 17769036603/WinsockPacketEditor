@@ -33,8 +33,13 @@ else {
     $resolvedBuildDirectory
 }
 $applicationExe = Get-ChildItem -LiteralPath $applicationDirectory -Filter "*.exe" |
-    Where-Object { $_.Name -notlike "EasyHook*Svc.exe" } |
+    Where-Object { $_.Name -eq "小黑封包助手.exe" } |
     Select-Object -First 1 -ExpandProperty FullName
+if ([string]::IsNullOrEmpty($applicationExe)) {
+    $applicationExe = Get-ChildItem -LiteralPath $applicationDirectory -Filter "*.exe" |
+        Where-Object { $_.Name -notlike "EasyHook*Svc.exe" -and $_.Name -notlike "VisionLiveHarness*.exe" } |
+        Select-Object -First 1 -ExpandProperty FullName
+}
 if ([string]::IsNullOrEmpty($applicationExe)) {
     throw "Application executable not found in $applicationDirectory"
 }
@@ -300,6 +305,10 @@ Assert-True (
     $pairSentValues.Count -eq 6 -and
     @($pairSentValues | Select-Object -Unique).Count -eq 6
 ) "A pair combination must send every configured first/second value combination exactly once."
+Assert-True (
+    $pairSentValues[0] -eq "10:20" -and
+    $pairSentValues[-1] -eq "12:21"
+) "A pair combination must start from each byte's current value."
 Assert-True (
     $pairBaseline[0] -eq 0x10 -and $pairBaseline[1] -eq 0x20
 ) "A pair combination must preserve its baseline."
@@ -633,6 +642,20 @@ try {
         [System.Reflection.BindingFlags]::NonPublic)
     $initHexBoxMethod.Invoke($sweepEditForm, $null)
     $initSweepParametersMethod.Invoke($sweepEditForm, $null)
+    $sendUiModeType = $sweepEditForm.GetType().GetNestedType(
+        "SendUiMode",
+        [System.Reflection.BindingFlags]::NonPublic)
+    $setSendUiModeMethod = $sweepEditForm.GetType().GetMethod(
+        "SetSendUiMode",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $savedSweepMode = if ($preset.BMode -eq [WPELibrary.Lib.Socket_ByteSweepMode]::PairCombination) {
+        [Enum]::Parse($sendUiModeType, "PairSweep")
+    }
+    else {
+        [Enum]::Parse($sendUiModeType, "SequentialSweep")
+    }
+    $setSendUiModeMethod.Invoke($sweepEditForm, [object[]]@($savedSweepMode))
 
     $sweepRadio = Get-PrivateField $sweepEditForm "rbSendType_ByteSweep"
     $loopCountInput = Get-PrivateField $sweepEditForm "nudByteSweepLoopCount"
@@ -665,6 +688,7 @@ try {
     $sweepEditorPickSecond = Get-PrivateField $sweepEditorPanel "pickSecond"
     $sweepEditorSave = Get-PrivateField $sweepEditorPanel "save"
     $sweepEditorStart = Get-PrivateField $sweepEditorPanel "send"
+    $sweepEditorPause = Get-PrivateField $sweepEditorPanel "pause"
     $sweepEditorStop = Get-PrivateField $sweepEditorPanel "stop"
     $annotationController = Get-PrivateField $sweepEditForm "byteAnnotationController"
     $annotationPanel = Get-PrivateField $annotationController "panel"
@@ -676,18 +700,22 @@ try {
     $idleSweepStatus = Get-PrivateField $sweepEditForm "tlByteSweepProgress"
     $sendButton = Get-PrivateField $sweepEditForm "bSend"
     Assert-True ($parameterLayout.ColumnCount -eq 2) "The lower editor must contain only send and progression columns."
+    $packetDataLayout = $sweepEditForm.GetType().GetField(
+        "tlpPacketData",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic).GetValue($sweepEditForm)
     Assert-True (
         -not $packetValueInfo.Visible -and
         -not $packetPositionInfo.Visible -and
-        $sweepEditForm.GetType().GetField(
-            "tlpPacketData",
-            [System.Reflection.BindingFlags]::Instance -bor
-            [System.Reflection.BindingFlags]::NonPublic).GetValue($sweepEditForm).ColumnStyles[1].Width -eq 0
-    ) "The byte type detail panel must stay hidden without reducing packet editor functionality."
+        $packetDataLayout.ColumnCount -eq 1 -and
+        $sweepSidePanel.Parent -eq $parameterLayout
+    ) "The pair editor must move below a full-width packet data area."
     Assert-True (
         $parameterLayout.GetCellPosition($sendGroup).Column -eq 0 -and
-        $parameterLayout.GetCellPosition($progressionGroup).Column -eq 1
-    ) "Send and progression panels must be arranged left to right."
+        $parameterLayout.GetCellPosition($progressionGroup).Column -eq 0 -and
+        $parameterLayout.GetColumnSpan($sendGroup) -eq 2 -and
+        $parameterLayout.GetColumnSpan($progressionGroup) -eq 2
+    ) "Send and single-byte progression panels must share one full-width lower feature area."
     Assert-True (
         $legacySweepSettings.ColumnCount -eq 6 -and
         $legacySecondPosition.Parent -eq $legacySweepSettings -and
@@ -708,7 +736,7 @@ try {
         $sendActions.ColumnStyles[1].Width -eq 50 -and
         $sendActions.ColumnStyles[2].Width -eq 0
     ) "Hiding normal preset save in sweep editing must let Start and Stop share the full action row."
-    Assert-True (-not $idleSweepStatus.Visible) "Idle sweep guidance must not be duplicated in the status bar."
+    Assert-True ($idleSweepStatus.GetCurrentParent().Name -eq "ssSocketSend") "Sweep status must be hosted by the shared bottom status bar."
     Assert-True (
         $sweepSaveButton.Parent.Name -eq "tlpByteSweepActions" -and
         $sweepStartButton.Parent -eq $sweepSaveButton.Parent -and
@@ -721,31 +749,33 @@ try {
     ) "The lower sweep actions must be ordered Start, Stop, then Save."
     Assert-True (
         -not [string]::IsNullOrWhiteSpace($sweepEditorStart.AccessibleName) -and
+        -not [string]::IsNullOrWhiteSpace($sweepEditorPause.AccessibleName) -and
         -not [string]::IsNullOrWhiteSpace($sweepEditorStop.AccessibleName) -and
         $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorStart) -eq 0 -and
-        $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorStop) -eq 1 -and
-        $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorSave) -eq 2
-    ) "The right sweep editor must provide its own accessible Start and Stop actions."
+        $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorPause) -eq 1 -and
+        $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorStop) -eq 2 -and
+        $sweepEditorStart.Parent.Controls.IndexOf($sweepEditorSave) -eq 3
+    ) "The right sweep editor must provide its own accessible Start, Pause, and Stop actions."
     Assert-True (
-        $sweepSidePanel.RowCount -eq 2 -and
-        $sweepSidePanel.Controls.Count -eq 2 -and
+        $sweepSidePanel.RowCount -eq 3 -and
+        $sweepSidePanel.Controls.Count -eq 3 -and
         -not $annotationPanel.Visible -and
         $sweepSidePanel.RowStyles[0].Height -eq 0
     ) "The right packet panel must hide annotations and keep only the sweep section visible."
     Assert-True ($sweepEditorPanel.GetType().Name -eq "Socket_ByteSweepEditorPanel") "The right sweep section must use the reusable editor panel."
     Assert-True (
         $sweepEditorFooter.Dock -eq [System.Windows.Forms.DockStyle]::Fill -and
-        $sweepEditorFooter.RowCount -eq 2 -and
-        $sweepEditorStart.Parent.Parent -eq $sweepEditorFooter
-    ) "The right sweep editor must keep status and actions in a fixed footer."
+        $sweepEditorFooter.RowCount -eq 1 -and
+        $sweepEditorStart.Parent.Parent.Parent -eq $sweepEditorFooter
+    ) "The right sweep editor must keep its action row in a fixed footer while status moves to the shared status bar."
     Assert-True (
         $sweepEditorTitle.Height -ge 24 -and
         $sweepEditorTitle.Bottom -le $sweepEditorScrollHost.Top
     ) "The right sweep editor must keep its title above the scrollable parameter area."
     Assert-True (
-        $sweepEditorScrollHost.AutoScroll -and
-        $sweepEditorScrollHost.AutoScrollMinSize.Height -ge 210
-    ) "The right sweep editor must reserve a scrollable content area for compact windows."
+        -not $sweepEditorScrollHost.AutoScroll -and
+        $sweepEditorScrollHost.AutoScrollMinSize.Height -eq 0
+    ) "The pair editor must display its compact layout without vertical scrolling."
     Assert-True ($sweepEditorSecondPosition.Parent -ne $null -and $sweepEditorSecondLength.Parent -ne $null) "The right sweep section must include visible byte B position and length inputs."
     Assert-True (
         $sweepSidePanel.ColumnStyles[0].SizeType -eq
@@ -754,19 +784,19 @@ try {
     Assert-True (
         -not $sweepEditorMode.Visible -and
         $sweepEditorPanel.IsPairCombinationSelected -and
+        $sweepEditorLayout.ColumnCount -eq 6 -and
+        $sweepEditorLayout.RowCount -eq 6 -and
         $sweepEditorLayout.RowStyles[0].Height -eq 0 -and
-        $sweepEditorLayout.RowStyles[3].Height -eq 0 -and
-        $sweepEditorLayout.RowStyles[5].Height -gt 0 -and
-        $sweepEditorLayout.RowStyles[10].Height -gt 0
-    ) "The right sweep editor must expose only the pair-combination surface."
+        $sweepEditorLayout.RowStyles[1].Height -gt 0 -and
+        $sweepEditorLayout.RowStyles[5].Height -gt 0
+    ) "The pair editor must expose a full six-row compact surface."
     [System.Windows.Forms.Application]::DoEvents()
     Assert-True (
-        $sweepEditorLayout.RowStyles[3].Height -eq 0 -and
+        $sweepEditorLayout.RowStyles[3].Height -gt 0 -and
         $sweepEditorLayout.RowStyles[5].Height -gt 0 -and
-        $sweepEditorLayout.RowStyles[10].Height -gt 0 -and
         $sweepEditorPickFirst.Parent -ne $null -and
         $sweepEditorPickSecond.Parent -ne $null
-    ) "Pair mode must reveal both A and B fields without leaving the normal interval row."
+    ) "Pair mode must reveal both A and B fields in the compact layout."
     Assert-True (
         $sweepEditorSummary.Text.Contains("A") -and
         $sweepEditorSummary.Text.Contains("B") -and
@@ -790,6 +820,9 @@ try {
         [System.Windows.Forms.SizeType]::Absolute -and
         $sweepSidePanel.RowStyles[0].Height -eq 0 -and
         $sweepSidePanel.RowStyles[1].SizeType -eq
+        [System.Windows.Forms.SizeType]::Absolute -and
+        $sweepSidePanel.RowStyles[1].Height -eq 0 -and
+        $sweepSidePanel.RowStyles[2].SizeType -eq
         [System.Windows.Forms.SizeType]::Percent
     ) "The hidden annotation area must release its row while the sweep area uses the remaining space."
     $collapseAnnotation = $annotationController.GetType().GetMethod(
@@ -803,6 +836,11 @@ try {
         $sweepSidePanel.RowStyles[0].SizeType -eq
         [System.Windows.Forms.SizeType]::Absolute -and
         $sweepSidePanel.RowStyles[0].Height -eq 0 -and
+        $sweepSidePanel.RowStyles[1].SizeType -eq
+        [System.Windows.Forms.SizeType]::Absolute -and
+        $sweepSidePanel.RowStyles[1].Height -eq 0 -and
+        $sweepSidePanel.RowStyles[2].SizeType -eq
+        [System.Windows.Forms.SizeType]::Percent -and
         $sweepSidePanel.ColumnStyles[0].SizeType -eq
         [System.Windows.Forms.SizeType]::Percent
     ) "Hidden annotations must remain hidden and must not reduce the sweep editor width."
@@ -1013,6 +1051,14 @@ try {
         "byteSweepWasRunning",
         [System.Reflection.BindingFlags]::Instance -bor
         [System.Reflection.BindingFlags]::NonPublic)
+    $liveSelectionStartField = $sweepEditForm.GetType().GetField(
+        "byteSweepLiveSelectionStart",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
+    $liveSelectionLengthField = $sweepEditForm.GetType().GetField(
+        "byteSweepLiveSelectionLength",
+        [System.Reflection.BindingFlags]::Instance -bor
+        [System.Reflection.BindingFlags]::NonPublic)
     $sweepStartedFromEditor = $sweepEditForm.GetType().GetField(
         "byteSweepStartedFromEditorPanel",
         [System.Reflection.BindingFlags]::Instance -bor
@@ -1025,6 +1071,14 @@ try {
     $sweepLeftStopButton = Get-PrivateField $sweepEditForm "bSendStop"
     $originalSweepReadOnly = $sweepHexBox.ReadOnly
     $sweepWasRunningForError.SetValue($sweepEditForm, $true)
+    $liveSelectionStartField.SetValue($sweepEditForm, [long]0)
+    $liveSelectionLengthField.SetValue($sweepEditForm, [long]1)
+    $sweepHexBox.Select(0, 1)
+    $sweepHexBox.Select(1, 1)
+    Assert-True (
+        $sweepHexBox.SelectionStart -eq 0 -and
+        $sweepHexBox.SelectionLength -eq 1
+    ) "A running sweep must keep the active byte selected after another byte is clicked."
     $sweepStartedFromEditor.SetValue($sweepEditForm, $false)
     $setSweepRunningState.Invoke($sweepEditForm, [object[]]@($true))
     Assert-True (-not $sweepLeftStopButton.Enabled) "A lower sweep must not enable the normal-send Stop action."
@@ -1529,7 +1583,7 @@ Assert-True (-not $sweepPresetFormSource.Contains("NumericUpDown")) "The sweep i
 Assert-True ($sweepPresetFormSource.Contains("EditDetailsRequested")) "The sweep identity dialog must distinguish navigation to other settings."
 Assert-True ($sweepMainSource.Contains("new Socket_SendForm(packet, preset)")) "Other sweep settings must open the existing preset in the send page."
 Assert-True ($sendFormSource.Contains("this.UpdateCurrentByteSweepPreset();")) "The sweep edit page save action must update the current preset directly."
-Assert-True ($sendFormSource.Contains("Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();")) "Direct sweep saves must persist immediately."
+Assert-True ($sendFormSource.Contains("Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(")) "Direct sweep saves must persist immediately with rollback on failure."
 Assert-True ($sendFormSource.Contains("private void InitializeSendPanelLayout()")) "The send page must define its two-panel layout explicitly."
 Assert-True ($sendFormSource.Contains("this.gbSendSocket.Visible = false;")) "The legacy Socket panel must remain hidden without deleting its backing controls."
 Assert-True ($sendFormSource.Contains("this.tlpParameter.ColumnCount = 2;")) "The lower editor must reserve columns only for send and progression."
@@ -1550,12 +1604,12 @@ Assert-True ($sendWorkerSource.Contains("while (this.LoopCNT == 0 || loopIndex <
 Assert-True ($mainForm.Contains('e.Value = UiText("UI_ContinuousSend");')) "The packet list must label continuous presets accurately."
 Assert-True ([regex]::IsMatch(
     $cacheSource,
-    'ssReturn\.StartSend\(\s*ssi\.SName,\s*resolvedSocket,')) "Existing send presets must pass an immutable resolved Socket into the worker."
+    'ssReturn\.StartSend\(\s*sendName,\s*(?:useSystemSocket,\s*)?resolvedSocket,')) "Existing send presets must pass an immutable resolved Socket into the worker."
 Assert-True ($sendWorkerSource.Contains("this.resolvedSystemSocket = Math.Max(0, ResolvedSystemSocket);")) "A send worker must snapshot its resolved Socket before it starts."
 Assert-True ($sendWorkerSource.Contains("Socket = this.resolvedSystemSocket;")) "A running send worker must keep using its own Socket snapshot."
 Assert-True (-not $sendWorkerSource.Contains("Socket = Socket_Cache.System.SystemSocket;")) "A running send worker must not reread the mutable global Socket."
 Assert-True ($cacheSource.Contains("public static int FindLatestMatchingSocket(")) "Preset sends need a shared exact type-and-destination Socket matcher."
-Assert-True ($cacheSource.Contains("Socket_Cache.SocketList.ResolveCurrentSocket(ssi.SCollection);")) "Hotkey and direct preset sends must refresh the current Socket before sending."
+Assert-True ($cacheSource.Contains("Socket_Cache.SocketList.ResolveCurrentSocket(sendCollection)")) "Hotkey and direct preset sends must refresh the current Socket before sending."
 Assert-True ($cacheSource.Contains("_ = DoSendAsync(SID);")) "Hotkey sends must start asynchronously without blocking the UI dispatcher."
 Assert-True ($cacheSource.Contains("public static int ManualSystemSocket")) "Automatic matching must keep an explicit manual fallback separate from resolved state."
 Assert-True ($cacheSource.Contains("internal static int ResolveSystemSocket(int matchedSocket)")) "Manual fallback selection and resolved-state updates must remain atomic."
@@ -1587,8 +1641,9 @@ Assert-True ($sendFormEnglishResources.Contains("Save preset")) "The save action
 
 $processListSource = Read-Source "WinsockPacketEditor\ProcessList_Form.cs"
 Assert-True ($processListSource.Contains("finally")) "Process loading must restore the UI after failures."
-Assert-True ($processListSource.Contains("ofdCreate.ShowDialog(this) != DialogResult.OK")) "Canceling file selection must leave the current choice unchanged."
-Assert-True ($processListSource.Contains("this.ShowEmulatorOnly = !this.ShowEmulatorOnly;")) "Emulator filtering must provide a path back to all processes."
+Assert-True ($processListSource.Contains("private bool ShowEmulatorOnly = true;")) "Injection mode must default to approved emulator processes."
+Assert-True ($processListSource.Contains("IsSupportedInjectionProcess")) "Selected processes must be revalidated before injection."
+Assert-True (-not $processListSource.Contains("OpenFileDialog")) "Injection mode must not expose arbitrary EXE selection."
 
 $programSource = Read-Source "WinsockPacketEditor\Lib\Program.cs"
 Assert-True ($programSource.Contains("MultiLanguage.SetDefaultLanguage(Socket_Cache.System.DefaultLanguage);")) "Startup UI must apply the saved language before creating the first form."

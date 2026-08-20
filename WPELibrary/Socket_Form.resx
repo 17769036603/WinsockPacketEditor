@@ -712,7 +712,7 @@
     <value>System.Windows.Forms.CheckBox, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </data>
   <data name="$this.Text" xml:space="preserve">
-    <value>WPE64</value>
+    <value>小黑封包助手</value>
   </data>
   <data name="hbXOR_From.TabIndex" type="System.Int32, mscorlib">
     <value>1</value>

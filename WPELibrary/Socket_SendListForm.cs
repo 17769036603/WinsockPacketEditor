@@ -173,7 +173,21 @@ namespace WPELibrary
                 int SLoopINT_New = ((int)this.nudLoop_INT.Value);
                 string SNotes_New = this.rtbNotes.Text.Trim();
 
-                Socket_Cache.Send.UpdateSend(this.SSI, SName_New, SSystemSocket_New, SLoopCNT_New, SLoopINT_New, this.SendCollection, SNotes_New);
+                if (!Socket_Cache.SendList.TryApplyListChangeAndSave(() =>
+                    Socket_Cache.Send.UpdateSend(
+                        this.SSI,
+                        SName_New,
+                        SSystemSocket_New,
+                        SLoopCNT_New,
+                        SLoopINT_New,
+                        this.SendCollection,
+                        SNotes_New)))
+                {
+                    Socket_Operation.ShowMessageBox(
+                        Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                        "预设保存失败，已恢复原状态。");
+                    return;
+                }
 
                 this.Close();
             }

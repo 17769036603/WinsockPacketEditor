@@ -176,10 +176,20 @@ namespace WPELibrary.Lib
     {
         private readonly DynamicByteProvider inner;
         private readonly IList<Socket_ByteAnnotationInfo> annotations;
+        private readonly IList<PresetVariableBinding> variableBindings;
         public Socket_AnnotatedByteProvider(byte[] bytes, IList<Socket_ByteAnnotationInfo> annotations)
+            : this(bytes, annotations, null)
+        {
+        }
+
+        public Socket_AnnotatedByteProvider(
+            byte[] bytes,
+            IList<Socket_ByteAnnotationInfo> annotations,
+            IList<PresetVariableBinding> variableBindings)
         {
             inner = new DynamicByteProvider(bytes ?? new byte[0]);
             this.annotations = annotations;
+            this.variableBindings = variableBindings;
         }
         public IList<byte> Bytes { get { return inner.Bytes; } }
         public byte ReadByte(long index) { return inner.ReadByte(index); }
@@ -193,8 +203,23 @@ namespace WPELibrary.Lib
         {
             if (bs == null) throw new ArgumentNullException("bs");
             if (index < 0 || index > Length) throw new ArgumentOutOfRangeException("index");
+            if (variableBindings != null && variableBindings.Any(item =>
+                item != null && index > item.Offset && index < item.End))
+            {
+                throw new InvalidOperationException("变量绑定范围内不能插入字节，请先取消变量绑定。");
+            }
             inner.InsertBytes(index, bs);
             Socket_ByteAnnotationEngine.AdjustForInsert(annotations, index, bs.Length);
+            if (variableBindings != null)
+            {
+                foreach (PresetVariableBinding item in variableBindings)
+                {
+                    if (item != null && index <= item.Offset)
+                    {
+                        item.Offset = checked(item.Offset + bs.Length);
+                    }
+                }
+            }
             OnLengthChanged();
             OnChanged();
         }
@@ -202,8 +227,23 @@ namespace WPELibrary.Lib
         {
             if (index < 0 || index > Length) throw new ArgumentOutOfRangeException("index");
             if (length < 0 || length > Length - index) throw new ArgumentOutOfRangeException("length");
+            if (variableBindings != null && variableBindings.Any(item =>
+                item != null && DynamicVariableRange.Overlaps(item.Offset, item.Length, (int)index, (int)length)))
+            {
+                throw new InvalidOperationException("变量绑定范围内不能删除字节，请先取消变量绑定。");
+            }
             inner.DeleteBytes(index, length);
             Socket_ByteAnnotationEngine.AdjustForDelete(annotations, index, length);
+            if (variableBindings != null && length > 0)
+            {
+                foreach (PresetVariableBinding item in variableBindings)
+                {
+                    if (item != null && index < item.Offset)
+                    {
+                        item.Offset = checked(item.Offset - (int)Math.Min(length, item.Offset - index));
+                    }
+                }
+            }
             OnLengthChanged();
             OnChanged();
         }

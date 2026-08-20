@@ -130,7 +130,7 @@
     <value>6, 22</value>
   </data>
   <data name="txtRobotName.Size" type="System.Drawing.Size, System.Drawing">
-    <value>916, 23</value>
+    <value>582, 23</value>
   </data>
   <data name="txtRobotName.TabIndex" type="System.Int32, mscorlib">
     <value>0</value>
@@ -157,7 +157,7 @@
     <value>6, 6, 6, 6</value>
   </data>
   <data name="gbRobotName.Size" type="System.Drawing.Size, System.Drawing">
-    <value>928, 54</value>
+    <value>594, 54</value>
   </data>
   <data name="gbRobotName.TabIndex" type="System.Int32, mscorlib">
     <value>71</value>
@@ -268,7 +268,7 @@
     <value>6, 22</value>
   </data>
   <data name="dgvRobotInstruction.Size" type="System.Drawing.Size, System.Drawing">
-    <value>566, 327</value>
+    <value>234, 343</value>
   </data>
   <data name="dgvRobotInstruction.TabIndex" type="System.Int32, mscorlib">
     <value>65</value>
@@ -295,7 +295,7 @@
     <value>6, 6, 6, 6</value>
   </data>
   <data name="gbRobotInstruction.Size" type="System.Drawing.Size, System.Drawing">
-    <value>578, 355</value>
+    <value>246, 371</value>
   </data>
   <data name="gbRobotInstruction.TabIndex" type="System.Int32, mscorlib">
     <value>69</value>
@@ -2911,7 +2911,7 @@
     <value>3, 3</value>
   </data>
   <data name="tcRobotInstruction.Size" type="System.Drawing.Size, System.Drawing">
-    <value>344, 355</value>
+    <value>342, 371</value>
   </data>
   <data name="tcRobotInstruction.TabIndex" type="System.Int32, mscorlib">
     <value>68</value>
@@ -2941,7 +2941,7 @@
     <value>1</value>
   </data>
   <data name="tlpListInfo.Size" type="System.Drawing.Size, System.Drawing">
-    <value>934, 361</value>
+    <value>600, 377</value>
   </data>
   <data name="tlpListInfo.TabIndex" type="System.Int32, mscorlib">
     <value>0</value>
@@ -2959,7 +2959,7 @@
     <value>1</value>
   </data>
   <data name="tlpListInfo.LayoutSettings" type="System.Windows.Forms.TableLayoutSettings, System.Windows.Forms">
-    <value>&lt;?xml version="1.0" encoding="utf-16"?&gt;&lt;TableLayoutSettings&gt;&lt;Controls&gt;&lt;Control Name="gbRobotInstruction" Row="0" RowSpan="1" Column="1" ColumnSpan="1" /&gt;&lt;Control Name="tcRobotInstruction" Row="0" RowSpan="1" Column="0" ColumnSpan="1" /&gt;&lt;/Controls&gt;&lt;Columns Styles="Absolute,350,Percent,100" /&gt;&lt;Rows Styles="Percent,100" /&gt;&lt;/TableLayoutSettings&gt;</value>
+    <value>&lt;?xml version="1.0" encoding="utf-16"?&gt;&lt;TableLayoutSettings&gt;&lt;Controls&gt;&lt;Control Name="gbRobotInstruction" Row="0" RowSpan="1" Column="1" ColumnSpan="1" /&gt;&lt;Control Name="tcRobotInstruction" Row="0" RowSpan="1" Column="0" ColumnSpan="1" /&gt;&lt;/Controls&gt;&lt;Columns Styles="Percent,58,Percent,42" /&gt;&lt;Rows Styles="Percent,100" /&gt;&lt;/TableLayoutSettings&gt;</value>
   </data>
   <data name="tlpButton.ColumnCount" type="System.Int32, mscorlib">
     <value>9</value>
@@ -3094,10 +3094,10 @@
     <value>0, 0, 0, 0</value>
   </data>
   <data name="tlpButton.RowCount" type="System.Int32, mscorlib">
-    <value>2</value>
+    <value>1</value>
   </data>
   <data name="tlpButton.Size" type="System.Drawing.Size, System.Drawing">
-    <value>934, 40</value>
+    <value>600, 40</value>
   </data>
   <data name="tlpButton.TabIndex" type="System.Int32, mscorlib">
     <value>2</value>
@@ -3115,7 +3115,7 @@
     <value>2</value>
   </data>
   <data name="tlpButton.LayoutSettings" type="System.Windows.Forms.TableLayoutSettings, System.Windows.Forms">
-    <value>&lt;?xml version="1.0" encoding="utf-16"?&gt;&lt;TableLayoutSettings&gt;&lt;Controls&gt;&lt;Control Name="bStop" Row="0" RowSpan="1" Column="3" ColumnSpan="1" /&gt;&lt;Control Name="bExecute" Row="0" RowSpan="1" Column="1" ColumnSpan="1" /&gt;&lt;Control Name="bClose" Row="0" RowSpan="1" Column="7" ColumnSpan="1" /&gt;&lt;Control Name="bSave" Row="0" RowSpan="1" Column="5" ColumnSpan="1" /&gt;&lt;/Controls&gt;&lt;Columns Styles="Percent,50,Absolute,100,Absolute,30,Absolute,100,Absolute,30,Absolute,100,Absolute,30,Absolute,100,Percent,50" /&gt;&lt;Rows Styles="Absolute,35,Percent,100" /&gt;&lt;/TableLayoutSettings&gt;</value>
+    <value>&lt;?xml version="1.0" encoding="utf-16"?&gt;&lt;TableLayoutSettings&gt;&lt;Controls&gt;&lt;Control Name="bStop" Row="0" RowSpan="1" Column="3" ColumnSpan="1" /&gt;&lt;Control Name="bExecute" Row="0" RowSpan="1" Column="1" ColumnSpan="1" /&gt;&lt;Control Name="bClose" Row="0" RowSpan="1" Column="7" ColumnSpan="1" /&gt;&lt;Control Name="bSave" Row="0" RowSpan="1" Column="5" ColumnSpan="1" /&gt;&lt;/Controls&gt;&lt;Columns Styles="Percent,50,Absolute,100,Absolute,30,Absolute,100,Absolute,30,Absolute,100,Absolute,30,Absolute,100,Percent,50" /&gt;&lt;Rows Styles="Absolute,35" /&gt;&lt;/TableLayoutSettings&gt;</value>
   </data>
   <data name="txtExecute.Dock" type="System.Windows.Forms.DockStyle, System.Windows.Forms">
     <value>Fill</value>
@@ -3127,7 +3127,7 @@
     <value>3, 19</value>
   </data>
   <data name="txtExecute.Size" type="System.Drawing.Size, System.Drawing">
-    <value>922, 23</value>
+    <value>588, 23</value>
   </data>
   <data name="txtExecute.TabIndex" type="System.Int32, mscorlib">
     <value>72</value>
@@ -3157,7 +3157,7 @@
     <value>3, 0, 3, 0</value>
   </data>
   <data name="gbExecute.Size" type="System.Drawing.Size, System.Drawing">
-    <value>928, 50</value>
+    <value>594, 50</value>
   </data>
   <data name="gbExecute.TabIndex" type="System.Int32, mscorlib">
     <value>70</value>
@@ -3190,7 +3190,7 @@
     <value>4</value>
   </data>
   <data name="tlpRobotForm.Size" type="System.Drawing.Size, System.Drawing">
-    <value>934, 511</value>
+    <value>600, 511</value>
   </data>
   <data name="tlpRobotForm.TabIndex" type="System.Int32, mscorlib">
     <value>0</value>
@@ -3208,7 +3208,7 @@
     <value>1</value>
   </data>
   <data name="tlpRobotForm.LayoutSettings" type="System.Windows.Forms.TableLayoutSettings, System.Windows.Forms">
-    <value>&lt;?xml version="1.0" encoding="utf-16"?&gt;&lt;TableLayoutSettings&gt;&lt;Controls&gt;&lt;Control Name="gbRobotName" Row="0" RowSpan="1" Column="0" ColumnSpan="1" /&gt;&lt;Control Name="tlpListInfo" Row="1" RowSpan="1" Column="0" ColumnSpan="1" /&gt;&lt;Control Name="tlpButton" Row="3" RowSpan="1" Column="0" ColumnSpan="1" /&gt;&lt;Control Name="gbExecute" Row="2" RowSpan="1" Column="0" ColumnSpan="1" /&gt;&lt;/Controls&gt;&lt;Columns Styles="Percent,100" /&gt;&lt;Rows Styles="Absolute,60,Percent,100,Absolute,50,Absolute,40,Absolute,20" /&gt;&lt;/TableLayoutSettings&gt;</value>
+    <value>&lt;?xml version="1.0" encoding="utf-16"?&gt;&lt;TableLayoutSettings&gt;&lt;Controls&gt;&lt;Control Name="gbRobotName" Row="0" RowSpan="1" Column="0" ColumnSpan="1" /&gt;&lt;Control Name="tlpListInfo" Row="1" RowSpan="1" Column="0" ColumnSpan="1" /&gt;&lt;Control Name="tlpButton" Row="3" RowSpan="1" Column="0" ColumnSpan="1" /&gt;&lt;Control Name="gbExecute" Row="2" RowSpan="1" Column="0" ColumnSpan="1" /&gt;&lt;/Controls&gt;&lt;Columns Styles="Percent,100" /&gt;&lt;Rows Styles="Absolute,60,Percent,100,Absolute,34,Absolute,40" /&gt;&lt;/TableLayoutSettings&gt;</value>
   </data>
   <metadata name="$this.Localizable" type="System.Boolean, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089">
     <value>True</value>
@@ -3220,7 +3220,7 @@
     <value>96, 96</value>
   </data>
   <data name="$this.ClientSize" type="System.Drawing.Size, System.Drawing">
-    <value>934, 511</value>
+    <value>600, 511</value>
   </data>
   <data name="$this.Font" type="System.Drawing.Font, System.Drawing">
     <value>微软雅黑, 9pt</value>

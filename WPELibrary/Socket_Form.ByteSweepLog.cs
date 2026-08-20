@@ -76,10 +76,12 @@ namespace WPELibrary
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
                 AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None,
                 AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
+                ScrollBars = ScrollBars.Both,
                 BackgroundColor = SystemColors.Window,
                 BorderStyle = BorderStyle.FixedSingle,
                 ColumnHeadersHeight = 28,
-                AccessibleName = UiText("ByteSweep_LogTitle")
+                AccessibleName = UiText("ByteSweep_LogTitle"),
+                AccessibleRole = AccessibleRole.Table
             };
             this.dgvByteSweepLog.Columns.Add(CreateLogColumn("cByteSweepLogTime", UiText("ByteSweep_LogTime"), "Time", 88));
             this.dgvByteSweepLog.Columns.Add(CreateLogColumn("cByteSweepLogState", UiText("ByteSweep_LogState"), "State", 78));
@@ -94,6 +96,7 @@ namespace WPELibrary
             this.dgvByteSweepLog.Columns.Add(detail);
             this.dgvByteSweepLog.DataSource = this.byteSweepLogEntries;
             this.dgvByteSweepLog.CellFormatting += this.dgvByteSweepLog_CellFormatting;
+            this.dgvByteSweepLog.Paint += this.dgvByteSweepLog_Paint;
 
             layout.Controls.Add(actions, 0, 0);
             layout.Controls.Add(this.dgvByteSweepLog, 0, 1);
@@ -210,7 +213,7 @@ namespace WPELibrary
             if (snapshot.IsPairCombination)
             {
                 return string.Format(
-                    "A={0:X2} ({1}/{2}) · B={3:X2} ({4}/{5}) · {6}/{7}",
+                    UiText("ByteSweep_LogPairProgressFormat"),
                     snapshot.PairFirstValue,
                     snapshot.PairFirstValueNumber,
                     snapshot.PairFirstValueCount,
@@ -222,7 +225,7 @@ namespace WPELibrary
             }
 
             return string.Format(
-                "字节 {0}/{1} · {2}/255 · {3}/{4}",
+                UiText("ByteSweep_LogProgressFormat"),
                 snapshot.ByteNumber,
                 snapshot.ByteCount,
                 snapshot.CurrentValue.ToString("X2"),
@@ -296,8 +299,8 @@ namespace WPELibrary
 
             using (SaveFileDialog dialog = new SaveFileDialog
             {
-                Filter = "CSV (*.csv)|*.csv|All files (*.*)|*.*",
-                FileName = "递进日志.csv",
+                Filter = UiText("ByteSweep_LogCsvFilter"),
+                FileName = UiText("ByteSweep_LogDefaultFileName"),
                 AddExtension = true
             })
             {
@@ -307,7 +310,7 @@ namespace WPELibrary
                 }
 
                 StringBuilder csv = new StringBuilder();
-                csv.AppendLine("时间,状态,预设,模式,进度,总发送,成功,失败,详情");
+                csv.AppendLine(UiText("ByteSweep_LogCsvHeader"));
                 foreach (Socket_ByteSweepLogEntry item in this.byteSweepLogEntries)
                 {
                     csv.AppendLine(string.Join(",", new[]
@@ -325,6 +328,27 @@ namespace WPELibrary
         {
             string text = value ?? string.Empty;
             return "\"" + text.Replace("\"", "\"\"") + "\"";
+        }
+
+        private void dgvByteSweepLog_Paint(object sender, PaintEventArgs e)
+        {
+            if (this.dgvByteSweepLog.Rows.Count > 0)
+            {
+                return;
+            }
+
+            Rectangle contentBounds = this.dgvByteSweepLog.ClientRectangle;
+            contentBounds.Y += this.dgvByteSweepLog.ColumnHeadersHeight;
+            contentBounds.Height -= this.dgvByteSweepLog.ColumnHeadersHeight;
+            TextRenderer.DrawText(
+                e.Graphics,
+                UiText("ByteSweep_LogEmpty"),
+                this.dgvByteSweepLog.Font,
+                contentBounds,
+                SystemColors.GrayText,
+                TextFormatFlags.HorizontalCenter |
+                TextFormatFlags.VerticalCenter |
+                TextFormatFlags.SingleLine);
         }
 
         private void dgvByteSweepLog_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)

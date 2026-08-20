@@ -88,9 +88,17 @@ namespace WPELibrary
             {
                 if (dgvMapLocal.Columns[e.ColumnIndex] is DataGridViewCheckBoxColumn && e.RowIndex >= 0)
                 {
-                    bool bCheck = Convert.ToBoolean(dgvMapLocal.Rows[e.RowIndex].Cells[e.ColumnIndex].Value);
-                    dgvMapLocal.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = !bCheck;
-                    Socket_Cache.ProxyMapping.lstMapLocal[e.RowIndex].IsEnable = !bCheck;
+                    Proxy_MapLocal rule = Socket_Cache.ProxyMapping.lstMapLocal[e.RowIndex];
+                    bool originalValue = rule.IsEnable;
+                    bool newValue = !originalValue;
+                    if (!Socket_Cache.ProxyMapping.TryApplyMapLocalChangeAndSave(() =>
+                        rule.IsEnable = newValue))
+                    {
+                        dgvMapLocal.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = originalValue;
+                        Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                        return;
+                    }
+                    dgvMapLocal.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = newValue;
                 }
             }
             catch (Exception ex)
@@ -122,7 +130,13 @@ namespace WPELibrary
                     int iSelectIndex = this.dgvMapLocal.SelectedRows[0].Index;
                     if (iSelectIndex >= 0 && iSelectIndex < Socket_Cache.ProxyMapping.lstMapLocal.Count)
                     {
-                        Socket_Cache.ProxyMapping.DelMapLocal(Socket_Cache.ProxyMapping.lstMapLocal[iSelectIndex]);
+                        Proxy_MapLocal rule = Socket_Cache.ProxyMapping.lstMapLocal[iSelectIndex];
+                        if (!Socket_Cache.ProxyMapping.TryApplyMapLocalChangeAndSave(() =>
+                            Socket_Cache.ProxyMapping.DelMapLocal(rule)))
+                        {
+                            Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                            return;
+                        }
                         bindingSource.ResetBindings(false);
                     }
                 }
@@ -169,7 +183,13 @@ namespace WPELibrary
 
                         if (pml != null)
                         {
-                            Socket_Cache.ProxyMapping.UpdateMapLocal_ByListAction(Socket_Cache.System.ListAction.Top, pml);
+                            if (!Socket_Cache.ProxyMapping.TryApplyMapLocalChangeAndSave(() =>
+                                Socket_Cache.ProxyMapping.UpdateMapLocal_ByListAction(
+                                    Socket_Cache.System.ListAction.Top, pml)))
+                            {
+                                Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                                return;
+                            }
                         }
 
                         break;
@@ -178,7 +198,13 @@ namespace WPELibrary
 
                         if (pml != null)
                         {
-                            Socket_Cache.ProxyMapping.UpdateMapLocal_ByListAction(Socket_Cache.System.ListAction.Up, pml);
+                            if (!Socket_Cache.ProxyMapping.TryApplyMapLocalChangeAndSave(() =>
+                                Socket_Cache.ProxyMapping.UpdateMapLocal_ByListAction(
+                                    Socket_Cache.System.ListAction.Up, pml)))
+                            {
+                                Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                                return;
+                            }
                         }
                         
                         break;
@@ -187,7 +213,13 @@ namespace WPELibrary
 
                         if (pml != null)
                         {
-                            Socket_Cache.ProxyMapping.UpdateMapLocal_ByListAction(Socket_Cache.System.ListAction.Down, pml);
+                            if (!Socket_Cache.ProxyMapping.TryApplyMapLocalChangeAndSave(() =>
+                                Socket_Cache.ProxyMapping.UpdateMapLocal_ByListAction(
+                                    Socket_Cache.System.ListAction.Down, pml)))
+                            {
+                                Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                                return;
+                            }
                         }
                         
                         break;
@@ -196,7 +228,13 @@ namespace WPELibrary
 
                         if (pml != null)
                         {
-                            Socket_Cache.ProxyMapping.UpdateMapLocal_ByListAction(Socket_Cache.System.ListAction.Bottom, pml);
+                            if (!Socket_Cache.ProxyMapping.TryApplyMapLocalChangeAndSave(() =>
+                                Socket_Cache.ProxyMapping.UpdateMapLocal_ByListAction(
+                                    Socket_Cache.System.ListAction.Bottom, pml)))
+                            {
+                                Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                                return;
+                            }
                         }
                         
                         break;

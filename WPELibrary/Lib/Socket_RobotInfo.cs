@@ -65,6 +65,26 @@ namespace WPELibrary.Lib
 
         #endregion
 
+        #region//图文识别配置
+
+        private Socket_VisionProfile visionProfile;
+
+        public Socket_VisionProfile VisionProfile
+        {
+            get
+            {
+                if (this.visionProfile == null)
+                {
+                    this.visionProfile = new Socket_VisionProfile();
+                }
+
+                return this.visionProfile;
+            }
+            set { this.visionProfile = value ?? new Socket_VisionProfile(); }
+        }
+
+        #endregion
+
         #region//Socket_RobotInfo
 
         public Socket_RobotInfo(bool IsEnable, Guid RID, string RName, DataTable RInstructions)

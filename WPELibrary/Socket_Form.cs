@@ -9,6 +9,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml.Linq;
 using WPELibrary.Lib;
@@ -19,10 +20,20 @@ namespace WPELibrary
 {
     public partial class Socket_Form : Form
     {
+        private static readonly Color UiNavigationTextColor = Color.FromArgb(31, 41, 55);
+        private static readonly Color UiNavigationBorderColor = Color.FromArgb(210, 214, 220);
+        private static readonly Color UiNavigationHoverColor = Color.FromArgb(245, 248, 252);
+        private static readonly Color UiNavigationPressedColor = Color.FromArgb(230, 238, 248);
+        private static readonly Color PacketSendAccentColor = Color.FromArgb(255, 167, 38);
+        private static readonly Color PacketReceiveAccentColor = Color.FromArgb(41, 182, 246);
+        private static readonly Color PacketSelectionTextColor = Color.FromArgb(15, 23, 42);
         private readonly Socket_Cache.System.SystemMode RunMode = Socket_Cache.System.SystemMode.Process;
         private bool bWakeUp = true;
         private readonly ToolTip tt = new ToolTip();
         private readonly WinSockHook ws = new WinSockHook();
+        private string hookStatusKey = "UI_HookStatusReady";
+        private bool hookUiTransitioning;
+        private bool socketListTickRunning;
         private Button bSettings;
         private TabControl tcAdvancedTools;
         private TableLayoutPanel tlpCurrentProcess;
@@ -30,6 +41,7 @@ namespace WPELibrary
         private Label lSendFoldersTitle;
         private Button bSendFolderAdd;
         private ToolStripButton tsSendListSelectAll;
+        private ToolStripButton tsSendListParallel;
         private ToolStripDropDownButton tsSendListMore;
         private ToolStripLabel tsSendListContext;
         private ToolStripMenuItem cmsSendListMoveToFolder;
@@ -38,14 +50,23 @@ namespace WPELibrary
         private ToolStripMenuItem cmsSendFolderMoveUp;
         private ToolStripMenuItem cmsSendFolderMoveDown;
         private ToolStripMenuItem cmsSocketListPacketDetails;
+        private ToolStripMenuItem cmsHexBox_DynamicVariable;
+        private ToolStripMenuItem cmsHexBox_AddDynamicField;
+        private ToolStripMenuItem cmsHexBox_EditDynamicVariable;
+        private ToolStripMenuItem cmsHexBox_RemoveDynamicField;
+        private ToolStripSeparator cmsHexBox_DynamicSeparator;
         private string selectedSendFolder = "__ALL__";
         private List<Socket_SendInfo> sendBatchQueue = new List<Socket_SendInfo>();
         private readonly Dictionary<Guid, Socket_Send> manualSendOperations =
             new Dictionary<Guid, Socket_Send>();
         private readonly object sendOperationSync = new object();
-        private Guid activeBatchSendListId = Guid.Empty;
-        private Socket_Send activeBatchSendOperation;
+        private readonly Dictionary<Guid, Socket_Send> activeBatchSendOperations =
+            new Dictionary<Guid, Socket_Send>();
+        private bool sendListParallelMode;
         private Socket_PacketInfo packetDataEditingPacket;
+        private GroupBox gbReadableContent;
+        private Label lReadableContentMeta;
+        private RichTextBox rtbReadableContent;
         private bool robotSettingsPageActive;
         private ToolStripDropDownButton tsRobotListMore;
         private ToolStripDropDownButton tsFilterListMore;
@@ -61,11 +82,20 @@ namespace WPELibrary
         private TableLayoutPanel tlpAssistantButtons;
         private Label lAssistantEmptyState;
         private ContextMenuStrip cmsAssistantButton;
+        private ToolStripMenuItem cmsAssistantButtonMoveToGroup;
         private ContextMenuStrip cmsRobotFolder;
         private string selectedRobotFolder = "常用";
         private Socket_Robot activeAssistantRobot;
         private Guid activeAssistantRobotId = Guid.Empty;
         private readonly Dictionary<Guid, Button> assistantButtons = new Dictionary<Guid, Button>();
+        private int requestedClientWidth = -1;
+
+        protected override void SetClientSizeCore(int x, int y)
+        {
+            this.requestedClientWidth = x;
+            base.SetClientSizeCore(x, y);
+            this.UpdateAutomationNavigationButtonLayout();
+        }
 
         #region//加载窗体
 
@@ -109,9 +139,12 @@ namespace WPELibrary
         private void InitSettingsButton()
         {
             this.MinimumSize = new System.Drawing.Size(900, 620);
+            this.AccessibleRole = AccessibleRole.Window;
             this.dgvSocketList.AccessibleName = UiText("Main_PacketList");
+            this.dgvSocketList.AccessibleRole = AccessibleRole.Table;
             this.hbPacketData.AccessibleName = UiText("Main_PacketData");
             this.tcAutomation.AccessibleName = UiText("Main_Automation");
+            this.tcAutomation.AccessibleRole = AccessibleRole.PageTabList;
 
             this.bSettings = new Button
             {
@@ -124,6 +157,7 @@ namespace WPELibrary
                 AccessibleName = UiText("Main_Settings")
             };
             this.bSettings.Click += this.bSettings_Click;
+            this.tt.SetToolTip(this.bSettings, this.bSettings.Text);
 
             this.tlpCurrentProcess = new TableLayoutPanel
             {
@@ -150,18 +184,24 @@ namespace WPELibrary
             this.bCleanUp.Anchor = AnchorStyles.None;
             this.bCleanUp.Margin = new Padding(4);
             this.bCleanUp.TextImageRelation = TextImageRelation.ImageBeforeText;
+            this.bCleanUp.AccessibleName = this.bCleanUp.Text;
+            this.tt.SetToolTip(this.bCleanUp, this.bCleanUp.Text);
 
             this.bStartHook.Text = UiText("Main_Start");
             this.bStartHook.Size = new System.Drawing.Size(96, 38);
             this.bStartHook.Anchor = AnchorStyles.None;
             this.bStartHook.Margin = new Padding(4);
             this.bStartHook.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+            this.bStartHook.AccessibleName = this.bStartHook.Text;
+            this.tt.SetToolTip(this.bStartHook, this.bStartHook.Text);
 
             this.bStopHook.Text = UiText("Main_Stop");
             this.bStopHook.Size = new System.Drawing.Size(96, 38);
             this.bStopHook.Anchor = AnchorStyles.None;
             this.bStopHook.Margin = new Padding(4);
             this.bStopHook.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+            this.bStopHook.AccessibleName = this.bStopHook.Text;
+            this.tt.SetToolTip(this.bStopHook, this.bStopHook.Text);
 
             this.tcAdvancedTools = new TabControl
             {
@@ -206,6 +246,9 @@ namespace WPELibrary
             }
 
             this.hbPacketData.ReadOnly = false;
+            this.Layout += this.Socket_Form_Layout;
+            this.hbPacketData.SelectionStartChanged += this.hbPacketData_ByteSweepSelectionChanged;
+            this.hbPacketData.SelectionLengthChanged += this.hbPacketData_ByteSweepSelectionChanged;
             this.InitSendFolderUI();
             this.InitByteSweepPresetUI();
             this.InitByteSweepLogUI();
@@ -213,6 +256,181 @@ namespace WPELibrary
             this.InitAutomationHomeUI();
             this.ConfigureRobotToolbarTextButtons();
             this.ConfigureFilterToolbarTextButtons();
+            this.InitDynamicVariableHexMenu();
+            this.hbPacketData.MouseMove += this.hbPacketData_DynamicVariableMouseMove;
+        }
+
+        private void InitDynamicVariableHexMenu()
+        {
+            this.cmsHexBox_DynamicSeparator = new ToolStripSeparator { Name = "cmsHexBox_DynamicSeparator" };
+            this.cmsHexBox_DynamicVariable = new ToolStripMenuItem
+            {
+                Name = "cmsHexBox_DynamicVariable",
+                Text = "设为动态变量"
+            };
+            this.cmsHexBox_AddDynamicField = new ToolStripMenuItem
+            {
+                Name = "cmsHexBox_AddDynamicField",
+                Text = "添加到已有动态规则"
+            };
+            this.cmsHexBox_EditDynamicVariable = new ToolStripMenuItem
+            {
+                Name = "cmsHexBox_EditDynamicVariable",
+                Text = "修改变量"
+            };
+            this.cmsHexBox_RemoveDynamicField = new ToolStripMenuItem
+            {
+                Name = "cmsHexBox_RemoveDynamicField",
+                Text = "取消动态字段"
+            };
+            int insertIndex = this.cmsHexBox.Items.IndexOf(this.cmsHexBox_FilterList);
+            this.cmsHexBox.Items.Insert(insertIndex + 1, this.cmsHexBox_DynamicSeparator);
+            this.cmsHexBox.Items.Insert(insertIndex + 2, this.cmsHexBox_DynamicVariable);
+            this.cmsHexBox.Items.Insert(insertIndex + 3, this.cmsHexBox_AddDynamicField);
+            this.cmsHexBox.Items.Insert(insertIndex + 4, this.cmsHexBox_EditDynamicVariable);
+            this.cmsHexBox.Items.Insert(insertIndex + 5, this.cmsHexBox_RemoveDynamicField);
+        }
+
+        private void InitReadableContentUI()
+        {
+            this.gbReadableContent = new GroupBox
+            {
+                Name = "gbReadableContent",
+                Text = UiText("UI_ReadableContentTitle"),
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 0, 0, 4),
+                Padding = new Padding(6, 5, 6, 6),
+                TabStop = false
+            };
+
+            TableLayoutPanel readableLayout = new TableLayoutPanel
+            {
+                Name = "tlpReadableContent",
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 2,
+                Margin = Padding.Empty,
+                Padding = Padding.Empty
+            };
+            readableLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            readableLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24F));
+            readableLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
+            this.lReadableContentMeta = new Label
+            {
+                Name = "lReadableContentMeta",
+                Dock = DockStyle.Fill,
+                AutoEllipsis = true,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Text = UiText("UI_ReadableContentNone"),
+                AccessibleName = UiText("UI_ReadableContentMetaLabel")
+            };
+
+            this.rtbReadableContent = new RichTextBox
+            {
+                Name = "rtbReadableContent",
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                DetectUrls = false,
+                Multiline = true,
+                WordWrap = false,
+                ScrollBars = RichTextBoxScrollBars.Both,
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = SystemColors.Window,
+                ForeColor = SystemColors.ControlText,
+                Font = new Font("Consolas", 9F),
+                AccessibleName = UiText("UI_ReadableContentPreview")
+            };
+
+            readableLayout.Controls.Add(this.lReadableContentMeta, 0, 0);
+            readableLayout.Controls.Add(this.rtbReadableContent, 0, 1);
+            this.gbReadableContent.Controls.Add(readableLayout);
+
+            this.tlpPacketData.Controls.Remove(this.tlpHexBox);
+            this.tlpPacketData.RowCount = 2;
+            this.tlpPacketData.RowStyles.Clear();
+            this.tlpPacketData.RowStyles.Add(new RowStyle(SizeType.Absolute, 122F));
+            this.tlpPacketData.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            this.tlpPacketData.Controls.Add(this.gbReadableContent, 0, 0);
+            this.tlpPacketData.Controls.Add(this.tlpHexBox, 0, 1);
+
+            this.ClearReadableContent();
+        }
+
+        private void ClearReadableContent()
+        {
+            if (this.lReadableContentMeta == null || this.rtbReadableContent == null)
+            {
+                return;
+            }
+
+            this.lReadableContentMeta.Text = UiText("UI_ReadableContentNone");
+            this.rtbReadableContent.Clear();
+        }
+
+        private void UpdateReadableContent(byte[] buffer)
+        {
+            if (this.lReadableContentMeta == null || this.rtbReadableContent == null)
+            {
+                return;
+            }
+
+            Socket_PacketReadableResult result = Socket_PacketReadableAnalyzer.Analyze(buffer);
+            string kind = UiText(result.KindKey);
+            string encoding = string.IsNullOrEmpty(result.EncodingName)
+                ? UiText("UI_ReadableEncodingNone")
+                : result.EncodingName;
+            int length = buffer == null ? 0 : buffer.Length;
+
+            this.lReadableContentMeta.Text = string.Format(
+                UiText("UI_ReadableContentMeta"),
+                kind,
+                encoding,
+                length);
+
+            StringBuilder content = new StringBuilder();
+            if (result.IsEmpty)
+            {
+                content.Append(UiText("UI_ReadableContentEmpty"));
+            }
+            else
+            {
+                if (result.IsBinary)
+                {
+                    content.AppendLine(UiText("UI_ReadableContentBinaryNotice"));
+                }
+
+                if (!string.IsNullOrEmpty(result.Details))
+                {
+                    content.AppendLine(string.Format(
+                        UiText("UI_ReadableContentDetails"),
+                        result.Details));
+                }
+
+                if (result.IsBinary && !string.IsNullOrEmpty(result.Preview))
+                {
+                    content.AppendLine(UiText("UI_ReadableContentStrings"));
+                }
+
+                if (!string.IsNullOrEmpty(result.Preview))
+                {
+                    content.Append(result.Preview);
+                }
+                else if (result.IsBinary)
+                {
+                    content.Append(UiText("UI_ReadableContentNoStrings"));
+                }
+
+                if (result.IsTruncated)
+                {
+                    content.AppendLine();
+                    content.Append(UiText("UI_ReadableContentTruncated"));
+                }
+            }
+
+            this.rtbReadableContent.Text = content.ToString();
+            this.rtbReadableContent.SelectionStart = 0;
+            this.rtbReadableContent.SelectionLength = 0;
         }
 
         private void ConfigureFilterToolbarTextButtons()
@@ -329,13 +547,18 @@ namespace WPELibrary
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
                 RowCount = 2,
-                Padding = new Padding(4),
+                Padding = new Padding(12, 8, 12, 8),
                 Margin = Padding.Empty
             };
-            this.tlpAutomationNavigation.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            this.tlpAutomationNavigation.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            this.tlpAutomationNavigation.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
-            this.tlpAutomationNavigation.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+            for (int i = 0; i < 2; i++)
+            {
+                this.tlpAutomationNavigation.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            }
+            for (int i = 0; i < 2; i++)
+            {
+                this.tlpAutomationNavigation.RowStyles.Add(new RowStyle(SizeType.Percent, 50F));
+            }
+            this.tlpAutomationNavigation.Resize += this.tlpAutomationNavigation_Resize;
 
             this.bAutomationSend = CreateAutomationNavigationButton(UiText("UI_Send"), this.tpSendList);
             this.bAutomationSweep = CreateAutomationNavigationButton(UiText("UI_ByteSweep"), this.tpByteSweepList);
@@ -355,7 +578,7 @@ namespace WPELibrary
                 Margin = Padding.Empty,
                 Padding = Padding.Empty
             };
-            this.tlpAutomationHome.RowStyles.Add(new RowStyle(SizeType.Absolute, 112F));
+            this.tlpAutomationHome.RowStyles.Add(new RowStyle(SizeType.Absolute, 104F));
             this.tlpAutomationHome.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             this.tlpAutomationHome.Controls.Add(this.tlpAutomationNavigation, 0, 0);
             this.tlpAutomationHome.Controls.Add(this.tcAutomation, 0, 1);
@@ -369,6 +592,7 @@ namespace WPELibrary
             this.tlpInformation.Controls.Add(this.tlpAutomationHome, 0, 0);
             this.tlpInformation.SetColumnSpan(this.tlpAutomationHome, 1);
             this.tcAutomation.SelectedTab = this.tpSendList;
+            this.UpdateAutomationNavigationButtonLayout();
             this.UpdateAutomationNavigationState();
         }
 
@@ -377,15 +601,56 @@ namespace WPELibrary
             Button button = new Button
             {
                 Text = text,
-                Dock = DockStyle.Fill,
-                Height = 44,
-                Margin = new Padding(4),
-                UseVisualStyleBackColor = true,
+                Anchor = AnchorStyles.None,
+                Dock = DockStyle.None,
+                Size = new Size(240, 36),
+                Margin = new Padding(4, 0, 4, 0),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.White,
+                ForeColor = UiNavigationTextColor,
+                UseVisualStyleBackColor = false,
+                TextAlign = ContentAlignment.MiddleCenter,
                 AccessibleName = text,
+                AccessibleRole = AccessibleRole.PushButton,
                 Tag = tab
             };
+            button.FlatAppearance.BorderSize = 1;
+            button.FlatAppearance.BorderColor = UiNavigationBorderColor;
+            button.FlatAppearance.MouseOverBackColor = UiNavigationHoverColor;
+            button.FlatAppearance.MouseDownBackColor = UiNavigationPressedColor;
             button.Click += this.automationNavigationButton_Click;
             return button;
+        }
+
+        private void tlpAutomationNavigation_Resize(object sender, EventArgs e)
+        {
+            this.UpdateAutomationNavigationButtonLayout();
+        }
+
+        private void Socket_Form_Layout(object sender, LayoutEventArgs e)
+        {
+            this.UpdateAutomationNavigationButtonLayout();
+        }
+
+        private void UpdateAutomationNavigationButtonLayout()
+        {
+            if (this.tlpAutomationNavigation == null)
+            {
+                return;
+            }
+
+            int availableWidth = Math.Max(1, (this.tlpAutomationNavigation.ClientSize.Width -
+                this.tlpAutomationNavigation.Padding.Horizontal) / 2 - 8);
+            int buttonWidth = Math.Min(240, availableWidth);
+
+            foreach (Control control in this.tlpAutomationNavigation.Controls)
+            {
+                Button button = control as Button;
+                if (button != null)
+                {
+                    button.Width = buttonWidth;
+                }
+            }
         }
 
         private void automationNavigationButton_Click(object sender, EventArgs e)
@@ -420,8 +685,18 @@ namespace WPELibrary
             foreach (Button button in buttons)
             {
                 bool active = ReferenceEquals(button.Tag, this.tcAutomation.SelectedTab);
-                button.BackColor = active ? SystemColors.Highlight : SystemColors.Control;
-                button.ForeColor = active ? SystemColors.HighlightText : SystemColors.ControlText;
+                button.BackColor = active ? SystemColors.Highlight : Color.White;
+                button.ForeColor = active ? SystemColors.HighlightText : UiNavigationTextColor;
+                button.FlatAppearance.BorderSize = active ? 2 : 1;
+                button.FlatAppearance.BorderColor = active
+                    ? SystemColors.Highlight
+                    : UiNavigationBorderColor;
+                button.FlatAppearance.MouseOverBackColor = active
+                    ? SystemColors.Highlight
+                    : UiNavigationHoverColor;
+                button.FlatAppearance.MouseDownBackColor = active
+                    ? SystemColors.Highlight
+                    : UiNavigationPressedColor;
             }
         }
 
@@ -453,6 +728,10 @@ namespace WPELibrary
             this.cmsRobotFolder.Items.Add(UiText("UI_MoveGroupDown"), null, this.MoveRobotFolderDown_Click);
             this.cmsRobotFolder.Items.Add(new ToolStripSeparator());
             this.cmsRobotFolder.Items.Add(UiText("UI_DeleteGroup"), null, this.DeleteRobotFolder_Click);
+            this.cmsRobotFolder.Opening += delegate(object sender, CancelEventArgs e)
+            {
+                e.Cancel = this.activeAssistantRobot != null;
+            };
             this.tvRobotFolders.ContextMenuStrip = this.cmsRobotFolder;
 
             this.bRobotFolderAdd = new Button
@@ -475,16 +754,16 @@ namespace WPELibrary
             this.tlpAssistantButtons = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 4,
+                ColumnCount = 5,
                 RowCount = 1,
                 AutoScroll = true,
-                Padding = new Padding(4),
+                Padding = new Padding(8, 6, 8, 6),
                 Margin = Padding.Empty,
                 GrowStyle = TableLayoutPanelGrowStyle.AddRows
             };
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < 5; i++)
             {
-                this.tlpAssistantButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+                this.tlpAssistantButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96F));
             }
             this.lAssistantEmptyState = new Label
             {
@@ -519,8 +798,10 @@ namespace WPELibrary
 
             this.cmsAssistantButton = new ContextMenuStrip();
             this.cmsAssistantButton.Items.Add(UiText("UI_Edit"), null, this.EditAssistantButton_Click);
-            ToolStripMenuItem moveAssistant = new ToolStripMenuItem(UiText("UI_MoveToGroup"));
-            this.cmsAssistantButton.Items.Add(moveAssistant);
+            this.cmsAssistantButtonMoveToGroup = new ToolStripMenuItem(UiText("UI_MoveToGroup"));
+            this.cmsAssistantButton.Items.Add(this.cmsAssistantButtonMoveToGroup);
+            this.cmsAssistantButton.Items.Add(new ToolStripSeparator());
+            this.cmsAssistantButton.Items.Add(UiText("UI_DeleteAssistant"), null, this.DeleteAssistantButton_Click);
             this.cmsAssistantButton.Opening += this.cmsAssistantButton_Opening;
             this.RefreshAssistantFolders();
         }
@@ -533,14 +814,11 @@ namespace WPELibrary
                 return;
             }
 
-            ToolStripMenuItem moveAssistant = this.cmsAssistantButton.Items
-                .OfType<ToolStripMenuItem>()
-                .FirstOrDefault(item => item.Text == UiText("UI_MoveToGroup"));
-            if (moveAssistant == null)
+            if (this.cmsAssistantButtonMoveToGroup == null)
             {
                 return;
             }
-            moveAssistant.DropDownItems.Clear();
+            this.cmsAssistantButtonMoveToGroup.DropDownItems.Clear();
             Button source = this.cmsAssistantButton.SourceControl as Button;
             Socket_RobotInfo robot = source == null ? null : source.Tag as Socket_RobotInfo;
             foreach (TreeNode node in this.tvRobotFolders.Nodes)
@@ -551,9 +829,27 @@ namespace WPELibrary
                 }
                 ToolStripMenuItem item = new ToolStripMenuItem(node.Text) { Tag = node.Text };
                 item.Click += this.MoveAssistantToFolder_Click;
-                moveAssistant.DropDownItems.Add(item);
+                this.cmsAssistantButtonMoveToGroup.DropDownItems.Add(item);
             }
-            moveAssistant.Enabled = moveAssistant.DropDownItems.Count > 0;
+            this.cmsAssistantButtonMoveToGroup.Enabled =
+                this.cmsAssistantButtonMoveToGroup.DropDownItems.Count > 0;
+        }
+
+        private bool TryCommitAssistantChange(Action mutation, string failureTextKey)
+        {
+            if (Socket_Cache.RobotList.TryApplyListChangeAndSave(mutation))
+            {
+                return true;
+            }
+
+            this.RefreshAssistantFolders();
+            MessageBox.Show(
+                this,
+                UiText(failureTextKey),
+                UiText("UI_Assistant"),
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            return false;
         }
 
         private void MoveAssistantToFolder_Click(object sender, EventArgs e)
@@ -566,12 +862,19 @@ namespace WPELibrary
             {
                 return;
             }
-            robot.RFolder = folder;
-            if (!Socket_Cache.RobotList.lstFolders.Contains(folder))
+            if (!this.TryCommitAssistantChange(
+                delegate
+                {
+                    robot.RFolder = folder;
+                    if (!Socket_Cache.RobotList.lstFolders.Contains(folder))
+                    {
+                        Socket_Cache.RobotList.lstFolders.Add(folder);
+                    }
+                },
+                "UI_AssistantSaveFailed"))
             {
-                Socket_Cache.RobotList.lstFolders.Add(folder);
+                return;
             }
-            this.SaveRobotFolderData();
             this.RefreshAssistantFolders();
         }
 
@@ -636,11 +939,11 @@ namespace WPELibrary
             List<Socket_RobotInfo> robots = Socket_Cache.RobotList.lstRobot
                 .Where(robot => string.Equals(robot.RFolder, this.selectedRobotFolder, StringComparison.Ordinal))
                 .ToList();
-            this.tlpAssistantButtons.RowCount = Math.Max(1, (robots.Count + 3) / 4);
+            this.tlpAssistantButtons.RowCount = Math.Max(1, (robots.Count + 4) / 5);
             this.tlpAssistantButtons.RowStyles.Clear();
             for (int row = 0; row < this.tlpAssistantButtons.RowCount; row++)
             {
-                this.tlpAssistantButtons.RowStyles.Add(new RowStyle(SizeType.Absolute, 52F));
+                this.tlpAssistantButtons.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
             }
             for (int index = 0; index < robots.Count; index++)
             {
@@ -648,23 +951,37 @@ namespace WPELibrary
                 Button button = new Button
                 {
                     Text = robot.RName,
-                    Dock = DockStyle.Fill,
-                    Height = 44,
-                    Margin = new Padding(4),
-                    UseVisualStyleBackColor = true,
+                    Anchor = AnchorStyles.Left | AnchorStyles.Top,
+                    Dock = DockStyle.None,
+                    Size = new Size(84, 34),
+                    Margin = new Padding(6, 3, 6, 3),
+                    AutoEllipsis = true,
+                    Padding = new Padding(2, 0, 2, 0),
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(245, 248, 255),
+                    ForeColor = Color.FromArgb(32, 43, 61),
+                    UseVisualStyleBackColor = false,
+                    Cursor = Cursors.Hand,
                     Tag = robot,
                     ContextMenuStrip = this.cmsAssistantButton,
                     AccessibleName = robot.RName
                 };
+                button.FlatAppearance.BorderColor = Color.FromArgb(147, 177, 222);
+                button.FlatAppearance.BorderSize = 1;
+                button.FlatAppearance.MouseOverBackColor = Color.FromArgb(226, 237, 255);
+                button.FlatAppearance.MouseDownBackColor = Color.FromArgb(207, 225, 251);
+                button.AccessibleDescription = robot.RName;
+                this.tt.SetToolTip(button, robot.RName);
                 button.Click += this.AssistantButton_Click;
                 button.DoubleClick += this.AssistantButton_DoubleClick;
                 this.assistantButtons[robot.RID] = button;
-                this.tlpAssistantButtons.Controls.Add(button, index % 4, index / 4);
+                this.tlpAssistantButtons.Controls.Add(button, index % 5, index / 5);
             }
             if (robots.Count == 0)
             {
                 this.tlpAssistantButtons.Controls.Add(this.lAssistantEmptyState, 0, 0);
-                this.tlpAssistantButtons.SetColumnSpan(this.lAssistantEmptyState, 4);
+                this.tlpAssistantButtons.SetColumnSpan(this.lAssistantEmptyState, 5);
             }
             this.UpdateAssistantButtonState();
             this.tlpAssistantButtons.ResumeLayout(true);
@@ -715,6 +1032,48 @@ namespace WPELibrary
             }
         }
 
+        private void DeleteAssistantButton_Click(object sender, EventArgs e)
+        {
+            ToolStripItem item = sender as ToolStripItem;
+            Button button = item == null ? sender as Button : this.cmsAssistantButton.SourceControl as Button;
+            Socket_RobotInfo robot = button == null ? null : button.Tag as Socket_RobotInfo;
+            if (robot == null || this.activeAssistantRobot != null)
+            {
+                return;
+            }
+
+            DialogResult result = MessageBox.Show(
+                this,
+                string.Format(UiText("UI_ConfirmDeleteAssistant"), robot.RName),
+                UiText("UI_DeleteAssistant"),
+                MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Warning);
+            if (result != DialogResult.OK)
+            {
+                return;
+            }
+
+            if (!Socket_Cache.RobotList.lstRobot.Contains(robot))
+            {
+                return;
+            }
+
+            if (!this.TryCommitAssistantChange(
+                delegate
+                {
+                    Socket_Cache.RobotList.lstRobot.Remove(robot);
+                },
+                "UI_DeleteAssistantFailed"))
+            {
+                return;
+            }
+
+            this.dgvRobotList.ClearSelection();
+            this.dgvRobotList.Refresh();
+            this.RefreshAssistantFolders();
+            this.UpdateRobotToolbarState();
+        }
+
         private void AssistantRobot_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
             if (this.activeAssistantRobot != null && ReferenceEquals(sender, this.activeAssistantRobot.Worker))
@@ -727,13 +1086,28 @@ namespace WPELibrary
 
         private void UpdateAssistantButtonState()
         {
+            bool assistantRunning = this.activeAssistantRobot != null;
             foreach (KeyValuePair<Guid, Button> pair in this.assistantButtons)
             {
-                bool active = pair.Key == this.activeAssistantRobotId && this.activeAssistantRobot != null;
-                bool enabled = this.activeAssistantRobot == null || active;
+                bool active = pair.Key == this.activeAssistantRobotId && assistantRunning;
+                bool enabled = !assistantRunning || active;
+                pair.Value.Visible = !assistantRunning || active;
                 pair.Value.Enabled = enabled;
-                pair.Value.BackColor = active ? Color.Gold : SystemColors.Control;
-                pair.Value.ForeColor = active ? SystemColors.ControlText : SystemColors.ControlText;
+                pair.Value.BackColor = active
+                    ? Color.FromArgb(255, 223, 124)
+                    : enabled ? Color.FromArgb(245, 248, 255) : Color.FromArgb(239, 241, 245);
+                pair.Value.ForeColor = active
+                    ? Color.FromArgb(104, 73, 12)
+                    : enabled ? Color.FromArgb(32, 43, 61) : Color.FromArgb(142, 149, 160);
+                pair.Value.FlatAppearance.BorderColor = active
+                    ? Color.FromArgb(208, 143, 30)
+                    : enabled ? Color.FromArgb(147, 177, 222) : Color.FromArgb(210, 215, 224);
+                pair.Value.FlatAppearance.MouseOverBackColor = active
+                    ? Color.FromArgb(255, 232, 163)
+                    : Color.FromArgb(226, 237, 255);
+                pair.Value.FlatAppearance.MouseDownBackColor = active
+                    ? Color.FromArgb(245, 210, 102)
+                    : Color.FromArgb(207, 225, 251);
                 pair.Value.Text = active ? UiText("UI_Stop") : (pair.Value.Tag as Socket_RobotInfo).RName;
             }
             this.UpdateRobotToolbarState();
@@ -741,16 +1115,28 @@ namespace WPELibrary
 
         private void AddRobotFolder_Click(object sender, EventArgs e)
         {
+            if (this.activeAssistantRobot != null)
+            {
+                return;
+            }
             string folder = this.PromptForText(UiText("UI_NewGroup"), UiText("UI_GroupName"), string.Empty);
             if (string.IsNullOrWhiteSpace(folder) || this.tvRobotFolders.Nodes.Cast<TreeNode>()
                 .Any(node => string.Equals(node.Text, folder.Trim(), StringComparison.OrdinalIgnoreCase)))
             {
                 return;
             }
-            this.tvRobotFolders.Nodes.Add(new TreeNode(folder.Trim()) { Name = folder.Trim() });
-            Socket_Cache.RobotList.lstFolders.Add(folder.Trim());
-            this.tvRobotFolders.SelectedNode = this.tvRobotFolders.Nodes[this.tvRobotFolders.Nodes.Count - 1];
-            this.SaveRobotFolderData();
+            string newFolder = folder.Trim();
+            if (!this.TryCommitAssistantChange(
+                delegate
+                {
+                    Socket_Cache.RobotList.lstFolders.Add(newFolder);
+                    this.selectedRobotFolder = newFolder;
+                },
+                "UI_AssistantSaveFailed"))
+            {
+                return;
+            }
+            this.RefreshAssistantFolders();
         }
 
         private TreeNode GetSelectedRobotFolderNode()
@@ -760,6 +1146,10 @@ namespace WPELibrary
 
         private void RenameRobotFolder_Click(object sender, EventArgs e)
         {
+            if (this.activeAssistantRobot != null)
+            {
+                return;
+            }
             TreeNode node = this.GetSelectedRobotFolderNode();
             if (node == null)
             {
@@ -777,54 +1167,78 @@ namespace WPELibrary
             {
                 return;
             }
-            foreach (Socket_RobotInfo robot in Socket_Cache.RobotList.lstRobot.Where(item => item.RFolder == oldFolder))
+            if (!this.TryCommitAssistantChange(
+                delegate
+                {
+                    foreach (Socket_RobotInfo robot in Socket_Cache.RobotList.lstRobot
+                        .Where(item => item.RFolder == oldFolder))
+                    {
+                        robot.RFolder = newFolder;
+                    }
+                    int folderIndex = Socket_Cache.RobotList.lstFolders.IndexOf(oldFolder);
+                    if (folderIndex >= 0)
+                    {
+                        Socket_Cache.RobotList.lstFolders[folderIndex] = newFolder;
+                    }
+                    else
+                    {
+                        Socket_Cache.RobotList.lstFolders.Add(newFolder);
+                    }
+                    this.selectedRobotFolder = newFolder;
+                },
+                "UI_AssistantSaveFailed"))
             {
-                robot.RFolder = newFolder;
+                return;
             }
-            int folderIndex = Socket_Cache.RobotList.lstFolders.IndexOf(oldFolder);
-            if (folderIndex >= 0)
-            {
-                Socket_Cache.RobotList.lstFolders[folderIndex] = newFolder;
-            }
-            node.Text = newFolder;
-            node.Name = newFolder;
-            this.selectedRobotFolder = newFolder;
-            this.SaveRobotFolderData();
-            this.RenderAssistantButtons();
+            this.RefreshAssistantFolders();
         }
 
         private void MoveRobotFolderUp_Click(object sender, EventArgs e)
         {
+            if (this.activeAssistantRobot != null)
+            {
+                return;
+            }
             TreeNode node = this.GetSelectedRobotFolderNode();
             if (node == null || node.Index <= 0)
             {
                 return;
             }
             int index = node.Index;
-            this.tvRobotFolders.Nodes.RemoveAt(index);
-            this.tvRobotFolders.Nodes.Insert(index - 1, node);
-            this.MoveRobotFolderData(index, index - 1);
-            this.tvRobotFolders.SelectedNode = node;
-            this.SaveRobotFolderData();
+            if (this.TryCommitAssistantChange(
+                delegate { this.MoveRobotFolderData(index, index - 1); },
+                "UI_AssistantSaveFailed"))
+            {
+                this.RefreshAssistantFolders();
+            }
         }
 
         private void MoveRobotFolderDown_Click(object sender, EventArgs e)
         {
+            if (this.activeAssistantRobot != null)
+            {
+                return;
+            }
             TreeNode node = this.GetSelectedRobotFolderNode();
             if (node == null || node.Index >= this.tvRobotFolders.Nodes.Count - 1)
             {
                 return;
             }
             int index = node.Index;
-            this.tvRobotFolders.Nodes.RemoveAt(index);
-            this.tvRobotFolders.Nodes.Insert(index + 1, node);
-            this.MoveRobotFolderData(index, index + 1);
-            this.tvRobotFolders.SelectedNode = node;
-            this.SaveRobotFolderData();
+            if (this.TryCommitAssistantChange(
+                delegate { this.MoveRobotFolderData(index, index + 1); },
+                "UI_AssistantSaveFailed"))
+            {
+                this.RefreshAssistantFolders();
+            }
         }
 
         private void DeleteRobotFolder_Click(object sender, EventArgs e)
         {
+            if (this.activeAssistantRobot != null)
+            {
+                return;
+            }
             TreeNode node = this.GetSelectedRobotFolderNode();
             if (node == null || this.tvRobotFolders.Nodes.Count <= 1)
             {
@@ -836,16 +1250,19 @@ namespace WPELibrary
                 Socket_Operation.ShowMessageBox(UiText("UI_GroupMustBeEmpty"));
                 return;
             }
-            Socket_Cache.RobotList.lstFolders.Remove(targetFolder);
-            this.tvRobotFolders.Nodes.Remove(node);
-            this.selectedRobotFolder = this.tvRobotFolders.Nodes[0].Text;
-            this.SaveRobotFolderData();
-            this.RefreshAssistantFolders();
-        }
-
-        private void SaveRobotFolderData()
-        {
-            Socket_Cache.RobotList.SaveRobotList_ToDB();
+            if (this.TryCommitAssistantChange(
+                delegate
+                {
+                    Socket_Cache.RobotList.lstFolders.Remove(targetFolder);
+                    if (string.Equals(this.selectedRobotFolder, targetFolder, StringComparison.Ordinal))
+                    {
+                        this.selectedRobotFolder = "常用";
+                    }
+                },
+                "UI_AssistantSaveFailed"))
+            {
+                this.RefreshAssistantFolders();
+            }
         }
 
         private void MoveRobotFolderData(int oldIndex, int newIndex)
@@ -884,9 +1301,14 @@ namespace WPELibrary
             List<Socket_RobotInfo> selected = Socket_Operation.GetSelectedRobot(this.dgvRobotList);
             if (selected.Count > 0)
             {
-                Socket_Cache.RobotList.UpdateRobotList_ByListAction(
-                    Socket_Cache.System.ListAction.Copy,
-                    selected);
+                if (!this.TryCommitAssistantChange(
+                    () => Socket_Cache.RobotList.UpdateRobotList_ByListAction(
+                        Socket_Cache.System.ListAction.Copy,
+                        selected),
+                    "UI_AssistantSaveFailed"))
+                {
+                    return;
+                }
                 this.dgvRobotList.ClearSelection();
                 this.dgvRobotList.Refresh();
             }
@@ -898,7 +1320,13 @@ namespace WPELibrary
             using (TabControl settingsSections = new TabControl())
             using (TabPage generalSettingsPage = new TabPage(UiText("Main_GeneralSettings")))
             using (TabPage advancedToolsPage = new TabPage(UiText("Main_AdvancedTools")))
+            using (TabPage dynamicVariablesPage = new TabPage("变量中心"))
+            using (DynamicVariableCenterControl dynamicVariableCenter = new DynamicVariableCenterControl())
             using (TableLayoutPanel settingsLayout = new TableLayoutPanel())
+            using (TableLayoutPanel settingsHost = new TableLayoutPanel())
+            using (FlowLayoutPanel settingsActions = new FlowLayoutPanel())
+            using (Label settingsHint = new Label())
+            using (Button settingsClose = new Button())
             {
                 settingsForm.Text = UiText("Main_Settings");
                 settingsForm.StartPosition = FormStartPosition.CenterParent;
@@ -908,12 +1336,48 @@ namespace WPELibrary
                 settingsForm.MaximizeBox = false;
                 settingsForm.ShowInTaskbar = false;
                 settingsForm.AutoScaleMode = AutoScaleMode.Dpi;
+                settingsForm.AutoScroll = true;
                 settingsForm.Font = this.Font;
 
+                settingsHost.Dock = DockStyle.Fill;
+                settingsHost.ColumnCount = 1;
+                settingsHost.RowCount = 3;
+                settingsHost.Padding = new Padding(6);
+                settingsHost.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                settingsHost.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                settingsHost.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+                settingsHint.Dock = DockStyle.Fill;
+                settingsHint.AutoSize = false;
+                settingsHint.Height = 30;
+                settingsHint.Padding = new Padding(4, 0, 4, 2);
+                settingsHint.Text = UiText("UI_SettingsHint");
+                settingsHint.AccessibleName = settingsHint.Text;
+                settingsHint.TextAlign = ContentAlignment.MiddleLeft;
+                settingsHint.ForeColor = UiNavigationTextColor;
+                settingsHost.Controls.Add(settingsHint, 0, 0);
+
+                settingsActions.Dock = DockStyle.Fill;
+                settingsActions.AutoSize = true;
+                settingsActions.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+                settingsActions.FlowDirection = FlowDirection.RightToLeft;
+                settingsActions.WrapContents = false;
+                settingsActions.Padding = new Padding(0, 4, 0, 0);
+                settingsClose.Name = "bSettingsClose";
+                settingsClose.Text = UiText("UI_Close");
+                settingsClose.AutoSize = true;
+                settingsClose.DialogResult = DialogResult.Cancel;
+                settingsClose.UseVisualStyleBackColor = true;
+                settingsClose.AccessibleName = settingsClose.Text;
+                settingsClose.AccessibleRole = AccessibleRole.PushButton;
+                settingsActions.Controls.Add(settingsClose);
+
                 settingsLayout.Dock = DockStyle.Fill;
+                settingsLayout.AutoScroll = true;
+                settingsLayout.Padding = new Padding(4);
                 settingsLayout.ColumnCount = 2;
                 settingsLayout.RowCount = 1;
-                settingsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 125F));
+                settingsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170F));
                 settingsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
                 settingsLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
@@ -921,20 +1385,28 @@ namespace WPELibrary
                 settingsLayout.Controls.Add(this.tcSocketInfo, 1, 0);
                 this.gbHookButton_Search.Dock = DockStyle.Top;
                 this.tcSocketInfo.Dock = DockStyle.Fill;
+                generalSettingsPage.AutoScroll = true;
+                advancedToolsPage.AutoScroll = true;
 
                 generalSettingsPage.Controls.Add(settingsLayout);
                 advancedToolsPage.Controls.Add(this.tcAdvancedTools);
+                dynamicVariablesPage.Controls.Add(dynamicVariableCenter);
                 settingsSections.Dock = DockStyle.Fill;
+                settingsSections.Multiline = false;
                 settingsSections.Controls.Add(generalSettingsPage);
                 settingsSections.Controls.Add(this.tpFilterList);
                 settingsSections.Controls.Add(this.tpRobotList);
                 settingsSections.Controls.Add(advancedToolsPage);
+                settingsSections.Controls.Add(dynamicVariablesPage);
                 settingsSections.SelectedIndexChanged += delegate
                 {
                     this.robotSettingsPageActive =
                         ReferenceEquals(settingsSections.SelectedTab, this.tpRobotList);
                 };
-                settingsForm.Controls.Add(settingsSections);
+                settingsHost.Controls.Add(settingsSections, 0, 1);
+                settingsHost.Controls.Add(settingsActions, 0, 2);
+                settingsForm.Controls.Add(settingsHost);
+                settingsForm.CancelButton = settingsClose;
 
                 try
                 {
@@ -1068,29 +1540,44 @@ namespace WPELibrary
                 ToolTipText = UiText("UI_SelectAllTip"),
                 DisplayStyle = ToolStripItemDisplayStyle.Text,
                 AutoSize = true,
-                Overflow = ToolStripItemOverflow.Never,
+                Overflow = ToolStripItemOverflow.AsNeeded,
                 Margin = new Padding(3),
                 TextAlign = System.Drawing.ContentAlignment.MiddleCenter
             };
             this.tsSendListSelectAll.Click += this.tsSendListSelectAll_Click;
+            this.tsSendListParallel = new ToolStripButton
+            {
+                Name = "tsSendListParallel",
+                Text = UiText("UI_SequentialSend"),
+                DisplayStyle = ToolStripItemDisplayStyle.Text,
+                AutoSize = true,
+                CheckOnClick = true,
+                Overflow = ToolStripItemOverflow.AsNeeded,
+                Margin = new Padding(3),
+                TextAlign = System.Drawing.ContentAlignment.MiddleCenter
+            };
+            this.tsSendListParallel.Click += this.tsSendListParallel_Click;
             this.tsSendList.Items.Remove(this.tsSendList_Add);
             this.tsSendList.Items.Remove(this.tsSendListSelectAll);
+            this.tsSendList.Items.Remove(this.tsSendListParallel);
             this.tsSendList.Items.Remove(this.tsSendList_Start);
             this.tsSendList.Items.Remove(this.tsSendList_Stop);
             this.tsSendList.Items.AddRange(new ToolStripItem[]
             {
                 this.tsSendList_Add,
                 this.tsSendListSelectAll,
+                this.tsSendListParallel,
                 this.tsSendList_Start,
                 this.tsSendList_Stop
             });
+            this.UpdateSendListParallelModeText();
             this.tsSendListContext = new ToolStripLabel
             {
                 Name = "tsSendListContext",
                 Alignment = ToolStripItemAlignment.Right,
                 AutoSize = true,
                 Margin = new Padding(8, 3, 6, 3),
-                Overflow = ToolStripItemOverflow.Never,
+                Overflow = ToolStripItemOverflow.AsNeeded,
                 ForeColor = System.Drawing.SystemColors.GrayText
             };
             this.tsSendList.Items.Add(this.tsSendListContext);
@@ -1325,9 +1812,16 @@ namespace WPELibrary
                 return;
             }
 
-            Socket_Cache.SendList.UpdateSendList_ByListAction(
-                Socket_Cache.System.ListAction.Copy,
-                selected);
+            if (!Socket_Cache.SendList.TryApplyListChangeAndSave(() =>
+                Socket_Cache.SendList.UpdateSendList_ByListAction(
+                    Socket_Cache.System.ListAction.Copy,
+                    selected)))
+            {
+                Socket_Operation.ShowMessageBox(
+                    Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                    "预设保存失败，已恢复原状态。");
+                return;
+            }
             this.RefreshSendFolderView();
         }
 
@@ -1336,13 +1830,20 @@ namespace WPELibrary
             button.DisplayStyle = ToolStripItemDisplayStyle.Text;
             button.Image = null;
             button.Text = text;
+            button.ToolTipText = text;
+            button.AccessibleName = text;
             button.AutoSize = true;
-            button.Overflow = ToolStripItemOverflow.Never;
+            button.Overflow = ToolStripItemOverflow.AsNeeded;
             button.Margin = new Padding(3);
         }
 
         private void RefreshSendFolderTree()
         {
+            if (!this.TryMarshalSendFolderUiRefresh(this.RefreshSendFolderTree))
+            {
+                return;
+            }
+
             this.MigrateUngroupedSendLists();
             string selectedKey = this.selectedSendFolder;
             this.tvSendFolders.BeginUpdate();
@@ -1376,6 +1877,11 @@ namespace WPELibrary
 
         private void RefreshSendFolderView()
         {
+            if (!this.TryMarshalSendFolderUiRefresh(this.RefreshSendFolderView))
+            {
+                return;
+            }
+
             this.MigrateUngroupedSendLists();
             List<Socket_SendInfo> visibleItems = this.GetCurrentFolderSendLists();
             for (int index = 0; index < visibleItems.Count; index++)
@@ -1407,6 +1913,39 @@ namespace WPELibrary
             this.UpdateSendListContext(visibleItems);
             this.UpdateSendExecutionControls(visibleItems);
             this.dgvSendList.Invalidate();
+        }
+
+        private bool TryMarshalSendFolderUiRefresh(Action refreshAction)
+        {
+            if (this.IsDisposed || this.Disposing)
+            {
+                return false;
+            }
+
+            if (!this.InvokeRequired)
+            {
+                return true;
+            }
+
+            if (!this.IsHandleCreated)
+            {
+                return false;
+            }
+
+            try
+            {
+                this.BeginInvoke(refreshAction);
+            }
+            catch (ObjectDisposedException)
+            {
+                // 窗体已释放时不再刷新发送分组 UI。
+            }
+            catch (InvalidOperationException)
+            {
+                // 窗体关闭或句柄切换期间不再刷新发送分组 UI。
+            }
+
+            return false;
         }
 
         private void UpdateSendListSelectAllState(List<Socket_SendInfo> currentItems = null)
@@ -1458,10 +1997,27 @@ namespace WPELibrary
                 !batchIsBusy &&
                 !hasManualSend;
             this.tsSendList_Stop.Enabled = batchIsBusy;
+            if (this.tsSendListParallel != null)
+            {
+                this.tsSendListParallel.Enabled = !batchIsBusy;
+            }
             if (this.tsSendListMore != null)
             {
                 this.tsSendListMore.Enabled = !batchIsBusy;
             }
+        }
+
+        private void UpdateSendListParallelModeText()
+        {
+            if (this.tsSendListParallel == null)
+            {
+                return;
+            }
+
+            this.tsSendListParallel.Text = UiText(
+                this.tsSendListParallel.Checked ? "UI_ConcurrentSend" : "UI_SequentialSend");
+            this.tsSendListParallel.ToolTipText = UiText(
+                this.tsSendListParallel.Checked ? "UI_ConcurrentSendTip" : "UI_SequentialSendTip");
         }
 
         private bool HasSelectedSendFolder()
@@ -1539,9 +2095,18 @@ namespace WPELibrary
 
             List<Socket_SendInfo> currentItems = this.GetCurrentFolderSendLists();
             bool selectAll = currentItems.Any(item => !item.IsEnable);
-            foreach (Socket_SendInfo sendInfo in currentItems)
+            if (!Socket_Cache.SendList.TryApplyListChangeAndSave(() =>
             {
-                sendInfo.IsEnable = selectAll;
+                foreach (Socket_SendInfo sendInfo in currentItems)
+                {
+                    sendInfo.IsEnable = selectAll;
+                }
+            }))
+            {
+                Socket_Operation.ShowMessageBox(
+                    Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                    "预设保存失败，已恢复原状态。");
+                return;
             }
 
             this.dgvSendList.Refresh();
@@ -1558,10 +2123,20 @@ namespace WPELibrary
                 return;
             }
 
-            if (!Socket_Cache.SendList.AddFolder(folderName))
+            bool added = false;
+            bool saved = Socket_Cache.SendList.TryApplyListChangeAndSave(
+                () => added = Socket_Cache.SendList.AddFolder(folderName));
+            if (!added)
             {
                 MessageBox.Show(this, UiText("UI_GroupExists"), UiText("UI_NewGroup"),
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (!saved)
+            {
+                Socket_Operation.ShowMessageBox(
+                    Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                    "预设保存失败，已恢复原状态。");
                 return;
             }
 
@@ -1589,7 +2164,14 @@ namespace WPELibrary
                 return;
             }
 
-            Socket_Cache.SendList.RenameFolder(oldName, newName.Trim());
+            if (!Socket_Cache.SendList.TryApplyListChangeAndSave(
+                () => Socket_Cache.SendList.RenameFolder(oldName, newName.Trim())))
+            {
+                Socket_Operation.ShowMessageBox(
+                    Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                    "预设保存失败，已恢复原状态。");
+                return;
+            }
             this.selectedSendFolder = newName.Trim();
             this.RefreshSendFolderTree();
             this.RefreshSendFolderView();
@@ -1621,9 +2203,23 @@ namespace WPELibrary
             string folderName = this.tvSendFolders.SelectedNode == null
                 ? string.Empty
                 : this.tvSendFolders.SelectedNode.Tag as string;
-            if (string.IsNullOrEmpty(folderName) ||
-                !Socket_Cache.SendList.MoveFolder(folderName, offset))
+            if (string.IsNullOrEmpty(folderName))
             {
+                return;
+            }
+
+            bool moved = false;
+            bool saved = Socket_Cache.SendList.TryApplyListChangeAndSave(
+                () => moved = Socket_Cache.SendList.MoveFolder(folderName, offset));
+            if (!moved)
+            {
+                return;
+            }
+            if (!saved)
+            {
+                Socket_Operation.ShowMessageBox(
+                    Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                    "预设保存失败，已恢复原状态。");
                 return;
             }
 
@@ -1658,16 +2254,25 @@ namespace WPELibrary
                 return;
             }
 
-            foreach (Socket_SendInfo emptyPlaceholder in Socket_Cache.SendList.lstSend
-                .Where(item =>
-                    string.Equals(item.SFolder, folderName, StringComparison.Ordinal) &&
-                    (item.SCollection == null || item.SCollection.Count == 0))
-                .ToList())
+            if (!Socket_Cache.SendList.TryApplyListChangeAndSave(() =>
             {
-                Socket_Cache.SendList.lstSend.Remove(emptyPlaceholder);
-            }
+                foreach (Socket_SendInfo emptyPlaceholder in Socket_Cache.SendList.lstSend
+                    .Where(item =>
+                        string.Equals(item.SFolder, folderName, StringComparison.Ordinal) &&
+                        (item.SCollection == null || item.SCollection.Count == 0))
+                    .ToList())
+                {
+                    Socket_Cache.SendList.lstSend.Remove(emptyPlaceholder);
+                }
 
-            Socket_Cache.SendList.RemoveFolder(folderName);
+                Socket_Cache.SendList.RemoveFolder(folderName);
+            }))
+            {
+                Socket_Operation.ShowMessageBox(
+                    Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                    "预设保存失败，已恢复原状态。");
+                return;
+            }
             this.selectedSendFolder = "__ALL__";
             this.RefreshSendFolderTree();
             this.RefreshSendFolderView();
@@ -1730,22 +2335,31 @@ namespace WPELibrary
                 string.Equals(item.SFolder, folderName, StringComparison.Ordinal) &&
                 !selectedItems.Contains(item)) + 1;
 
-            foreach (Socket_SendInfo sendInfo in selectedItems)
+            if (!Socket_Cache.SendList.TryApplyListChangeAndSave(() =>
             {
-                sendInfo.SFolder = folderName;
-                sendInfo.SSortOrder = nextOrder++;
-            }
-
-            foreach (string sourceFolder in sourceFolders)
-            {
-                List<Socket_SendInfo> remainingItems = Socket_Cache.SendList.lstSend
-                    .Where(item => string.Equals(item.SFolder, sourceFolder, StringComparison.Ordinal))
-                    .OrderBy(item => item.SSortOrder)
-                    .ToList();
-                for (int index = 0; index < remainingItems.Count; index++)
+                foreach (Socket_SendInfo sendInfo in selectedItems)
                 {
-                    remainingItems[index].SSortOrder = index + 1;
+                    sendInfo.SFolder = folderName;
+                    sendInfo.SSortOrder = nextOrder++;
                 }
+
+                foreach (string sourceFolder in sourceFolders)
+                {
+                    List<Socket_SendInfo> remainingItems = Socket_Cache.SendList.lstSend
+                        .Where(item => string.Equals(item.SFolder, sourceFolder, StringComparison.Ordinal))
+                        .OrderBy(item => item.SSortOrder)
+                        .ToList();
+                    for (int index = 0; index < remainingItems.Count; index++)
+                    {
+                        remainingItems[index].SSortOrder = index + 1;
+                    }
+                }
+            }))
+            {
+                Socket_Operation.ShowMessageBox(
+                    Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                    "预设保存失败，已恢复原状态。");
+                return;
             }
 
             this.RefreshSendFolderView();
@@ -1828,13 +2442,11 @@ namespace WPELibrary
             this.LoadConfigs_Parameter();
             this.InitHotKeys();
 
-            // 当前产品固定为本地注入模式。即使旧数据库残留远程管理配置，
-            // 也不得在没有可见配置入口的情况下启动 HTTP 服务。
-            Socket_Cache.System.IsRemote = false;
             Socket_Cache.System.LoadSystemList_FromDB();
-            Socket_Cache.ProxyAccount.LoadProxyAccountList_FromDB();
-            Socket_Cache.ProxyMapping.LoadProxyMapLocal_FromDB();
-            Socket_Cache.ProxyMapping.LoadProxyMapRemote_FromDB();
+            Socket_Operation.StartRemoteMGT();
+            // Keep hook startup explicit. Mobile actions use
+            // EnsureHookRunningForMobile() on demand, while the desktop user
+            // can still start it from the existing hook control.
         }
 
         private void Socket_Form_FormClosing(object sender, FormClosingEventArgs e)
@@ -1893,30 +2505,38 @@ namespace WPELibrary
         {
             try
             {
+                WPELibrary.Lib.WebAPI.MobileSendRuntime.Stop();
+                WPELibrary.Lib.WebAPI.MobileAssistantRuntime.Stop();
+
                 foreach (Socket_Send manualSend in this.manualSendOperations.Values.ToList())
                 {
-                    manualSend.StopSend();
+                    if (!manualSend.WaitForStop(2000))
+                    {
+                        Socket_Operation.DoLog(nameof(ExitMainForm), "Timed out while stopping a manual send task.");
+                    }
                 }
                 this.manualSendOperations.Clear();
+                List<Socket_Send> batchSends;
                 lock (this.sendOperationSync)
                 {
-                    if (this.activeBatchSendOperation != null)
+                    batchSends = this.activeBatchSendOperations.Values.ToList();
+                    this.activeBatchSendOperations.Clear();
+                }
+                foreach (Socket_Send batchSend in batchSends)
+                {
+                    if (!batchSend.WaitForStop(2000))
                     {
-                        this.activeBatchSendOperation.StopSend();
+                        Socket_Operation.DoLog(nameof(ExitMainForm), "Timed out while stopping a batch send task.");
                     }
-                    this.activeBatchSendListId = Guid.Empty;
-                    this.activeBatchSendOperation = null;
                 }
 
                 ws.ExitHook();
+                Socket_Operation.StopHookResultProcessing();
                 this.niWPE.Visible = false;
 
                 Socket_Operation.StopRemoteMGT(this.RunMode);
                 Socket_Cache.System.SaveSystemList_ToDB();
                 Socket_Cache.System.SaveRunConfig_ToDB(this.RunMode);
-                Socket_Cache.ProxyAccount.SaveProxyAccountList_ToDB(this.RunMode);
-                Socket_Cache.ProxyMapping.SaveProxyMapLocal_ToDB(this.RunMode);
-                Socket_Cache.ProxyMapping.SaveProxyMapRemote_ToDB(this.RunMode);
             }
             catch (Exception ex)
             {
@@ -1976,10 +2596,12 @@ namespace WPELibrary
 
                 this.tsslProcessInfo.Text = Socket_Operation.GetProcessInfo();
                 this.tsslWinSock.Text = Socket_Operation.GetWinSockSupportInfo();
+                // 监听状态继续由内部状态机维护，但不在主状态栏显示“未监听/监听中”等文字。
                 this.tsslProcessInfo.Visible = false;
                 this.tsslWinSock.Visible = false;
-                this.tsslSplit1.Visible = false;
+                this.tsslSplit1.Visible = true;
                 this.tsslSplit2.Visible = false;
+                this.tsslProcessInfo.Text = UiText("UI_HookStatusReady");
 
                 this.bStartHook.Enabled = true;
                 this.bStopHook.Enabled = false;
@@ -2039,24 +2661,32 @@ namespace WPELibrary
             {
                 dgvSocketList.AutoGenerateColumns = false;
                 dgvSocketList.DataSource = Socket_Cache.SocketList.lstRecPacket;
+                dgvSocketList.BackgroundColor = System.Drawing.Color.FromArgb(248, 248, 248);
+                dgvSocketList.Paint += this.dgvSocketList_Paint;
                 dgvSocketList.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvSocketList, true, null);
 
                 dgvFilterList.AutoGenerateColumns = false;
                 dgvFilterList.DataSource = Socket_Cache.FilterList.lstFilter;
+                dgvFilterList.AccessibleName = UiText("Main_Filter");
+                dgvFilterList.AccessibleRole = AccessibleRole.Table;
+                dgvFilterList.Paint += this.dgvFilterList_Paint;
                 dgvFilterList.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvFilterList, true, null);
 
                 dgvSendList.AutoGenerateColumns = false;
                 dgvSendList.DataSource = Socket_Cache.SendList.lstSend;
+                dgvSendList.AccessibleRole = AccessibleRole.Table;
                 dgvSendList.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvSendList, true, null);
                 this.RefreshSendFolderView();
 
                 dgvRobotList.AutoGenerateColumns = false;
                 dgvRobotList.DataSource = Socket_Cache.RobotList.lstRobot;
+                dgvRobotList.AccessibleRole = AccessibleRole.Table;
                 dgvRobotList.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvRobotList, true, null);
                 this.RefreshAssistantFolders();
 
                 dgvLogList.AutoGenerateColumns = false;
                 dgvLogList.DataSource = Socket_Cache.LogList.lstSocketLog;
+                dgvLogList.AccessibleRole = AccessibleRole.Table;
                 dgvLogList.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(dgvLogList, true, null);
             }
             catch (Exception ex)
@@ -2732,8 +3362,11 @@ namespace WPELibrary
                 hbPacketData.ByteProvider = null;
             }
 
+            hbPacketData.ByteStyleProvider = null;
+
             this.packetDataEditingPacket = null;
             this.byteSweepEditingPreset = null;
+            this.ClearReadableContent();
         }        
 
         private void AutoCleanUp_SocketList()
@@ -2792,24 +3425,116 @@ namespace WPELibrary
             this.StartHook_MainForm();
         }
 
+#if REAL_ACCEPTANCE
+        private bool acceptanceSendAttempted;
+        private string acceptanceSendResult = "pending";
+        private string acceptanceSendPacketType = string.Empty;
+        private int acceptanceSendSocket;
+        private int acceptanceSendBytes;
+        private string acceptanceSendError = string.Empty;
+
+        internal void StartHookForAcceptance()
+        {
+            this.StartHook_MainForm();
+            this.WriteAcceptanceStatusForAcceptance();
+        }
+
+        internal void WriteAcceptanceStatusForAcceptance()
+        {
+            try
+            {
+                this.TrySendOneCapturedPacketForAcceptance();
+                string assemblyDirectory = Path.GetDirectoryName(typeof(Socket_Form).Assembly.Location);
+                string statusPath = Path.Combine(
+                    string.IsNullOrEmpty(assemblyDirectory) ? AppDomain.CurrentDomain.BaseDirectory : assemblyDirectory,
+                    "real-acceptance-status.txt");
+                File.WriteAllText(
+                    statusPath,
+                    string.Format(
+                        "timestamp={0:o}{1}hook-running={2}{1}total-packets={3}{1}send-bytes={4}{1}recv-bytes={5}{1}captured-list-count={6}{1}send-attempted={7}{1}send-result={8}{1}send-packet-type={9}{1}send-packet-socket={10}{1}send-packet-bytes={11}{1}send-error={12}{1}",
+                        DateTime.Now,
+                        Environment.NewLine,
+                        this.ws.IsRunning,
+                        Socket_Cache.SocketPacket.TotalPackets,
+                        Socket_Cache.SocketPacket.Total_SendBytes,
+                        Socket_Cache.SocketPacket.Total_RecvBytes,
+                        Socket_Cache.SocketList.lstRecPacket.Count,
+                        this.acceptanceSendAttempted,
+                        this.acceptanceSendResult,
+                        this.acceptanceSendPacketType,
+                        this.acceptanceSendSocket,
+                        this.acceptanceSendBytes,
+                        this.acceptanceSendError.Replace(Environment.NewLine, " ")));
+            }
+            catch
+            {
+                // The runtime UI remains the fallback acceptance signal.
+            }
+        }
+
+        private void TrySendOneCapturedPacketForAcceptance()
+        {
+            if (this.acceptanceSendAttempted)
+            {
+                return;
+            }
+
+            Socket_PacketInfo packet = Socket_Cache.SocketList.lstRecPacket
+                .FirstOrDefault(item =>
+                    item != null &&
+                    item.PacketSocket > 0 &&
+                    item.PacketBuffer != null &&
+                    item.PacketBuffer.Length > 0);
+            if (packet == null)
+            {
+                return;
+            }
+
+            this.acceptanceSendAttempted = true;
+            this.acceptanceSendPacketType = packet.PacketType.ToString();
+            this.acceptanceSendSocket = packet.PacketSocket;
+            this.acceptanceSendBytes = packet.PacketBuffer.Length;
+            try
+            {
+                bool sent = Socket_Operation.SendPacket(
+                    packet.PacketSocket,
+                    packet.PacketType,
+                    packet.PacketFrom,
+                    packet.PacketTo,
+                    packet.PacketBuffer);
+                this.acceptanceSendResult = sent.ToString();
+            }
+            catch (Exception ex)
+            {
+                this.acceptanceSendResult = "false";
+                this.acceptanceSendError = ex.Message;
+            }
+        }
+#endif
+
         private void StartHook_MainForm()
         {
             try
             {
-                this.tcSocketInfo_FilterSet.Enabled = false;
-                this.tcSocketInfo_HookSet.Enabled = false;
-                this.gbSystemSet_FilterSet.Enabled = false;
-
-                this.bStartHook.Enabled = false;
-                this.bStopHook.Enabled = true;
-
-                this.cmsIcon_StartHook.Enabled = false;
-                this.cmsIcon_StopHook.Enabled = true;
+                this.SetHookUiState("UI_HookStatusStarting", false, true);
 
                 this.SaveConfigs_Parameter();
                 Socket_Cache.FilterList.InitFilterList_Count();
 
-                ws.StartHook();
+                HookStartResult hookResult = ws.StartHook();
+                if (!hookResult.Success)
+                {
+                    this.SetHookUiState("UI_HookStatusFailed", false, false);
+                    Socket_Operation.DoLog(
+                        MethodBase.GetCurrentMethod().Name,
+                        string.Format(
+                            "Hook start failed at {0}: {1}",
+                            hookResult.FailedHook,
+                            hookResult.ErrorMessage));
+                    return;
+                }
+
+                this.SetHookUiState("UI_HookStatusListening", true, false);
 
                 if (this.cbWorkingMode_Speed.Checked)
                 {
@@ -2827,7 +3552,76 @@ namespace WPELibrary
             }
             catch (Exception ex)
             {
+                this.SetHookUiState("UI_HookStatusFailed", false, false);
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
+        internal HookStartResult EnsureHookRunningForMobile()
+        {
+            try
+            {
+                if (this.IsDisposed || this.Disposing)
+                {
+                    return HookStartResult.Failed("form", "电脑端封包窗口已关闭。");
+                }
+
+                if (this.InvokeRequired)
+                {
+                    return (HookStartResult)this.Invoke(
+                        new Func<HookStartResult>(this.EnsureHookRunningForMobile));
+                }
+
+                if (!this.ws.IsRunning)
+                {
+                    this.StartHook_MainForm();
+                }
+
+                return this.ws.IsRunning
+                    ? HookStartResult.Succeeded(0)
+                    : HookStartResult.Failed("runtime", "电脑端封包挂钩未启动。");
+            }
+            catch (Exception ex)
+            {
+                return HookStartResult.Failed("runtime", ex.Message);
+            }
+        }
+
+        private void SetHookUiState(string statusKey, bool isRunning, bool isTransitioning)
+        {
+            this.hookStatusKey = statusKey;
+            this.hookUiTransitioning = isTransitioning;
+            bool editable = !isRunning && !isTransitioning;
+            this.tcSocketInfo_FilterSet.Enabled = editable;
+            this.tcSocketInfo_HookSet.Enabled = editable;
+            this.gbSystemSet_FilterSet.Enabled = editable;
+            this.bStartHook.Enabled = editable;
+            this.bStopHook.Enabled = isRunning && !isTransitioning;
+            this.cmsIcon_StartHook.Enabled = editable;
+            this.cmsIcon_StopHook.Enabled = isRunning && !isTransitioning;
+            this.tsslProcessInfo.Text = UiText(statusKey);
+            this.tsslProcessInfo.ForeColor =
+                statusKey == "UI_HookStatusFailed"
+                    ? Color.Firebrick
+                    : statusKey == "UI_HookStatusListening"
+                        ? Color.ForestGreen
+                        : SystemColors.ControlText;
+        }
+
+        private void SynchronizeHookUiState()
+        {
+            if (this.hookUiTransitioning)
+            {
+                return;
+            }
+
+            string expectedStatusKey = this.ws.IsRunning
+                ? "UI_HookStatusListening"
+                : "UI_HookStatusReady";
+
+            if (!string.Equals(this.hookStatusKey, expectedStatusKey, StringComparison.Ordinal))
+            {
+                this.SetHookUiState(expectedStatusKey, this.ws.IsRunning, false);
             }
         }
 
@@ -2844,22 +3638,17 @@ namespace WPELibrary
         {
             try
             {
-                this.tcSocketInfo_FilterSet.Enabled = true;
-                this.tcSocketInfo_HookSet.Enabled = true;
-                this.gbSystemSet_FilterSet.Enabled = true;
-
-                this.bStartHook.Enabled = true;
-                this.bStopHook.Enabled = false;
-
-                this.cmsIcon_StartHook.Enabled = true;
-                this.cmsIcon_StopHook.Enabled = false;
+                this.SetHookUiState("UI_HookStatusStopping", false, true);
 
                 ws.StopHook();
+
+                this.SetHookUiState("UI_HookStatusReady", false, false);
 
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_40));
             }
             catch (Exception ex)
             {
+                this.SetHookUiState("UI_HookStatusFailed", false, false);
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
         }
@@ -2881,9 +3670,13 @@ namespace WPELibrary
         {
             try
             {
+                this.SynchronizeHookUiState();
                 this.tlTotal_CNT.Text = Socket_Cache.SocketPacket.TotalPackets.ToString();
                 this.tlFilterExecute_CNT.Text = Socket_Cache.Filter.FilterExecute_CNT.ToString();
-                this.tlQueue_CNT.Text = Socket_Cache.SocketQueue.qSocket_PacketInfo.Count.ToString();
+                long droppedCount = Socket_Cache.SocketQueue.Dropped_CNT;
+                this.tlQueue_CNT.Text = droppedCount > 0
+                    ? string.Format(UiText("UI_QueueDropped"), Socket_Cache.SocketQueue.qSocket_PacketInfo.Count, droppedCount)
+                    : Socket_Cache.SocketQueue.qSocket_PacketInfo.Count.ToString();
                 this.tlFilterSocketList_CNT.Text = Socket_Cache.SocketQueue.FilterSocketList_CNT.ToString();
                 this.tlSend_CNT.Text = Socket_Cache.SocketQueue.Send_CNT.ToString();
                 this.tlRecv_CNT.Text = Socket_Cache.SocketQueue.Recv_CNT.ToString();
@@ -2905,11 +3698,17 @@ namespace WPELibrary
 
         private async void tSocketList_Tick(object sender, EventArgs e)
         {
+            if (this.socketListTickRunning)
+            {
+                return;
+            }
+
+            this.socketListTickRunning = true;
             try
             {
                 if (Socket_Cache.SocketQueue.qSocket_PacketInfo.Count > 0)
                 {
-                    await Socket_Cache.SocketList.SocketToList();
+                    await Socket_Cache.SocketList.SocketToList(200);
                     this.AutoScrollDataGridView(dgvSocketList, cbSocketList_AutoRoll.Checked);
                     this.AutoCleanUp_SocketList();
                 }
@@ -2924,6 +3723,10 @@ namespace WPELibrary
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(nameof(tSocketList_Tick), ex.Message);
+            }
+            finally
+            {
+                this.socketListTickRunning = false;
             }
         }
 
@@ -2952,12 +3755,13 @@ namespace WPELibrary
                         packetType == Socket_Cache.SocketPacket.PacketType.WSASend ||
                         packetType == Socket_Cache.SocketPacket.PacketType.WSASendTo;
                     System.Drawing.Color packetTypeColor = isSend
-                        ? System.Drawing.Color.FromArgb(255, 167, 38)
-                        : System.Drawing.Color.FromArgb(41, 182, 246);
+                        ? PacketSendAccentColor
+                        : PacketReceiveAccentColor;
 
                     e.Value = Socket_Cache.SocketPacket.GetName_ByPacketType(packetType);
                     e.CellStyle.ForeColor = packetTypeColor;
-                    e.CellStyle.SelectionForeColor = packetTypeColor;
+                    e.CellStyle.SelectionBackColor = packetTypeColor;
+                    e.CellStyle.SelectionForeColor = PacketSelectionTextColor;
                     e.FormattingApplied = true;
                 }
                 else if (e.ColumnIndex == dgvSocketList.Columns["cPacketID"].Index)
@@ -3023,10 +3827,18 @@ namespace WPELibrary
                 if (dgvFilterList.Columns[e.ColumnIndex] is DataGridViewCheckBoxColumn && e.RowIndex >= 0)
                 {
                     int FIndex = e.RowIndex;
-                    bool bCheck = !bool.Parse(dgvFilterList.Rows[e.RowIndex].Cells[e.ColumnIndex].Value.ToString());
+                    bool originalValue = Socket_Cache.FilterList.lstFilter[FIndex].IsEnable;
+                    bool bCheck = !originalValue;
+
+                    if (!Socket_Cache.FilterList.TryApplyListChangeAndSave(() =>
+                        Socket_Cache.FilterList.lstFilter[FIndex].IsEnable = bCheck))
+                    {
+                        dgvFilterList.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = originalValue;
+                        Socket_Operation.ShowMessageBox(UiText("UI_PresetSaveFailed"));
+                        return;
+                    }
 
                     dgvFilterList.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = bCheck;
-                    Socket_Cache.FilterList.lstFilter[FIndex].IsEnable = bCheck;
                 }
             }
             catch (Exception ex)
@@ -3070,12 +3882,21 @@ namespace WPELibrary
 
                 if (clickedColumn is DataGridViewCheckBoxColumn)
                 {
-                    bool bCheck = !bool.Parse(dgvSendList.Rows[e.RowIndex].Cells[e.ColumnIndex].Value.ToString());
-
-                    dgvSendList.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = bCheck;
                     if (sendInfo != null)
                     {
-                        sendInfo.IsEnable = bCheck;
+                        bool originalValue = sendInfo.IsEnable;
+                        bool bCheck = !originalValue;
+                        if (!Socket_Cache.SendList.TryApplyListChangeAndSave(() =>
+                            sendInfo.IsEnable = bCheck))
+                        {
+                            dgvSendList.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = originalValue;
+                            Socket_Operation.ShowMessageBox(
+                                Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                                "预设保存失败，已恢复原状态。");
+                            return;
+                        }
+
+                        dgvSendList.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = bCheck;
                         this.UpdateSendListSelectAllState();
                         this.UpdateSendListContext();
                     }
@@ -3084,7 +3905,7 @@ namespace WPELibrary
                 {
                     if (sendInfo.SCollection == null || sendInfo.SCollection.Count == 0)
                     {
-                        MessageBox.Show(this, "这个封包没有可发送的数据。", "发送",
+                        MessageBox.Show(this, UiText("UI_NoSendData"), UiText("UI_Send"),
                             MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
@@ -3096,8 +3917,8 @@ namespace WPELibrary
 
                     if (this.bgwSendList.IsBusy)
                     {
-                        MessageBox.Show(this, "批量发送正在进行，请先停止批量发送。",
-                            "发送", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        MessageBox.Show(this, UiText("UI_BatchSendBusy"), UiText("UI_Send"),
+                            MessageBoxButtons.OK, MessageBoxIcon.Information);
                         return;
                     }
 
@@ -3107,10 +3928,16 @@ namespace WPELibrary
                         return;
                     }
 
-                    Socket_Send manualSend = await Socket_Cache.Send.DoSendAsync(sendInfo.SID);
-                    if (manualSend != null)
+                    Socket_Cache.Send.SendStartResult manualResult =
+                        await Socket_Cache.Send.DoSendWithResultAsync(sendInfo.SID);
+                    if (manualResult != null && manualResult.Send != null)
                     {
-                        this.TrackManualSend(sendInfo.SID, manualSend);
+                        this.TrackManualSend(sendInfo.SID, manualResult.Send);
+                    }
+                    else if (manualResult != null && !string.IsNullOrWhiteSpace(manualResult.Error))
+                    {
+                        MessageBox.Show(this, manualResult.Error, UiText("UI_Send"),
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
                 }
                 else if (clickedColumn.Name == "cStopNow" && sendInfo != null)
@@ -3176,11 +4003,12 @@ namespace WPELibrary
 
             lock (this.sendOperationSync)
             {
-                if (this.activeBatchSendListId == sendListId &&
-                    this.activeBatchSendOperation != null &&
-                    this.activeBatchSendOperation.Worker.IsBusy)
+                Socket_Send batchSend;
+                if (this.activeBatchSendOperations.TryGetValue(sendListId, out batchSend) &&
+                    batchSend != null &&
+                    batchSend.Worker.IsBusy)
                 {
-                    activeSend = this.activeBatchSendOperation;
+                    activeSend = batchSend;
                     return true;
                 }
             }
@@ -3206,8 +4034,7 @@ namespace WPELibrary
         {
             lock (this.sendOperationSync)
             {
-                this.activeBatchSendListId = sendListId;
-                this.activeBatchSendOperation = batchSend;
+                this.activeBatchSendOperations[sendListId] = batchSend;
             }
             this.NotifySendListStateChanged(sendListId);
         }
@@ -3216,14 +4043,33 @@ namespace WPELibrary
         {
             lock (this.sendOperationSync)
             {
-                if (this.activeBatchSendListId == sendListId &&
-                    ReferenceEquals(this.activeBatchSendOperation, batchSend))
+                Socket_Send activeBatchSend;
+                if (this.activeBatchSendOperations.TryGetValue(sendListId, out activeBatchSend) &&
+                    ReferenceEquals(activeBatchSend, batchSend))
                 {
-                    this.activeBatchSendListId = Guid.Empty;
-                    this.activeBatchSendOperation = null;
+                    this.activeBatchSendOperations.Remove(sendListId);
                 }
             }
             this.NotifySendListStateChanged(sendListId);
+        }
+
+        private List<Socket_Send> GetActiveBatchSends()
+        {
+            lock (this.sendOperationSync)
+            {
+                return this.activeBatchSendOperations.Values
+                    .Where(send => send != null)
+                    .Distinct()
+                    .ToList();
+            }
+        }
+
+        private void StopActiveBatchSends()
+        {
+            foreach (Socket_Send batchSend in this.GetActiveBatchSends())
+            {
+                batchSend.StopSend();
+            }
         }
 
         private void NotifySendListStateChanged(Guid sendListId)
@@ -3303,7 +4149,7 @@ namespace WPELibrary
             bool isActive = sendInfo != null && this.IsSendListActive(sendInfo.SID);
             if (columnName == "cSendNow")
             {
-                e.Value = isActive ? "发送中…" : "发送";
+                e.Value = isActive ? UiText("UI_Sending") : UiText("UI_Send");
                 e.CellStyle.BackColor = System.Drawing.SystemColors.Control;
                 e.CellStyle.ForeColor = isActive
                     ? System.Drawing.SystemColors.GrayText
@@ -3313,7 +4159,7 @@ namespace WPELibrary
             }
             else
             {
-                e.Value = "停止";
+                e.Value = UiText("UI_Stop");
                 e.CellStyle.BackColor = System.Drawing.SystemColors.Control;
                 e.CellStyle.ForeColor = isActive
                     ? System.Drawing.SystemColors.ControlText
@@ -3428,6 +4274,48 @@ namespace WPELibrary
             this.BeginInvoke(new Action(textBox.SelectAll));
         }
 
+        private void dgvSocketList_Paint(object sender, PaintEventArgs e)
+        {
+            if (this.dgvSocketList.Rows.Count > 0)
+            {
+                return;
+            }
+
+            System.Drawing.Rectangle contentBounds = this.dgvSocketList.ClientRectangle;
+            contentBounds.Y += this.dgvSocketList.ColumnHeadersHeight;
+            contentBounds.Height -= this.dgvSocketList.ColumnHeadersHeight;
+            TextRenderer.DrawText(
+                e.Graphics,
+                UiText("UI_PacketListEmpty"),
+                this.dgvSocketList.Font,
+                contentBounds,
+                System.Drawing.SystemColors.GrayText,
+                TextFormatFlags.HorizontalCenter |
+                TextFormatFlags.VerticalCenter |
+                TextFormatFlags.SingleLine);
+        }
+
+        private void dgvFilterList_Paint(object sender, PaintEventArgs e)
+        {
+            if (this.dgvFilterList.Rows.Count > 0)
+            {
+                return;
+            }
+
+            System.Drawing.Rectangle contentBounds = this.dgvFilterList.ClientRectangle;
+            contentBounds.Y += this.dgvFilterList.ColumnHeadersHeight;
+            contentBounds.Height -= this.dgvFilterList.ColumnHeadersHeight;
+            TextRenderer.DrawText(
+                e.Graphics,
+                UiText("UI_FilterEmpty"),
+                this.dgvFilterList.Font,
+                contentBounds,
+                System.Drawing.SystemColors.GrayText,
+                TextFormatFlags.HorizontalCenter |
+                TextFormatFlags.VerticalCenter |
+                TextFormatFlags.SingleLine);
+        }
+
         private void dgvSendList_Paint(object sender, PaintEventArgs e)
         {
             if (this.dgvSendList.Rows.Count > 0)
@@ -3474,14 +4362,14 @@ namespace WPELibrary
                 e.Cancel = true;
                 if (columnName == "cSortOrder")
                 {
-                    this.dgvSendList.Rows[e.RowIndex].ErrorText = "序号必须大于 0。";
+                    this.dgvSendList.Rows[e.RowIndex].ErrorText = UiText("UI_SortOrderPositive");
                 }
                 else
                 {
                     this.dgvSendList.Rows[e.RowIndex].ErrorText =
                         columnName == "cLoopCount"
-                            ? "次数不能小于 0；0 表示连续发送。"
-                            : "间隔不能小于 0。";
+                            ? UiText("UI_LoopCountNonNegative")
+                            : UiText("UI_LoopIntervalNonNegative");
                 }
             }
         }
@@ -3585,13 +4473,32 @@ namespace WPELibrary
         {
             try
             {
-                if (dgvRobotList.Columns[e.ColumnIndex] is DataGridViewCheckBoxColumn && e.RowIndex >= 0)
+                if (e.RowIndex >= 0 && e.ColumnIndex >= 0 &&
+                    dgvRobotList.Columns[e.ColumnIndex] is DataGridViewCheckBoxColumn)
                 {
-                    int RIndex = e.RowIndex;
-                    bool bCheck = !bool.Parse(dgvRobotList.Rows[e.RowIndex].Cells[e.ColumnIndex].Value.ToString());
+                    if (this.bgwRobotList.IsBusy || this.activeAssistantRobot != null ||
+                        e.RowIndex >= Socket_Cache.RobotList.lstRobot.Count)
+                    {
+                        return;
+                    }
 
-                    dgvRobotList.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = bCheck;
-                    Socket_Cache.RobotList.lstRobot[RIndex].IsEnable = bCheck;
+                    int RIndex = e.RowIndex;
+                    Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot[RIndex];
+                    bool originalValue = robot.IsEnable;
+                    bool newValue = !originalValue;
+
+                    if (!this.TryCommitAssistantChange(
+                        delegate
+                        {
+                            robot.IsEnable = newValue;
+                        },
+                        "UI_AssistantSaveFailed"))
+                    {
+                        dgvRobotList.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = originalValue;
+                        return;
+                    }
+
+                    dgvRobotList.Rows[e.RowIndex].Cells[e.ColumnIndex].Value = newValue;
                 }
             }
             catch (Exception ex)
@@ -3772,7 +4679,13 @@ namespace WPELibrary
                         dbp.Changed += this.PacketDataProvider_Changed;
                         dbp.LengthChanged += this.PacketDataProvider_Changed;
                         hbPacketData.ByteProvider = dbp;
+                        hbPacketData.ByteStyleProvider = new DynamicVariableCompositeStyleProvider(
+                            Socket_Cache.SocketList.spiSelect.ByteAnnotations,
+                            DynamicVariableRuntime.GetDisplayRanges(
+                                Socket_Cache.SocketList.spiSelect.PacketType,
+                                Socket_Cache.SocketList.spiSelect.PacketBuffer));
                         this.packetDataEditingPacket = Socket_Cache.SocketList.spiSelect;
+                        this.UpdateReadableContent(this.packetDataEditingPacket.PacketBuffer);
                     }
                 }
             }
@@ -3808,6 +4721,12 @@ namespace WPELibrary
                 Socket_Cache.SocketPacket.PacketData_MaxLen);
             provider.ApplyChanges();
             this.CommitByteSweepPresetBuffer(editedBuffer);
+            this.UpdateReadableContent(editedBuffer);
+            this.hbPacketData.ByteStyleProvider = new DynamicVariableCompositeStyleProvider(
+                this.packetDataEditingPacket.ByteAnnotations,
+                DynamicVariableRuntime.GetDisplayRanges(
+                    this.packetDataEditingPacket.PacketType,
+                    editedBuffer));
 
             int rowIndex = Socket_Cache.SocketList.lstRecPacket.IndexOf(this.packetDataEditingPacket);
             if (rowIndex >= 0 && rowIndex < this.dgvSocketList.Rows.Count)
@@ -3885,6 +4804,103 @@ namespace WPELibrary
         private void cmsHexBox_Opening(object sender, System.ComponentModel.CancelEventArgs e)
         {
             this.BuildGroupedSendListMenu(this.cmsHexBox_SendList, this.cmsHexBox_SendTarget_Click);
+            int offset;
+            int length;
+            bool hasSelection = this.TryGetDynamicSelection(out offset, out length);
+            ExtractionRule dynamicRule = hasSelection
+                ? DynamicVariableUiActions.FindMatchingRule(this.GetCurrentEditedPacket(), offset, length)
+                : null;
+            this.cmsHexBox_DynamicVariable.Enabled = hasSelection;
+            this.cmsHexBox_AddDynamicField.Enabled = hasSelection &&
+                Socket_Cache.SocketList.spiSelect != null &&
+                Socket_Cache.SocketList.spiSelect.PacketBuffer != null &&
+                DynamicVariableRuntime.Variables.GetRulesSnapshot().Any(rule =>
+                    rule.PacketType == Socket_Cache.SocketList.spiSelect.PacketType &&
+                    rule.PatternBytes != null &&
+                    rule.PatternBytes.Length == Socket_Cache.SocketList.spiSelect.PacketBuffer.Length &&
+                    PatternMatcher.Matches(rule, Socket_Cache.SocketList.spiSelect.PacketBuffer) &&
+                    (rule.Fields ?? new List<DynamicField>()).All(field => field != null &&
+                        !DynamicVariableRange.Overlaps(field.Offset, field.Length, offset, length)));
+            this.cmsHexBox_EditDynamicVariable.Enabled = dynamicRule != null;
+            this.cmsHexBox_RemoveDynamicField.Enabled = dynamicRule != null;
+        }
+
+        private bool TryGetDynamicSelection(out int offset, out int length)
+        {
+            offset = 0;
+            length = 0;
+            IByteProvider provider = this.hbPacketData.ByteProvider;
+            return provider != null && DynamicVariableRange.TryFromSelection(
+                this.hbPacketData.SelectionStart,
+                this.hbPacketData.SelectionLength,
+                provider.Length,
+                out offset,
+                out length);
+        }
+
+        private DynamicVariableDisplayRange GetSelectedDynamicRange(Socket_PacketInfo packet)
+        {
+            int offset;
+            int length;
+            if (!this.TryGetDynamicSelection(out offset, out length) || packet == null)
+            {
+                return null;
+            }
+            ExtractionRule rule = DynamicVariableUiActions.FindMatchingRule(packet, offset, length);
+            DynamicField field = rule == null
+                ? null
+                : (rule.Fields ?? new List<DynamicField>())
+                    .FirstOrDefault(item => item != null && item.Offset == offset && item.Length == length);
+            DynamicVariableDefinition definition;
+            if (field == null || !DynamicVariableRuntime.TryGetDefinition(field.VariableId, out definition))
+            {
+                return null;
+            }
+            return new DynamicVariableDisplayRange
+            {
+                Offset = field.Offset,
+                Length = field.Length,
+                VariableId = field.VariableId,
+                Symbol = definition.Symbol,
+                DisplayName = definition.DisplayName,
+                RuleName = rule.Name
+            };
+        }
+
+        private void hbPacketData_DynamicVariableMouseMove(object sender, MouseEventArgs e)
+        {
+            try
+            {
+                long index = this.hbPacketData.GetByteIndexAt(e.Location);
+                Socket_PacketInfo packet = this.packetDataEditingPacket;
+                DynamicVariableDisplayRange range = packet == null
+                    ? null
+                    : DynamicVariableRuntime.GetDisplayRanges(packet.PacketType, packet.PacketBuffer)
+                        .FirstOrDefault(item => index >= item.Offset && index < item.End);
+                Socket_ByteAnnotationInfo annotation = packet == null || packet.ByteAnnotations == null
+                    ? null
+                    : packet.ByteAnnotations.FirstOrDefault(item => index >= item.Start && index < item.End);
+                List<string> lines = new List<string>();
+                if (range != null)
+                {
+                    string span = range.Length == 1
+                        ? string.Format("第{0}字节", range.Offset + 1)
+                        : string.Format("第{0}～{1}字节", range.Offset + 1, range.End);
+                    lines.Add(span);
+                    lines.Add(string.Format("变量：{0}", range.Symbol));
+                    lines.Add(string.Format("长度：{0}", range.Length));
+                    lines.Add(string.Format("来源规则：{0}", range.RuleName));
+                }
+                if (annotation != null && !string.IsNullOrWhiteSpace(annotation.Note))
+                {
+                    lines.Add("普通注释：" + annotation.Note);
+                }
+                this.tt.SetToolTip(this.hbPacketData, string.Join("\n", lines));
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(nameof(hbPacketData_DynamicVariableMouseMove), ex.Message);
+            }
         }
 
         private void BuildGroupedSendListMenu(ToolStripMenuItem parentMenu, EventHandler targetClick)
@@ -3933,6 +4949,7 @@ namespace WPELibrary
             Socket_PacketInfo packet = Socket_Cache.SocketList.spiSelect;
             byte[] buffer;
             IEnumerable<Socket_ByteAnnotationInfo> annotations;
+            IEnumerable<PresetVariableBinding> variableBindings;
             if (this.hbPacketData.CanCopy())
             {
                 this.hbPacketData.CopyHex();
@@ -3943,21 +4960,27 @@ namespace WPELibrary
                     packet.ByteAnnotations,
                     this.hbPacketData.SelectionStart,
                     this.hbPacketData.SelectionLength);
+                variableBindings = DynamicVariableSerialization.ForSelection(
+                    packet.VariableBindings,
+                    this.hbPacketData.SelectionStart,
+                    this.hbPacketData.SelectionLength);
             }
             else
             {
                 buffer = packet.PacketBuffer;
                 annotations = packet.ByteAnnotations;
+                variableBindings = packet.VariableBindings;
             }
 
-            this.PromptAndAddPacketPreset(packet, folderName, buffer, annotations);
+            this.PromptAndAddPacketPreset(packet, folderName, buffer, annotations, variableBindings);
         }
 
         private Socket_SendInfo PromptAndAddPacketPreset(
             Socket_PacketInfo packet,
             string suggestedFolder,
             byte[] buffer,
-            IEnumerable<Socket_ByteAnnotationInfo> annotations)
+            IEnumerable<Socket_ByteAnnotationInfo> annotations,
+            IEnumerable<PresetVariableBinding> variableBindings)
         {
             if (packet == null || buffer == null)
             {
@@ -3980,7 +5003,6 @@ namespace WPELibrary
                     string.Equals(folder, dialog.FolderName, StringComparison.OrdinalIgnoreCase));
                 if (targetFolder == null)
                 {
-                    Socket_Cache.SendList.AddFolder(dialog.FolderName);
                     targetFolder = dialog.FolderName;
                 }
 
@@ -3989,6 +5011,7 @@ namespace WPELibrary
                     targetFolder,
                     buffer,
                     annotations,
+                    variableBindings,
                     dialog.PresetName);
             }
         }
@@ -3998,12 +5021,15 @@ namespace WPELibrary
             string folderName,
             byte[] buffer,
             IEnumerable<Socket_ByteAnnotationInfo> annotations,
+            IEnumerable<PresetVariableBinding> variableBindings,
             string presetName = null)
         {
-            if (packet == null || string.IsNullOrEmpty(folderName) || buffer == null)
+            if (packet == null || string.IsNullOrWhiteSpace(folderName) || buffer == null)
             {
                 return null;
             }
+
+            folderName = folderName.Trim();
 
             Socket_PacketInfo packetCopy = new Socket_PacketInfo(
                 packet.PacketTime,
@@ -4019,17 +5045,37 @@ namespace WPELibrary
                 packetCopy.PacketBuffer.AsSpan(),
                 Socket_Cache.SocketPacket.PacketData_MaxLen);
             packetCopy.ByteAnnotations = Socket_ByteAnnotationEngine.Clone(annotations);
+            packetCopy.VariableBindings = (variableBindings ?? Enumerable.Empty<PresetVariableBinding>())
+                .Where(item => item != null)
+                .Select(item => item.Clone())
+                .ToList();
 
-            if (string.IsNullOrWhiteSpace(presetName))
+            Socket_SendInfo sendInfo = null;
+            bool saved = Socket_Cache.SendList.TryApplyListChangeAndSave(() =>
             {
-                presetName = string.Format(
-                    System.Globalization.CultureInfo.CurrentCulture,
-                    UiText("UI_DefaultSendPresetName"),
-                    Socket_Cache.SendList.lstSend.Count + 1);
+                if (!Socket_Cache.SendList.lstFolders.Any(folder =>
+                    string.Equals(folder, folderName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    Socket_Cache.SendList.AddFolder(folderName);
+                }
+
+                string actualName = string.IsNullOrWhiteSpace(presetName)
+                    ? string.Format(
+                        System.Globalization.CultureInfo.CurrentCulture,
+                        UiText("UI_DefaultSendPresetName"),
+                        Socket_Cache.SendList.lstSend.Count + 1)
+                    : presetName;
+                sendInfo = Socket_SendForm.CreateSendPreset(
+                    packetCopy, actualName, folderName, 1, 1000);
+                Socket_Cache.SendList.SendToList(sendInfo);
+            });
+            if (!saved)
+            {
+                Socket_Operation.ShowMessageBox(
+                    Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                    "预设保存失败，已恢复原状态。");
+                return null;
             }
-            Socket_SendInfo sendInfo = Socket_SendForm.CreateSendPreset(
-                packetCopy, presetName, folderName, 1, 1000);
-            Socket_Cache.SendList.SendToList(sendInfo);
             return sendInfo;
         }
 
@@ -4072,7 +5118,13 @@ namespace WPELibrary
                                 Socket_ByteAnnotationEngine.ForSelection(
                                     Socket_Cache.SocketList.spiSelect.ByteAnnotations,
                                     this.hbPacketData.CanCopy() ? this.hbPacketData.SelectionStart : 0,
-                                    this.hbPacketData.CanCopy() ? this.hbPacketData.SelectionLength : 0));
+                                    this.hbPacketData.CanCopy() ? this.hbPacketData.SelectionLength : 0),
+                                DynamicVariableSerialization.ForSelection(
+                                    Socket_Cache.SocketList.spiSelect.VariableBindings,
+                                    this.hbPacketData.CanCopy() ? this.hbPacketData.SelectionStart : 0,
+                                    this.hbPacketData.CanCopy()
+                                        ? this.hbPacketData.SelectionLength
+                                        : bBuffer == null ? 0 : bBuffer.Length));
                         }
 
                         this.cmsHexBox.Close();
@@ -4118,6 +5170,22 @@ namespace WPELibrary
 
                             break;
 
+                        case "cmsHexBox_DynamicVariable":
+                            this.CreateDynamicVariableFromSelection();
+                            break;
+
+                        case "cmsHexBox_AddDynamicField":
+                            this.AddDynamicFieldFromSelection();
+                            break;
+
+                        case "cmsHexBox_EditDynamicVariable":
+                            this.EditDynamicVariableFromSelection();
+                            break;
+
+                        case "cmsHexBox_RemoveDynamicField":
+                            this.RemoveDynamicFieldFromSelection();
+                            break;
+
                         case "cmsHexBox_CopyHex":
 
                             this.hbPacketData.CopyHex();
@@ -4156,6 +5224,65 @@ namespace WPELibrary
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
+        }
+
+        private void CreateDynamicVariableFromSelection()
+        {
+            int offset;
+            int length;
+            Socket_PacketInfo packet = this.GetCurrentEditedPacket();
+            if (packet != null && this.TryGetDynamicSelection(out offset, out length) &&
+                DynamicVariableUiActions.CreateRuleFromSelection(this, packet, offset, length))
+            {
+                this.RefreshDynamicVariableDisplay();
+            }
+        }
+
+        private void AddDynamicFieldFromSelection()
+        {
+            int offset;
+            int length;
+            Socket_PacketInfo packet = this.GetCurrentEditedPacket();
+            if (packet != null && this.TryGetDynamicSelection(out offset, out length) &&
+                DynamicVariableUiActions.AddFieldToExistingRule(this, packet, offset, length))
+            {
+                this.RefreshDynamicVariableDisplay();
+            }
+        }
+
+        private void EditDynamicVariableFromSelection()
+        {
+            Socket_PacketInfo packet = this.GetCurrentEditedPacket();
+            DynamicVariableDisplayRange range = this.GetSelectedDynamicRange(packet);
+            if (range != null && DynamicVariableUiActions.EditDefinition(this, range.VariableId, range.Length))
+            {
+                this.RefreshDynamicVariableDisplay();
+            }
+        }
+
+        private void RemoveDynamicFieldFromSelection()
+        {
+            int offset;
+            int length;
+            Socket_PacketInfo packet = this.GetCurrentEditedPacket();
+            if (packet != null && this.TryGetDynamicSelection(out offset, out length) &&
+                DynamicVariableUiActions.RemoveField(this, packet, offset, length))
+            {
+                this.RefreshDynamicVariableDisplay();
+            }
+        }
+
+        private void RefreshDynamicVariableDisplay()
+        {
+            Socket_PacketInfo packet = this.packetDataEditingPacket;
+            if (packet == null)
+            {
+                return;
+            }
+            this.hbPacketData.ByteStyleProvider = new DynamicVariableCompositeStyleProvider(
+                packet.ByteAnnotations,
+                DynamicVariableRuntime.GetDisplayRanges(packet.PacketType, packet.PacketBuffer));
+            this.hbPacketData.Invalidate();
         }
 
         #endregion
@@ -4223,7 +5350,8 @@ namespace WPELibrary
                     packet,
                     folderName,
                     packet.PacketBuffer,
-                    packet.ByteAnnotations);
+                    packet.ByteAnnotations,
+                    packet.VariableBindings);
                 if (addedPreset == null)
                 {
                     break;
@@ -4478,7 +5606,15 @@ namespace WPELibrary
                                 break;
 
                             case "cmsSendList_Copy":
-                                Socket_Cache.SendList.UpdateSendList_ByListAction(Socket_Cache.System.ListAction.Copy, ssiList);
+                                if (!Socket_Cache.SendList.TryApplyListChangeAndSave(() =>
+                                    Socket_Cache.SendList.UpdateSendList_ByListAction(
+                                        Socket_Cache.System.ListAction.Copy,
+                                        ssiList)))
+                                {
+                                    Socket_Operation.ShowMessageBox(
+                                        Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                                        "预设保存失败，已恢复原状态。");
+                                }
                                 break;
 
                             case "cmsSendList_Export":
@@ -4486,7 +5622,15 @@ namespace WPELibrary
                                 break;
 
                             case "cmsSendList_Delete":
-                                Socket_Cache.SendList.UpdateSendList_ByListAction(Socket_Cache.System.ListAction.Delete, ssiList);
+                                if (!Socket_Cache.SendList.TryApplyListChangeAndSave(() =>
+                                    Socket_Cache.SendList.UpdateSendList_ByListAction(
+                                        Socket_Cache.System.ListAction.Delete,
+                                        ssiList)))
+                                {
+                                    Socket_Operation.ShowMessageBox(
+                                        Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                                        "预设保存失败，已恢复原状态。");
+                                }
                                 break;
                         }
 
@@ -4558,9 +5702,18 @@ namespace WPELibrary
                 }
             }
 
-            for (int index = 0; index < orderedItems.Count; index++)
+            if (!Socket_Cache.SendList.TryApplyListChangeAndSave(() =>
             {
-                orderedItems[index].SSortOrder = index + 1;
+                for (int index = 0; index < orderedItems.Count; index++)
+                {
+                    orderedItems[index].SSortOrder = index + 1;
+                }
+            }))
+            {
+                Socket_Operation.ShowMessageBox(
+                    Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                    "预设保存失败，已恢复原状态。");
+                return;
             }
 
             this.RefreshSendFolderView();
@@ -4586,23 +5739,43 @@ namespace WPELibrary
                         switch (sItemText)
                         {
                             case "cmsRobotList_Top":
-                                Socket_Cache.RobotList.UpdateRobotList_ByListAction(Socket_Cache.System.ListAction.Top, sriList);
+                                this.TryCommitAssistantChange(
+                                    () => Socket_Cache.RobotList.UpdateRobotList_ByListAction(
+                                        Socket_Cache.System.ListAction.Top,
+                                        sriList),
+                                    "UI_AssistantSaveFailed");
                                 break;
 
                             case "cmsRobotList_Up":
-                                Socket_Cache.RobotList.UpdateRobotList_ByListAction(Socket_Cache.System.ListAction.Up, sriList);
+                                this.TryCommitAssistantChange(
+                                    () => Socket_Cache.RobotList.UpdateRobotList_ByListAction(
+                                        Socket_Cache.System.ListAction.Up,
+                                        sriList),
+                                    "UI_AssistantSaveFailed");
                                 break;
 
                             case "cmsRobotList_Down":
-                                Socket_Cache.RobotList.UpdateRobotList_ByListAction(Socket_Cache.System.ListAction.Down, sriList);
+                                this.TryCommitAssistantChange(
+                                    () => Socket_Cache.RobotList.UpdateRobotList_ByListAction(
+                                        Socket_Cache.System.ListAction.Down,
+                                        sriList),
+                                    "UI_AssistantSaveFailed");
                                 break;
 
                             case "cmsRobotList_Bottom":
-                                Socket_Cache.RobotList.UpdateRobotList_ByListAction(Socket_Cache.System.ListAction.Bottom, sriList);
+                                this.TryCommitAssistantChange(
+                                    () => Socket_Cache.RobotList.UpdateRobotList_ByListAction(
+                                        Socket_Cache.System.ListAction.Bottom,
+                                        sriList),
+                                    "UI_AssistantSaveFailed");
                                 break;
 
                             case "cmsRobotList_Copy":
-                                Socket_Cache.RobotList.UpdateRobotList_ByListAction(Socket_Cache.System.ListAction.Copy, sriList);
+                                this.TryCommitAssistantChange(
+                                    () => Socket_Cache.RobotList.UpdateRobotList_ByListAction(
+                                        Socket_Cache.System.ListAction.Copy,
+                                        sriList),
+                                    "UI_AssistantSaveFailed");
                                 break;
 
                             case "cmsRobotList_Export":
@@ -4610,7 +5783,11 @@ namespace WPELibrary
                                 break;
 
                             case "cmsRobotList_Delete":
-                                Socket_Cache.RobotList.UpdateRobotList_ByListAction(Socket_Cache.System.ListAction.Delete, sriList);
+                                this.TryCommitAssistantChange(
+                                    () => Socket_Cache.RobotList.UpdateRobotList_ByListAction(
+                                        Socket_Cache.System.ListAction.Delete,
+                                        sriList),
+                                    "UI_AssistantSaveFailed");
                                 break;
                         }
 
@@ -4721,9 +5898,16 @@ namespace WPELibrary
                 {
                     List<Socket_FilterInfo> sfiList = Socket_Operation.GetSelectedFilter(this.dgvFilterList);
 
-                    foreach (Socket_FilterInfo sfi in sfiList)
+                    if (!Socket_Cache.FilterList.TryApplyListChangeAndSave(() =>
                     {
-                        sfi.IsEnable = true;
+                        foreach (Socket_FilterInfo sfi in sfiList)
+                        {
+                            sfi.IsEnable = true;
+                        }
+                    }))
+                    {
+                        Socket_Operation.ShowMessageBox(UiText("UI_PresetSaveFailed"));
+                        return;
                     }
 
                     this.dgvFilterList.Refresh();
@@ -4744,9 +5928,16 @@ namespace WPELibrary
                 {
                     List<Socket_FilterInfo> sfiList = Socket_Operation.GetSelectedFilter(this.dgvFilterList);
 
-                    foreach (Socket_FilterInfo sfi in sfiList)
+                    if (!Socket_Cache.FilterList.TryApplyListChangeAndSave(() =>
                     {
-                        sfi.IsEnable = false;
+                        foreach (Socket_FilterInfo sfi in sfiList)
+                        {
+                            sfi.IsEnable = false;
+                        }
+                    }))
+                    {
+                        Socket_Operation.ShowMessageBox(UiText("UI_PresetSaveFailed"));
+                        return;
                     }
 
                     this.dgvFilterList.Refresh();
@@ -4816,7 +6007,8 @@ namespace WPELibrary
                 packet,
                 this.selectedSendFolder,
                 buffer,
-                packet.ByteAnnotations);
+                packet.ByteAnnotations,
+                packet.VariableBindings);
             this.RefreshSendFolderView();
             if (sendInfo == null || sendInfo.SCollection == null || sendInfo.SCollection.Count != 1)
             {
@@ -4876,6 +6068,8 @@ namespace WPELibrary
                     return;
                 }
 
+                this.sendListParallelMode = this.tsSendListParallel != null &&
+                    this.tsSendListParallel.Checked;
                 this.tsSendList_Start.Enabled = false;
                 this.tsSendList_Stop.Enabled = true;
                 Socket_Cache.SendList.lstExecute.Clear();
@@ -4910,6 +6104,12 @@ namespace WPELibrary
         private void tsSendList_Stop_Click(object sender, EventArgs e)
         {
             this.bgwSendList.CancelAsync();
+            this.StopActiveBatchSends();
+        }
+
+        private void tsSendListParallel_Click(object sender, EventArgs e)
+        {
+            this.UpdateSendListParallelModeText();
         }
 
         private void tsSendList_CleanUp_Click(object sender, EventArgs e)
@@ -4930,7 +6130,21 @@ namespace WPELibrary
         {
             try
             {
-                foreach (Socket_SendInfo ssi in this.sendBatchQueue.ToList())
+                List<Socket_SendInfo> queue = this.sendBatchQueue.ToList();
+                if (this.sendListParallelMode)
+                {
+                    Task[] tasks = queue
+                        .Select(ssi => Task.Run(() => this.ExecuteSendListItem(ssi)))
+                        .ToArray();
+                    Task.WaitAll(tasks);
+                    if (this.bgwSendList.CancellationPending)
+                    {
+                        e.Cancel = true;
+                    }
+                    return;
+                }
+
+                foreach (Socket_SendInfo ssi in queue)
                 {
                     if (this.bgwSendList.CancellationPending)
                     {
@@ -4938,38 +6152,52 @@ namespace WPELibrary
                         return;
                     }
 
-                    Socket_Send ss = Socket_Cache.Send.DoSend(ssi.SID);
-                    if (ss == null)
-                    {
-                        continue;
-                    }
-
-                    this.SetActiveBatchSend(ssi.SID, ss);
-                    Socket_Cache.SendList.lstExecute.Add(ss);
-                    try
-                    {
-                        while (ss.Worker.IsBusy)
-                        {
-                            if (this.bgwSendList.CancellationPending)
-                            {
-                                ss.StopSend();
-                                e.Cancel = true;
-                                return;
-                            }
-
-                            Thread.Sleep(100);
-                        }
-                    }
-                    finally
-                    {
-                        Socket_Cache.SendList.lstExecute.Remove(ss);
-                        this.ClearActiveBatchSend(ssi.SID, ss);
-                    }
+                    this.ExecuteSendListItem(ssi);
                 }
             }
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
+        private void ExecuteSendListItem(Socket_SendInfo sendInfo)
+        {
+            if (sendInfo == null || this.bgwSendList.CancellationPending)
+            {
+                return;
+            }
+
+            Socket_Send sendOperation = Socket_Cache.Send.DoSend(sendInfo.SID);
+            if (sendOperation == null)
+            {
+                return;
+            }
+
+            this.SetActiveBatchSend(sendInfo.SID, sendOperation);
+            lock (this.sendOperationSync)
+            {
+                Socket_Cache.SendList.lstExecute.Add(sendOperation);
+            }
+            try
+            {
+                while (sendOperation.Worker.IsBusy)
+                {
+                    if (this.bgwSendList.CancellationPending)
+                    {
+                        sendOperation.StopSend();
+                    }
+
+                    Thread.Sleep(100);
+                }
+            }
+            finally
+            {
+                lock (this.sendOperationSync)
+                {
+                    Socket_Cache.SendList.lstExecute.Remove(sendOperation);
+                }
+                this.ClearActiveBatchSend(sendInfo.SID, sendOperation);
             }
         }
 
@@ -5034,22 +6262,35 @@ namespace WPELibrary
 
         private void tsRobotList_Add_Click(object sender, EventArgs e)
         {
-            if (this.bgwRobotList.IsBusy)
+            if (this.bgwRobotList.IsBusy || this.activeAssistantRobot != null)
             {
                 return;
             }
 
-            Socket_Cache.Robot.AddRobot_New();
-            Socket_RobotInfo addedRobot = Socket_Cache.RobotList.lstRobot.LastOrDefault();
-            if (addedRobot != null)
-            {
-                addedRobot.RFolder = this.selectedRobotFolder;
-                if (!Socket_Cache.RobotList.lstFolders.Contains(this.selectedRobotFolder))
+            int originalCount = Socket_Cache.RobotList.lstRobot.Count;
+            if (!this.TryCommitAssistantChange(
+                delegate
                 {
-                    Socket_Cache.RobotList.lstFolders.Add(this.selectedRobotFolder);
-                }
+                    Socket_Cache.Robot.AddRobot_New();
+                    if (Socket_Cache.RobotList.lstRobot.Count <= originalCount)
+                    {
+                        throw new InvalidOperationException("新增助手没有生成新的记录。");
+                    }
+                    Socket_RobotInfo addedRobot = Socket_Cache.RobotList.lstRobot.LastOrDefault();
+                    if (addedRobot == null)
+                    {
+                        throw new InvalidOperationException("新增助手记录为空。");
+                    }
+                    addedRobot.RFolder = this.selectedRobotFolder;
+                    if (!Socket_Cache.RobotList.lstFolders.Contains(this.selectedRobotFolder))
+                    {
+                        Socket_Cache.RobotList.lstFolders.Add(this.selectedRobotFolder);
+                    }
+                },
+                "UI_AssistantSaveFailed"))
+            {
+                return;
             }
-            Socket_Cache.RobotList.SaveRobotList_ToDB();
             this.RefreshAssistantFolders();
             this.dgvRobotList.ClearSelection();
             if (this.dgvRobotList.Rows.Count > 0)
@@ -5069,13 +6310,18 @@ namespace WPELibrary
 
         private void UpdateRobotToolbarState()
         {
-            bool running = this.bgwRobotList.IsBusy;
-            this.tsRobotList_Start.Enabled = !running && this.dgvRobotList.Rows.Count > 0;
-            this.tsRobotList_Stop.Enabled = running;
-            this.tsRobotList_Add.Enabled = !running;
+            bool batchRunning = this.bgwRobotList.IsBusy;
+            bool assistantRunning = this.activeAssistantRobot != null;
+            this.tsRobotList_Start.Enabled = !batchRunning && !assistantRunning && this.dgvRobotList.Rows.Count > 0;
+            this.tsRobotList_Stop.Enabled = batchRunning;
+            this.tsRobotList_Add.Enabled = !batchRunning && !assistantRunning;
             if (this.tsRobotListMore != null)
             {
-                this.tsRobotListMore.Enabled = !running;
+                this.tsRobotListMore.Enabled = !batchRunning && !assistantRunning;
+            }
+            if (this.bRobotFolderAdd != null)
+            {
+                this.bRobotFolderAdd.Enabled = !batchRunning && !assistantRunning;
             }
         }
 
@@ -5371,11 +6617,11 @@ namespace WPELibrary
 
                 if (iSelectIndex == 0)
                 {
-                    this.ofdExtraction.Filter = "Charles 会话文件（*.chlsx）|*.chlsx";
+                    this.ofdExtraction.Filter = UiText("UI_CharlesSessionFilter");
                 }
                 else if (iSelectIndex == 1)
                 {
-                    this.ofdExtraction.Filter = "FILT 过滤器文件（*.filt）|*.filt";
+                    this.ofdExtraction.Filter = UiText("UI_FilterFileFilter");
                 }
 
                 ofdExtraction.ShowDialog();

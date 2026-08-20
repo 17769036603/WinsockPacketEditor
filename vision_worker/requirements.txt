@@ -1,0 +1,6 @@
+# CPU-only local worker dependencies.  RapidOCR uses ONNX Runtime for inference.
+airtest==1.4.3
+onnxruntime==1.28.0
+rapidocr==3.9.2
+Pillow==12.3.0
+numpy==1.26.4

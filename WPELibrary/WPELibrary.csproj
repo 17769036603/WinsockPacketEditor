@@ -79,6 +79,10 @@
     <Reference Include="Microsoft.Owin.StaticFiles, Version=4.2.2.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
       <HintPath>..\packages\Microsoft.Owin.StaticFiles.4.2.2\lib\net45\Microsoft.Owin.StaticFiles.dll</HintPath>
     </Reference>
+    <Reference Include="Microsoft.ML.OnnxRuntime, Version=1.27.1.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\Microsoft.ML.OnnxRuntime.Managed.1.27.1\lib\netstandard2.0\Microsoft.ML.OnnxRuntime.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
       <HintPath>..\packages\Newtonsoft.Json.13.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
     </Reference>
@@ -121,6 +125,7 @@
       <HintPath>..\packages\System.Runtime.CompilerServices.Unsafe.6.1.2\lib\net462\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
     </Reference>
     <Reference Include="System.Runtime.Remoting" />
+    <Reference Include="System.Security" />
     <Reference Include="System.Threading.Tasks.Extensions, Version=4.2.4.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51, processorArchitecture=MSIL">
       <HintPath>..\packages\System.Threading.Tasks.Extensions.4.6.3\lib\net462\System.Threading.Tasks.Extensions.dll</HintPath>
     </Reference>
@@ -155,15 +160,71 @@
     <Compile Include="Lib\Socket_ProxyUDP.cs" />
     <Compile Include="Lib\Socket_Robot.cs" />
     <Compile Include="Lib\Socket_RobotInfo.cs" />
+    <Compile Include="Lib\Socket_VisionProfile.cs" />
+    <Compile Include="Lib\Vision\VisionRegion.cs" />
+    <Compile Include="Lib\Vision\VisionMatchResult.cs" />
+    <Compile Include="Lib\Vision\VisionTemplateMatcher.cs" />
+    <Compile Include="Lib\Vision\VisionOcrOptions.cs" />
+    <Compile Include="Lib\Vision\VisionOcrEngine.cs" />
+    <Compile Include="Lib\Vision\VisionOcrResult.cs" />
+    <Compile Include="Lib\Vision\IVisionTextRecognizer.cs" />
+    <Compile Include="Lib\Vision\IVisionCaptureProvider.cs" />
+    <Compile Include="Lib\Vision\IVisionSystemInputProvider.cs" />
+    <Compile Include="Lib\Vision\VisionImagePreprocessor.cs" />
+    <Compile Include="Lib\Vision\VisionTesseractRecognizer.cs" />
+    <Compile Include="Lib\Vision\VisionOnnxTextRecognizer.cs" />
+    <Compile Include="Lib\Vision\VisionAutoTextRecognizer.cs" />
+    <Compile Include="Lib\Vision\VisionPythonWorkerTextRecognizer.cs" />
+    <Compile Include="Lib\Vision\VisionPythonWorkerHealth.cs" />
+    <Compile Include="Lib\Vision\VisionTextCondition.cs" />
+    <Compile Include="Lib\Vision\VisionColorCondition.cs" />
+    <Compile Include="Lib\Vision\VisionColorMatchResult.cs" />
+    <Compile Include="Lib\Vision\VisionColorMatcher.cs" />
+    <Compile Include="Lib\Vision\VisionConditionType.cs" />
+    <Compile Include="Lib\Vision\VisionFailurePolicy.cs" />
+    <Compile Include="Lib\Vision\VisionConditionDefinition.cs" />
+    <Compile Include="Lib\Vision\VisionObservation.cs" />
+    <Compile Include="Lib\Vision\IVisionObservationProvider.cs" />
+    <Compile Include="Lib\Vision\VisionAssistantActionResult.cs" />
+    <Compile Include="Lib\Vision\IVisionAssistantAction.cs" />
+    <Compile Include="Lib\Vision\VisionAssistantActionContext.cs" />
+    <Compile Include="Lib\Vision\VisionAssistantStep.cs" />
+    <Compile Include="Lib\Vision\VisionAssistantLogEntry.cs" />
+    <Compile Include="Lib\Vision\VisionAssistantRunResult.cs" />
+    <Compile Include="Lib\Vision\VisionConditionEvaluator.cs" />
+    <Compile Include="Lib\Vision\VisionAssistantStateMachine.cs" />
+    <Compile Include="Lib\Vision\VisionResourceSerializer.cs" />
+    <Compile Include="Lib\Vision\VisionWindowObservationProvider.cs" />
+    <Compile Include="Lib\Vision\VisionAssistantRunner.cs" />
+    <Compile Include="Lib\Vision\VisionWindowInfo.cs" />
+    <Compile Include="Lib\Vision\VisionWindowService.cs" />
+    <Compile Include="Lib\Vision\VisionCaptureSourceMode.cs" />
+    <Compile Include="Lib\Vision\VisionCaptureSettings.cs" />
+    <Compile Include="Lib\Vision\VisionClientSizeMismatchException.cs" />
+    <Compile Include="Lib\Vision\VisionCaptureResult.cs" />
+    <Compile Include="Lib\Vision\VisionTemplateMatchOptions.cs" />
+    <Compile Include="Lib\Vision\VisionActionType.cs" />
+    <Compile Include="Lib\Vision\VisionScrollDirection.cs" />
+    <Compile Include="Lib\Vision\VisionActionDefinition.cs" />
+    <Compile Include="Lib\Vision\VisionOcrTextBox.cs" />
+    <Compile Include="Lib\Vision\VisionMouseAction.cs" />
+    <Compile Include="Lib\Vision\VisionBitmapFingerprint.cs" />
     <Compile Include="Lib\NativeMethods\User32.cs" />
     <Compile Include="Lib\NativeMethods\WS2_32.cs" />
     <Compile Include="Lib\NativeMethods\WSock32.cs" />
     <Compile Include="Lib\Socket_Send.cs" />
+    <Compile Include="Lib\DynamicVariableModels.cs" />
+    <Compile Include="Lib\DynamicVariableEngine.cs" />
+    <Compile Include="Lib\DynamicVariablePersistence.cs" />
+    <Compile Include="Lib\DynamicVariableSerialization.cs" />
+    <Compile Include="DynamicVariableUi.cs" />
+    <Compile Include="DynamicVariableCenterControl.cs" />
     <Compile Include="Lib\Socket_ByteSweepEngine.cs" />
     <Compile Include="Lib\Socket_ByteSweepPresetInfo.cs" />
     <Compile Include="Lib\Socket_ByteSweepRuntime.cs" />
     <Compile Include="Lib\Socket_ByteAnnotationInfo.cs" />
     <Compile Include="Lib\Socket_ByteAnnotationEngine.cs" />
+    <Compile Include="Lib\Socket_PacketReadableAnalyzer.cs" />
     <Compile Include="Lib\Socket_SendInfo.cs" />
     <Compile Include="Lib\UserControl\HotkeyTextBox.cs">
       <SubType>Component</SubType>
@@ -171,9 +232,11 @@
     <Compile Include="Lib\WebAPI\CCProxy_Controller.cs" />
     <Compile Include="Lib\WebAPI\SocketInfo_Controller.cs" />
     <Compile Include="Lib\WebAPI\Socket_Web.cs" />
+    <Compile Include="Lib\WebAPI\Socket_TcpOwinHost.cs" />
     <Compile Include="Lib\WebAPI\ProxyInfo_Controller.cs" />
     <Compile Include="Lib\WebAPI\ProxyAccount_Controller.cs" />
     <Compile Include="Lib\WebAPI\SystemInfo_Controller.cs" />
+    <Compile Include="Lib\WebAPI\MobileSync_Controller.cs" />
     <Compile Include="Properties\Resources.Designer.cs">
       <AutoGen>True</AutoGen>
       <DesignTime>True</DesignTime>
@@ -294,6 +357,9 @@
     </Compile>
     <Compile Include="Socket_RobotForm.Designer.cs">
       <DependentUpon>Socket_RobotForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Socket_SendPresetPickerForm.cs">
+      <SubType>Form</SubType>
     </Compile>
     <Compile Include="Socket_SendListForm.cs">
       <SubType>Form</SubType>
@@ -539,6 +605,12 @@
     </EmbeddedResource>
     <EmbeddedResource Include="Socket_RobotForm.resx">
       <DependentUpon>Socket_RobotForm.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Socket_SendPresetPickerForm.en-US.resx">
+      <DependentUpon>Socket_SendPresetPickerForm.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Socket_SendPresetPickerForm.resx">
+      <DependentUpon>Socket_SendPresetPickerForm.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Socket_SendListForm.en-US.resx">
       <DependentUpon>Socket_SendListForm.cs</DependentUpon>

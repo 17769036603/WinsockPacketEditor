@@ -14,6 +14,86 @@ namespace WPELibrary.Lib.WebAPI
 {
     public class Socket_Web
     {
+        private static bool IsLocalNetworkAddress(string value)
+        {
+            if (!IPAddress.TryParse(value, out IPAddress address))
+            {
+                return false;
+            }
+
+            if (address.IsIPv4MappedToIPv6)
+            {
+                address = address.MapToIPv4();
+            }
+
+            if (IPAddress.IsLoopback(address))
+            {
+                return true;
+            }
+
+            if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+            {
+                byte[] bytes = address.GetAddressBytes();
+                return bytes[0] == 10 ||
+                    (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+                    (bytes[0] == 192 && bytes[1] == 168) ||
+                    (bytes[0] == 169 && bytes[1] == 254);
+            }
+
+            if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+            {
+                byte[] bytes = address.GetAddressBytes();
+                return address.IsIPv6LinkLocal || (bytes[0] & 0xFE) == 0xFC;
+            }
+
+            return false;
+        }
+
+        private static bool TryGetBasicCredentials(
+            string authorization,
+            out string username,
+            out string password)
+        {
+            username = string.Empty;
+            password = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(authorization) ||
+                !authorization.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            try
+            {
+                string encoded = authorization.Substring("Basic ".Length).Trim();
+                byte[] credentialBytes = Convert.FromBase64String(encoded);
+                string decoded;
+                try
+                {
+                    decoded = new UTF8Encoding(false, true).GetString(credentialBytes);
+                }
+                catch (DecoderFallbackException)
+                {
+                    // RFC 7617 permits the historical ISO-8859-1 form. Keep it
+                    // as a fallback for existing desktop/browser clients.
+                    decoded = Encoding.GetEncoding("iso-8859-1").GetString(credentialBytes);
+                }
+                int separator = decoded.IndexOf(':');
+                if (separator < 0)
+                {
+                    return false;
+                }
+
+                username = decoded.Substring(0, separator);
+                password = decoded.Substring(separator + 1);
+                return true;
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
+        }
+
         public void Configuration(IAppBuilder app)
         {
             try
@@ -23,17 +103,34 @@ namespace WPELibrary.Lib.WebAPI
                 app.Use(async (context, next) =>
                 {
                     var authHeader = context.Request.Headers["Authorization"];
+                    string requestPath = context.Request.Path == null
+                        ? string.Empty
+                        : context.Request.Path.Value ?? string.Empty;
+                    bool isMobileSync = requestPath.Equals(
+                            "/MobileSync",
+                            StringComparison.OrdinalIgnoreCase) ||
+                        requestPath.StartsWith(
+                            "/MobileSync/",
+                            StringComparison.OrdinalIgnoreCase);
 
-                    if (authHeader != null && authHeader.StartsWith("Basic"))
+                    // The Android companion is intentionally passwordless on the
+                    // local network. Enforce that network boundary here; all
+                    // non-MobileSync routes remain behind administrator auth.
+                    if (isMobileSync)
                     {
-                        var encodedUsernamePassword = authHeader.Substring("Basic ".Length).Trim();
+                        if (!IsLocalNetworkAddress(context.Request.RemoteIpAddress))
+                        {
+                            context.Response.StatusCode = (int)HttpStatusCode.Forbidden;
+                            await context.Response.WriteAsync("MobileSync is available only from the local network.");
+                            return;
+                        }
 
-                        var encoding = Encoding.GetEncoding("iso-8859-1");
-                        var usernamePassword = encoding.GetString(Convert.FromBase64String(encodedUsernamePassword));
+                        await next.Invoke();
+                        return;
+                    }
 
-                        var username = usernamePassword.Split(':')[0];
-                        var password = usernamePassword.Split(':')[1];
-
+                    if (TryGetBasicCredentials(authHeader, out string username, out string password))
+                    {
                         if (Socket_Cache.ProxyAccount.IsValidAdmin(username, password))
                         {
                             var principal = new GenericPrincipal(new GenericIdentity(username), null);

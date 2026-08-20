@@ -92,31 +92,40 @@ namespace WPELibrary
                     return;
                 }
 
+                bool saved;
                 if (this.pmrSelect == null)
                 {
-                    Socket_Cache.ProxyMapping.AddMapRemote(
-                        false, 
-                        ProtocolType_From_New, 
-                        Host_From_New, 
-                        Port_From_New, 
-                        Path_From_New, 
-                        ProtocolType_To_New, 
-                        Host_To_New, 
-                        Port_To_New, 
-                        Path_To_New);
+                    saved = Socket_Cache.ProxyMapping.TryApplyMapRemoteChangeAndSave(() =>
+                        Socket_Cache.ProxyMapping.AddMapRemote(
+                            false,
+                            ProtocolType_From_New,
+                            Host_From_New,
+                            Port_From_New,
+                            Path_From_New,
+                            ProtocolType_To_New,
+                            Host_To_New,
+                            Port_To_New,
+                            Path_To_New));
                 }
                 else
                 {
-                    Socket_Cache.ProxyMapping.UpdateMapRemote(
-                        this.pmrSelect, 
-                        ProtocolType_From_New, 
-                        Host_From_New, 
-                        Port_From_New, 
-                        Path_From_New, 
-                        ProtocolType_To_New, 
-                        Host_To_New, 
-                        Port_To_New, 
-                        Path_To_New );
+                    saved = Socket_Cache.ProxyMapping.TryApplyMapRemoteChangeAndSave(() =>
+                        Socket_Cache.ProxyMapping.UpdateMapRemote(
+                            this.pmrSelect,
+                            ProtocolType_From_New,
+                            Host_From_New,
+                            Port_From_New,
+                            Path_From_New,
+                            ProtocolType_To_New,
+                            Host_To_New,
+                            Port_To_New,
+                            Path_To_New));
+                }
+
+                if (!saved)
+                {
+                    Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                    return;
                 }
 
                 this.Close();

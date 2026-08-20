@@ -20,10 +20,11 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml.Linq;
 using Be.Windows.Forms;
+using WPELibrary.Lib.Vision;
 
 namespace WPELibrary.Lib
 {
-    public static class Socket_Cache
+    public static partial class Socket_Cache
     {
         #region//系统
 
@@ -94,6 +95,8 @@ namespace WPELibrary.Lib
             public static Socket_Cache.System.Execute ListExecute = Socket_Cache.System.Execute.Sequence;
 
             public static Action<Action> InvokeAction { get; set; }
+            public static bool SystemListLoadCompleted { get; internal set; }
+            public static bool SystemListLoadFailed { get; internal set; }
 
             #region//结构定义
 
@@ -177,8 +180,16 @@ namespace WPELibrary.Lib
             {
                 try
                 {
-                    Socket_Cache.DataBase.DeleteTable_SystemConfig();
-                    Socket_Cache.DataBase.InsertTable_SystemConfig();
+                    if (!Socket_Cache.DataBase.ExecuteAtomicSave(
+                        () =>
+                        {
+                            Socket_Cache.DataBase.DeleteTable_SystemConfig();
+                            Socket_Cache.DataBase.InsertTable_SystemConfig();
+                        },
+                        nameof(SaveSystemConfig_ToDB)))
+                    {
+                        Socket_Operation.DoLog(nameof(SaveSystemConfig_ToDB), "系统配置保存失败，原数据库已保留。");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -197,7 +208,9 @@ namespace WPELibrary.Lib
                         new XElement("StartMode", Socket_Cache.System.StartMode),
                         new XElement("Remote_IsEnable", Socket_Cache.System.IsRemote),
                         new XElement("Remote_UserName", Socket_Cache.System.Remote_UserName),
-                        new XElement("Remote_PassWord", Socket_Cache.System.Remote_PassWord),
+                        new XElement(
+                            "Remote_PassWord",
+                            Socket_Operation.PassWord_EncryptForPortableExport(Socket_Cache.System.Remote_PassWord)),
                         new XElement("Remote_Port", Socket_Cache.System.Remote_Port),
                         new XElement("Remote_URL", Socket_Cache.System.Remote_URL)  
                         );
@@ -229,7 +242,10 @@ namespace WPELibrary.Lib
                         Socket_Cache.System.StartMode = Socket_Cache.System.GetSystemMode_ByString(SystemConfig.Rows[0]["SystemConfig_StartMode"].ToString());
                         Socket_Cache.System.IsRemote = Convert.ToBoolean(SystemConfig.Rows[0]["SystemConfig_Remote_IsEnable"]);
                         Socket_Cache.System.Remote_UserName = SystemConfig.Rows[0]["SystemConfig_Remote_UserName"].ToString();
-                        Socket_Cache.System.Remote_PassWord = SystemConfig.Rows[0]["SystemConfig_Remote_PassWord"].ToString();
+                        string storedRemotePassword = SystemConfig.Rows[0]["SystemConfig_Remote_PassWord"].ToString();
+                        Socket_Cache.System.Remote_PassWord = string.IsNullOrEmpty(storedRemotePassword)
+                            ? string.Empty
+                            : Socket_Operation.PassWord_Decrypt(storedRemotePassword);
                         Socket_Cache.System.Remote_Port = ushort.Parse(SystemConfig.Rows[0]["SystemConfig_Remote_Port"].ToString());
                         Socket_Cache.System.Remote_URL = SystemConfig.Rows[0]["SystemConfig_Remote_URL"].ToString();
                     }                    
@@ -240,8 +256,71 @@ namespace WPELibrary.Lib
                 }
             }
 
-            public static void SetSystemConfig_FromXML(XElement xeSystemConfig)
+            private static bool ValidateConfigElements(
+                XElement root,
+                IEnumerable<string> booleanNames,
+                IEnumerable<string> integerNames,
+                IEnumerable<string> unsignedShortNames)
             {
+                if (root == null)
+                {
+                    return false;
+                }
+
+                foreach (string name in booleanNames ?? Enumerable.Empty<string>())
+                {
+                    XElement element = root.Element(name);
+                    bool value;
+                    if (element != null && !bool.TryParse(element.Value, out value))
+                    {
+                        return false;
+                    }
+                }
+                foreach (string name in integerNames ?? Enumerable.Empty<string>())
+                {
+                    XElement element = root.Element(name);
+                    int value;
+                    if (element != null && !int.TryParse(element.Value, out value))
+                    {
+                        return false;
+                    }
+                }
+                foreach (string name in unsignedShortNames ?? Enumerable.Empty<string>())
+                {
+                    XElement element = root.Element(name);
+                    ushort value;
+                    if (element != null && !ushort.TryParse(element.Value, out value))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            public static bool SetSystemConfig_FromXML(XElement xeSystemConfig)
+            {
+                if (!ValidateConfigElements(
+                    xeSystemConfig,
+                    new[] { "Remote_IsEnable" },
+                    null,
+                    new[] { "Remote_Port" }))
+                {
+                    Socket_Operation.DoLog(nameof(SetSystemConfig_FromXML), "系统配置包含无效数值，已拒绝导入。");
+                    return false;
+                }
+                XElement passwordElement = xeSystemConfig.Element("Remote_PassWord");
+                if (passwordElement != null && !string.IsNullOrEmpty(passwordElement.Value))
+                {
+                    try
+                    {
+                        Socket_Operation.PassWord_Decrypt(passwordElement.Value);
+                    }
+                    catch (Exception ex)
+                    {
+                        Socket_Operation.DoLog(nameof(SetSystemConfig_FromXML), ex.Message);
+                        return false;
+                    }
+                }
                 try
                 {
                     XElement DefaultLanguage = xeSystemConfig.Element("DefaultLanguage");
@@ -277,7 +356,10 @@ namespace WPELibrary.Lib
                     XElement Remote_PassWord = xeSystemConfig.Element("Remote_PassWord");
                     if (Remote_PassWord != null)
                     {
-                        Socket_Cache.System.Remote_PassWord = Remote_PassWord.Value;
+                        string storedRemotePassword = Remote_PassWord.Value;
+                        Socket_Cache.System.Remote_PassWord = string.IsNullOrEmpty(storedRemotePassword)
+                            ? string.Empty
+                            : Socket_Operation.PassWord_Decrypt(storedRemotePassword);
                     }
 
                     XElement Remote_Port = xeSystemConfig.Element("Remote_Port");
@@ -291,10 +373,12 @@ namespace WPELibrary.Lib
                     {
                         Socket_Cache.System.Remote_URL = Remote_URL.Value;
                     }
+                    return true;
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    return false;
                 }
             }
 
@@ -324,8 +408,18 @@ namespace WPELibrary.Lib
                 {
                     if (Socket_Cache.System.StartMode.Equals(FromMode))
                     {
-                        Socket_Cache.DataBase.DeleteTable_RunConfig();
-                        Socket_Cache.DataBase.InsertTable_RunConfig();
+                        if (!Socket_Cache.DataBase.ExecuteAtomicSave(
+                            () =>
+                            {
+                                Socket_Cache.DataBase.DeleteTable_RunConfig();
+                                Socket_Cache.DataBase.InsertTable_RunConfig();
+                            },
+                            nameof(SaveRunConfig_ToDB)))
+                        {
+                            Socket_Operation.DoLog(
+                                nameof(SaveRunConfig_ToDB),
+                                "运行配置保存失败，原数据库已保留。");
+                        }
                     }                    
                 }
                 catch (Exception ex)
@@ -522,8 +616,23 @@ namespace WPELibrary.Lib
                 }
             }
 
-            public static void SetProxyConfig_FromXML(XElement xeProxyConfig)
+            public static bool SetProxyConfig_FromXML(XElement xeProxyConfig)
             {
+                if (!ValidateConfigElements(
+                    xeProxyConfig,
+                    new[]
+                    {
+                        "ProxyIP_Auto", "Enable_SOCKS5", "Enable_Auth", "NoRecord", "DelClosed",
+                        "LogList_AutoRoll", "LogList_AutoClear", "Enable_MapLocal", "Enable_MapRemote",
+                        "Enable_ExternalProxy", "Enable_ExternalProxy_AppointPort", "Enable_ExternalProxy_Auth",
+                        "SpeedMode"
+                    },
+                    new[] { "LogList_AutoClear_Value" },
+                    new[] { "ProxyPort", "ExternalProxy_Port" }))
+                {
+                    Socket_Operation.DoLog(nameof(SetProxyConfig_FromXML), "代理配置包含无效数值，已拒绝导入。");
+                    return false;
+                }
                 try
                 {
                     XElement ProxyIP_Auto = xeProxyConfig.Element("ProxyIP_Auto");
@@ -645,15 +754,34 @@ namespace WPELibrary.Lib
                     {
                         Socket_Cache.SocketProxy.SpeedMode = Convert.ToBoolean(SpeedMode.Value);
                     }
+                    return true;
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    return false;
                 }
             }
 
-            public static void SetInjectionConfig_FromXML(XElement xeInjectionConfig)
+            public static bool SetInjectionConfig_FromXML(XElement xeInjectionConfig)
             {
+                if (!ValidateConfigElements(
+                    xeInjectionConfig,
+                    new[]
+                    {
+                        "CheckNotShow", "CheckSocket", "CheckIP", "CheckPort", "CheckHead", "CheckData", "CheckSize",
+                        "HookWS1_Send", "HookWS1_SendTo", "HookWS1_Recv", "HookWS1_RecvFrom",
+                        "HookWS2_Send", "HookWS2_SendTo", "HookWS2_Recv", "HookWS2_RecvFrom",
+                        "HookWSA_Send", "HookWSA_SendTo", "HookWSA_Recv", "HookWSA_RecvFrom",
+                        "SocketList_AutoRoll", "SocketList_AutoClear", "LogList_AutoRoll", "LogList_AutoClear",
+                        "SpeedMode"
+                    },
+                    new[] { "SocketList_AutoClear_Value", "LogList_AutoClear_Value" },
+                    null))
+                {
+                    Socket_Operation.DoLog(nameof(SetInjectionConfig_FromXML), "注入配置包含无效数值，已拒绝导入。");
+                    return false;
+                }
                 try
                 {
                     XElement CheckNotShow = xeInjectionConfig.Element("CheckNotShow");
@@ -931,10 +1059,12 @@ namespace WPELibrary.Lib
                     {
                         Socket_Cache.Filter.FilterExecute = Socket_Cache.FilterList.GetFilterListExecute_ByString(FilterExecute.Value);
                     }
+                    return true;
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    return false;
                 }
             }
 
@@ -964,10 +1094,18 @@ namespace WPELibrary.Lib
 
             public static void SaveSystemList_ToDB()
             {
+                if (!SystemListLoadCompleted || SystemListLoadFailed)
+                {
+                    Socket_Operation.DoLog(
+                        nameof(SaveSystemList_ToDB),
+                        "系统列表尚未完整加载，已跳过退出保存以避免空列表覆盖数据库。" );
+                    return;
+                }
                 Socket_Cache.FilterList.SaveFilterList_ToDB();
                 Socket_Cache.SendList.SaveSendList_ToDB();
                 Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
                 Socket_Cache.RobotList.SaveRobotList_ToDB();
+                DynamicVariableRuntime.SaveToDatabase();
             }
 
             #endregion
@@ -976,6 +1114,8 @@ namespace WPELibrary.Lib
 
             public static void LoadSystemList_FromDB()
             {
+                SystemListLoadCompleted = false;
+                SystemListLoadFailed = false;
                 try
                 {
                     // 启动阶段必须在返回前完成加载。原来的后台任务会与退出保存并发，
@@ -984,9 +1124,15 @@ namespace WPELibrary.Lib
                     Socket_Cache.SendList.LoadSendList_FromDB();
                     Socket_Cache.ByteSweepList.LoadByteSweepList_FromDB();
                     Socket_Cache.RobotList.LoadRobotList_FromDB();
+                    Socket_Cache.ProxyAccount.LoadProxyAccountList_FromDB();
+                    Socket_Cache.ProxyMapping.LoadProxyMapLocal_FromDB();
+                    Socket_Cache.ProxyMapping.LoadProxyMapRemote_FromDB();
+                    DynamicVariableRuntime.InitializeFromDatabase();
+                    SystemListLoadCompleted = true;
                 }
                 catch (Exception ex)
                 {
+                    SystemListLoadFailed = true;
                     Socket_Operation.DoLog(nameof(LoadSystemList_FromDB), ex.Message);
                 }                
             }
@@ -1180,6 +1326,13 @@ namespace WPELibrary.Lib
                         }
                     }
 
+                    //动态变量、提取规则和已发现值
+                    XElement dynamicVariables = DynamicVariableRuntime.ExportToXElement();
+                    if (dynamicVariables != null && dynamicVariables.Elements().Any(element => element.HasElements))
+                    {
+                        xeBackUp.Add(dynamicVariables);
+                    }
+
                     xdoc.Add(xeBackUp);
                     xdoc.Save(FilePath);
 
@@ -1306,8 +1459,10 @@ namespace WPELibrary.Lib
                     XElement xeSystemConfig = xdoc.Root.Element("SystemConfig");
                     if (xeSystemConfig != null)
                     {
-                        SetSystemConfig_FromXML(xeSystemConfig);
-                        SaveSystemConfig_ToDB();
+                        if (SetSystemConfig_FromXML(xeSystemConfig))
+                        {
+                            SaveSystemConfig_ToDB();
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1324,9 +1479,10 @@ namespace WPELibrary.Lib
                     XElement xeProxyConfig = xdoc.Root.Element("ProxyConfig");
                     if (xeProxyConfig != null)
                     {
-                        SetProxyConfig_FromXML(xeProxyConfig);
-                        Socket_Cache.DataBase.DeleteTable_RunConfig();
-                        Socket_Cache.DataBase.InsertTable_RunConfig();
+                        if (SetProxyConfig_FromXML(xeProxyConfig))
+                        {
+                            Socket_Cache.System.SaveRunConfig_ToDB(Socket_Cache.System.StartMode);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1343,9 +1499,10 @@ namespace WPELibrary.Lib
                     XElement xeInjectionConfig = xdoc.Root.Element("InjectionConfig");
                     if (xeInjectionConfig != null)
                     {
-                        SetInjectionConfig_FromXML(xeInjectionConfig);
-                        Socket_Cache.DataBase.DeleteTable_RunConfig();
-                        Socket_Cache.DataBase.InsertTable_RunConfig();
+                        if (SetInjectionConfig_FromXML(xeInjectionConfig))
+                        {
+                            Socket_Cache.System.SaveRunConfig_ToDB(Socket_Cache.System.StartMode);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1368,10 +1525,13 @@ namespace WPELibrary.Lib
                         };
                         ProxyAccountList.Add(xeProxyAccountList);
 
-                        Socket_Cache.ProxyAccount.LoadProxyAccountList_FromXDocument(ProxyAccountList);
-                        Socket_Cache.DataBase.DeleteTable_ProxyAccount();
-                        Socket_Cache.DataBase.InsertTable_ProxyAccount();
-                        Socket_Cache.DataBase.DeleteTable_ProxyAccount_LoginInfo();
+                        if (!Socket_Cache.ProxyAccount.TryApplyListChangeAndSave(
+                            () => Socket_Cache.ProxyAccount.LoadProxyAccountList_FromXDocument(ProxyAccountList)))
+                        {
+                            Socket_Operation.DoLog_Proxy(
+                                "Import ProxyAccountList",
+                                "代理账号导入保存失败，原列表和数据库均已保留。");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1395,9 +1555,13 @@ namespace WPELibrary.Lib
                         };
                         MapLocal.Add(xeMapLocal);
 
-                        Socket_Cache.ProxyMapping.LoadMapLocal_FromXDocument(MapLocal);
-                        Socket_Cache.DataBase.DeleteTable_ProxyMapLocal();
-                        Socket_Cache.DataBase.InsertTable_ProxyMapLocal();                        
+                        if (!Socket_Cache.ProxyMapping.TryApplyMapLocalChangeAndSave(
+                            () => Socket_Cache.ProxyMapping.LoadMapLocal_FromXDocument(MapLocal)))
+                        {
+                            Socket_Operation.DoLog_Proxy(
+                                "Import MapLocal",
+                                "本地代理映射导入保存失败，原列表和数据库均已保留。");
+                        }
                     }
 
                     //远程代理映射
@@ -1410,9 +1574,13 @@ namespace WPELibrary.Lib
                         };
                         MapRemote.Add(xeMapRemote);
 
-                        Socket_Cache.ProxyMapping.LoadMapRemote_FromXDocument(MapRemote);
-                        Socket_Cache.DataBase.DeleteTable_ProxyMapRemote();
-                        Socket_Cache.DataBase.InsertTable_ProxyMapRemote();
+                        if (!Socket_Cache.ProxyMapping.TryApplyMapRemoteChangeAndSave(
+                            () => Socket_Cache.ProxyMapping.LoadMapRemote_FromXDocument(MapRemote)))
+                        {
+                            Socket_Operation.DoLog_Proxy(
+                                "Import MapRemote",
+                                "远程代理映射导入保存失败，原列表和数据库均已保留。");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1435,9 +1603,14 @@ namespace WPELibrary.Lib
                         };
                         FilterList.Add(xeFilterList);
 
-                        Socket_Cache.FilterList.LoadFilterList_FromXDocument(FilterList);
-                        Socket_Cache.FilterList.SaveFilterList_ToDB();
-                        Socket_Cache.FilterList.FilterListClear();
+                        bool saved = Socket_Cache.FilterList.TryApplyListChangeAndSave(
+                            () => Socket_Cache.FilterList.LoadFilterList_FromXDocument(FilterList));
+                        if (!saved)
+                        {
+                            Socket_Operation.DoLog(
+                                "Import FilterList",
+                                "滤镜列表导入保存失败，原列表和数据库均已保留。");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1460,9 +1633,14 @@ namespace WPELibrary.Lib
                         };
                         SendList.Add(xeSendList);
 
-                        Socket_Cache.SendList.LoadSendList_FromXDocument(SendList);
-                        Socket_Cache.SendList.SaveSendList_ToDB();
-                        Socket_Cache.SendList.SendListClear();
+                        bool saved = Socket_Cache.SendList.TryApplyListChangeAndSave(
+                            () => Socket_Cache.SendList.LoadSendList_FromXDocument(SendList));
+                        if (!saved)
+                        {
+                            Socket_Operation.DoLog(
+                                "Import SendList",
+                                "发送列表导入保存失败，原列表和数据库均已保留。");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1479,14 +1657,49 @@ namespace WPELibrary.Lib
                     XElement byteSweepList = xdoc.Root.Element("ByteSweepList");
                     if (byteSweepList != null)
                     {
-                        Socket_Cache.ByteSweepList.LoadByteSweepList_FromXML(byteSweepList);
-                        Socket_Cache.ByteSweepList.SaveByteSweepList_ToDB();
-                        Socket_Cache.ByteSweepList.Clear();
+                        bool saved = Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                            () => Socket_Cache.ByteSweepList.LoadByteSweepList_FromXML(byteSweepList));
+                        if (!saved)
+                        {
+                            Socket_Operation.DoLog(
+                                "Import ByteSweepList",
+                                "递进列表导入保存失败，原列表和数据库均已保留。");
+                        }
                     }
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog("Import ByteSweepList", ex.Message);
+                }
+
+                #endregion
+
+                #region//动态变量
+
+                try
+                {
+                    XElement dynamicVariables = xdoc.Root.Element("DynamicVariables");
+                    if (dynamicVariables != null)
+                    {
+                        string error;
+                        if (!DynamicVariableRuntime.ImportFromXElement(dynamicVariables, out error))
+                        {
+                            Socket_Operation.DoLog("Import DynamicVariables", error);
+                        }
+                        else
+                        {
+                            if (!DynamicVariableRuntime.SaveToDatabase())
+                            {
+                                Socket_Operation.DoLog(
+                                    "Import DynamicVariables",
+                                    "动态变量导入已应用到内存，但数据库保存失败。" );
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog("Import DynamicVariables", ex.Message);
                 }
 
                 #endregion
@@ -1504,9 +1717,18 @@ namespace WPELibrary.Lib
                         };
                         RobotList.Add(xeRobotList);
 
-                        Socket_Cache.RobotList.LoadRobotList_FromXDocument(RobotList);
-                        Socket_Cache.RobotList.SaveRobotList_ToDB();
-                        Socket_Cache.RobotList.RobotListClear();
+                        bool saved = Socket_Cache.RobotList.TryApplyListChangeAndSave(
+                            delegate
+                            {
+                                Socket_Cache.RobotList.RobotListClear();
+                                Socket_Cache.RobotList.LoadRobotList_FromXDocument(RobotList);
+                            });
+                        if (!saved)
+                        {
+                            Socket_Operation.DoLog(
+                                "Import RobotList",
+                                "机器人列表导入保存失败，原列表和数据库均已保留。" );
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1881,7 +2103,7 @@ namespace WPELibrary.Lib
                         if (isAllowed)
                         {
                             Socket_Cache.ProxyAccount.SetOnline_ByAccountID(AccountID, true);
-                            Socket_Cache.ProxyAccount.RecordLoginIP_ByAccountID(AccountID, ClientIP);
+                            _ = Socket_Cache.ProxyAccount.RecordLoginIP_ByAccountID(AccountID, ClientIP);
                             Socket_Cache.ProxyAccount.AuthResult_ToList(AccountID, ClientIP, true);
 
                             spt.AID = AccountID;
@@ -2835,6 +3057,81 @@ namespace WPELibrary.Lib
             public delegate void ProxyAuthReceived(Proxy_AuthInfo pai);
             public static event ProxyAuthReceived RecProxyAuth;
 
+            public static bool TryApplyListChangeAndSave(Action mutation)
+            {
+                if (mutation == null)
+                {
+                    return false;
+                }
+
+                bool saved = false;
+                Action apply = () =>
+                {
+                    List<Proxy_AccountInfo> originalAccounts = lstProxyAccount.ToList();
+                    List<Proxy_AccountInfo> originalValues = originalAccounts
+                        .Select(item => item == null ? null : item.Clone())
+                        .ToList();
+
+                    try
+                    {
+                        mutation();
+                        saved = SaveProxyAccountList_ToDB(Socket_Cache.System.StartMode);
+                        if (saved)
+                        {
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Socket_Operation.DoLog_Proxy(
+                            nameof(TryApplyListChangeAndSave),
+                            ex.Message);
+                    }
+
+                    for (int index = 0; index < originalAccounts.Count; index++)
+                    {
+                        if (originalAccounts[index] != null && originalValues[index] != null)
+                        {
+                            originalAccounts[index].CopyFrom(originalValues[index]);
+                        }
+                    }
+                    lstProxyAccount.RaiseListChangedEvents = false;
+                    try
+                    {
+                        lstProxyAccount.Clear();
+                        foreach (Proxy_AccountInfo account in originalAccounts)
+                        {
+                            lstProxyAccount.Add(account);
+                        }
+                    }
+                    finally
+                    {
+                        lstProxyAccount.RaiseListChangedEvents = true;
+                        lstProxyAccount.ResetBindings();
+                    }
+                };
+
+                if (Socket_Cache.System.InvokeAction != null)
+                {
+                    Socket_Cache.System.InvokeAction(apply);
+                }
+                else
+                {
+                    apply();
+                }
+                return saved;
+            }
+
+            private sealed class CredentialSnapshot
+            {
+                public Guid AID { get; set; }
+                public bool IsEnable { get; set; }
+                public string UserName { get; set; }
+                public string PassWord { get; set; }
+                public bool IsExpiry { get; set; }
+                public DateTime ExpiryTime { get; set; }
+            }
+
             #region//代理认证入列表            
 
             public static void AuthResult_ToList(Guid AID, string IPAddress, bool AuthResult)
@@ -2999,7 +3296,8 @@ namespace WPELibrary.Lib
 
                 try
                 {
-                    if (Socket_Cache.System.Remote_UserName.Equals(username) && Socket_Cache.System.Remote_PassWord.Equals(password))
+                    if (string.Equals(Socket_Cache.System.Remote_UserName, username, StringComparison.Ordinal) &&
+                        string.Equals(Socket_Cache.System.Remote_PassWord, password, StringComparison.Ordinal))
                     {
                         bReturn = true;
                     }
@@ -3010,6 +3308,27 @@ namespace WPELibrary.Lib
                 }
 
                 return bReturn;
+            }
+
+            public static bool IsValidMobile(string username, string password)
+            {
+                try
+                {
+                    // Mobile control uses an enabled proxy account as a dedicated
+                    // low-privilege credential. The remote administrator account
+                    // must never authenticate the MobileSync route.
+                    if (IsValidAdmin(username, password))
+                    {
+                        return false;
+                    }
+
+                    return CheckUserNameAndPassWord(username, password, out _);
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog_Proxy(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    return false;
+                }
             }
 
             #endregion
@@ -3047,10 +3366,42 @@ namespace WPELibrary.Lib
                 try
                 {
                     string pwEncrypt = Socket_Operation.PassWord_Encrypt(PassWord);
+                    string legacyPwEncrypt = Socket_Operation.LegacyPassWord_EncryptForCompatibility(PassWord);
 
-                    foreach (Proxy_AccountInfo pai in Socket_Cache.ProxyAccount.lstProxyAccount)
+                    List<CredentialSnapshot> accounts = new List<CredentialSnapshot>();
+                    Action capture = () =>
                     {
-                        if (pai.IsEnable && pai.UserName.Equals(UserName) && pai.PassWord.Equals(pwEncrypt))
+                        foreach (Proxy_AccountInfo pai in Socket_Cache.ProxyAccount.lstProxyAccount)
+                        {
+                            accounts.Add(new CredentialSnapshot
+                            {
+                                AID = pai.AID,
+                                IsEnable = pai.IsEnable,
+                                UserName = pai.UserName,
+                                PassWord = pai.PassWord,
+                                IsExpiry = pai.IsExpiry,
+                                ExpiryTime = pai.ExpiryTime
+                            });
+                        }
+                    };
+
+                    if (Socket_Cache.System.InvokeAction != null)
+                    {
+                        Socket_Cache.System.InvokeAction(capture);
+                    }
+                    else
+                    {
+                        capture();
+                    }
+
+                    foreach (CredentialSnapshot pai in accounts)
+                    {
+                        string storedPlainText = Socket_Operation.PassWord_Decrypt(pai.PassWord);
+                        if (pai.IsEnable &&
+                            string.Equals(pai.UserName, UserName, StringComparison.Ordinal) &&
+                            (string.Equals(storedPlainText, PassWord, StringComparison.Ordinal) ||
+                             string.Equals(pai.PassWord, pwEncrypt, StringComparison.Ordinal) ||
+                             string.Equals(pai.PassWord, legacyPwEncrypt, StringComparison.Ordinal)))
                         {
                             if (pai.IsExpiry)
                             {
@@ -3258,77 +3609,109 @@ namespace WPELibrary.Lib
 
             #region//更新所有代理账号的在线状态（异步）
 
-            public static async Task UpdateOnlineStatus()
+            public static Task UpdateOnlineStatus()
             {
-                await Task.Run(() =>
+                try
                 {
-                    try
+                    DateTime dtNow = DateTime.Now;
+
+                    foreach (Proxy_AccountInfo pai in Socket_Cache.ProxyAccount.lstProxyAccount)
                     {
-                        DateTime dtNow = DateTime.Now;
-
-                        foreach (Proxy_AccountInfo pai in Socket_Cache.ProxyAccount.lstProxyAccount)
+                        if (pai.IsOnLine)
                         {
-                            if (pai.IsOnLine)
+                            if (pai.LoginTime != null)
                             {
-                                if (pai.LoginTime != null)
-                                {
-                                    TimeSpan timeDiff = dtNow - pai.LoginTime;
+                                TimeSpan timeDiff = dtNow - pai.LoginTime;
 
-                                    if (timeDiff.TotalMinutes > Socket_Cache.ProxyAccount.OnLineTimeOut)
-                                    {
-                                        pai.IsOnLine = false;
-                                    }
-                                }
-                                else
+                                if (timeDiff.TotalMinutes > Socket_Cache.ProxyAccount.OnLineTimeOut)
                                 {
                                     pai.IsOnLine = false;
                                 }
                             }
+                            else
+                            {
+                                pai.IsOnLine = false;
+                            }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        Socket_Operation.DoLog_Proxy(nameof(UpdateOnlineStatus), ex.Message);
-                    }
-                });                
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog_Proxy(nameof(UpdateOnlineStatus), ex.Message);
+                }
+
+                return Task.CompletedTask;
             }
 
             #endregion
 
             #region//记录代理账号的IP地址（异步）
 
-            public static async void RecordLoginIP_ByAccountID(Guid AccountID, string IPAddress)
+            public static async Task RecordLoginIP_ByAccountID(Guid AccountID, string IPAddress)
             {
                 try
                 {
                     if (AccountID != Guid.Empty && !string.IsNullOrEmpty(IPAddress))
                     {
-                        Proxy_AccountInfo paiItem = Socket_Cache.ProxyAccount.lstProxyAccount.FirstOrDefault(item => item.AID == AccountID);
+                        Proxy_AccountInfo paiItem = null;
+                        Action capture = () =>
+                        {
+                            paiItem = Socket_Cache.ProxyAccount.lstProxyAccount
+                                .FirstOrDefault(item => item.AID == AccountID);
+                        };
+
+                        if (Socket_Cache.System.InvokeAction != null)
+                        {
+                            Socket_Cache.System.InvokeAction(capture);
+                        }
+                        else
+                        {
+                            capture();
+                        }
 
                         if (paiItem != null)
                         {
-                            if (paiItem.LoginIP != IPAddress)
+                            string ipLocation = null;
+                            if (paiItem.LoginIP != IPAddress || string.IsNullOrEmpty(paiItem.IPLocation))
                             {
-                                paiItem.LoginIP = IPAddress;
+                                ipLocation = await Socket_Operation.GetIPLocation(IPAddress);
+                            }
 
-                                string IPLocation = await Socket_Operation.GetIPLocation(IPAddress);
-                                if (!string.IsNullOrEmpty(IPLocation))
+                            Action update = () =>
+                            {
+                                Proxy_AccountInfo current = Socket_Cache.ProxyAccount.lstProxyAccount
+                                    .FirstOrDefault(item => item.AID == AccountID);
+                                if (current == null)
                                 {
-                                    paiItem.IPLocation = IPLocation;
-                                }                                
+                                    return;
+                                }
 
-                                Socket_Cache.ProxyAccount.SaveProxyAccount_LoginInfo_ToDB(paiItem);
+                                bool shouldSave = false;
+                                if (current.LoginIP != IPAddress)
+                                {
+                                    current.LoginIP = IPAddress;
+                                    shouldSave = true;
+                                }
+
+                                if (string.IsNullOrEmpty(current.IPLocation) && !string.IsNullOrEmpty(ipLocation))
+                                {
+                                    current.IPLocation = ipLocation;
+                                    shouldSave = true;
+                                }
+
+                                if (shouldSave)
+                                {
+                                    Socket_Cache.ProxyAccount.SaveProxyAccount_LoginInfo_ToDB(current);
+                                }
+                            };
+
+                            if (Socket_Cache.System.InvokeAction != null)
+                            {
+                                Socket_Cache.System.InvokeAction(update);
                             }
                             else
                             {
-                                if (string.IsNullOrEmpty(paiItem.IPLocation))
-                                {
-                                    string IPLocation = await Socket_Operation.GetIPLocation(IPAddress);
-                                    if (!string.IsNullOrEmpty(IPLocation))
-                                    {
-                                        paiItem.IPLocation = IPLocation;
-                                    }                                    
-                                }
+                                update();
                             }
                         }
                     }
@@ -3414,26 +3797,39 @@ namespace WPELibrary.Lib
                 {
                     if (AID != null)
                     {
-                        var pai = Socket_Cache.ProxyAccount.lstProxyAccount.FirstOrDefault(account => account.AID == AID);
-
-                        if (pai != null)
+                        bool updated = false;
+                        Action update = () =>
                         {
-                            pai.IsEnable = IsEnable;
+                            Proxy_AccountInfo pai = Socket_Cache.ProxyAccount.lstProxyAccount
+                                .FirstOrDefault(account => account.AID == AID);
+                            if (pai == null)
+                            {
+                                return;
+                            }
 
+                            pai.IsEnable = IsEnable;
                             if (!string.IsNullOrEmpty(PassWord))
                             {
                                 pai.PassWord = PassWord;
                             }
-                            
                             pai.IsLimitLinks = IsLimitLinks;
                             pai.LimitLinks = LimitLinks;
                             pai.IsExpiry = IsExpiry;
                             pai.IsLimitDevices = IsLimitDevices;
                             pai.LimitDevices = LimitDevices;
                             pai.ExpiryTime = ExpiryTime;
+                            updated = true;
+                        };
 
-                            return true;
+                        if (Socket_Cache.System.InvokeAction != null)
+                        {
+                            Socket_Cache.System.InvokeAction(update);
                         }
+                        else
+                        {
+                            update();
+                        }
+                        return updated;
                     }
                 }
                 catch (Exception ex)
@@ -3457,24 +3853,37 @@ namespace WPELibrary.Lib
                 {
                     if (!string.IsNullOrEmpty(UserName))
                     {
-                        var pai = Socket_Cache.ProxyAccount.lstProxyAccount.FirstOrDefault(account => account.UserName == UserName);
-
-                        if (pai != null)
+                        bool updated = false;
+                        Action update = () =>
                         {
-                            pai.IsEnable = IsEnable;
+                            Proxy_AccountInfo pai = Socket_Cache.ProxyAccount.lstProxyAccount
+                                .FirstOrDefault(account => account.UserName == UserName);
+                            if (pai == null)
+                            {
+                                return;
+                            }
 
+                            pai.IsEnable = IsEnable;
                             if (!string.IsNullOrEmpty(PassWord))
                             {
                                 pai.PassWord = PassWord;
                             }
-
                             pai.IsLimitLinks = IsLimitLinks;
                             pai.LimitLinks = LimitLinks;
-                            pai.IsExpiry = IsExpiry;                            
+                            pai.IsExpiry = IsExpiry;
                             pai.ExpiryTime = ExpiryTime;
+                            updated = true;
+                        };
 
-                            return true;
+                        if (Socket_Cache.System.InvokeAction != null)
+                        {
+                            Socket_Cache.System.InvokeAction(update);
                         }
+                        else
+                        {
+                            update();
+                        }
+                        return updated;
                     }
                 }
                 catch (Exception ex)
@@ -3522,15 +3931,19 @@ namespace WPELibrary.Lib
 
                         if (pai != null)
                         {
+                            Action remove = () =>
+                            {
+                                Socket_Cache.ProxyAccount.lstProxyAccount.Remove(pai);
+                                Socket_Cache.SocketProxyList.CloseProxyTCP_ByAID(AID);
+                            };
                             if (Socket_Cache.System.InvokeAction != null)
                             {
-                                Socket_Cache.System.InvokeAction(() =>
-                                {
-                                    Socket_Cache.ProxyAccount.lstProxyAccount.Remove(pai);
-                                    Socket_Cache.SocketProxyList.CloseProxyTCP_ByAID(AID);
-                                });
+                                Socket_Cache.System.InvokeAction(remove);
                             }
-                            
+                            else
+                            {
+                                remove();
+                            }
                             return true;
                         }
                     }
@@ -3553,14 +3966,18 @@ namespace WPELibrary.Lib
 
                         if (pai != null)
                         {
+                            Action remove = () =>
+                            {
+                                Socket_Cache.ProxyAccount.lstProxyAccount.Remove(pai);
+                            };
                             if (Socket_Cache.System.InvokeAction != null)
                             {
-                                Socket_Cache.System.InvokeAction(() =>
-                                {
-                                    Socket_Cache.ProxyAccount.lstProxyAccount.Remove(pai);
-                                });
+                                Socket_Cache.System.InvokeAction(remove);
                             }
-
+                            else
+                            {
+                                remove();
+                            }
                             return true;
                         }
                     }
@@ -3921,27 +4338,35 @@ namespace WPELibrary.Lib
 
             #region//保存代理账号列表到数据库
 
-            public static void SaveProxyAccountList_ToDB(Socket_Cache.System.SystemMode FromMode)
+            public static bool SaveProxyAccountList_ToDB(Socket_Cache.System.SystemMode FromMode)
             {
                 try
                 {
-                    if (Socket_Cache.System.StartMode == FromMode)
+                    if (Socket_Cache.System.StartMode != FromMode)
                     {
-                        try
+                        return false;
+                    }
+
+                    bool saved = Socket_Cache.DataBase.ExecuteAtomicSave(
+                        () =>
                         {
                             Socket_Cache.DataBase.DeleteTable_ProxyAccount();
                             Socket_Cache.DataBase.InsertTable_ProxyAccount();
                             Socket_Cache.DataBase.DeleteTable_ProxyAccount_LoginInfo();
-                        }
-                        catch (Exception ex)
-                        {
-                            Socket_Operation.DoLog_Proxy(MethodBase.GetCurrentMethod().Name, ex.Message);
-                        }
+                        },
+                        nameof(SaveProxyAccountList_ToDB));
+                    if (!saved)
+                    {
+                        Socket_Operation.DoLog_Proxy(
+                            MethodBase.GetCurrentMethod().Name,
+                            "代理账号保存失败，原数据库已保留。");
                     }
+                    return saved;
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog_Proxy(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    return false;
                 }
             }            
 
@@ -3949,53 +4374,67 @@ namespace WPELibrary.Lib
 
             #region//从数据库加载代理账号列表（异步）
 
-            public static async void LoadProxyAccountList_FromDB()
+            public static void LoadProxyAccountList_FromDB()
             {
-                await Task.Run(() =>
+                try
                 {
-                    try
+                    DataTable dtProxyAccount = Socket_Cache.DataBase.SelectTable_ProxyAccount();
+                    if (dtProxyAccount == null || dtProxyAccount.Columns.Count == 0)
                     {
-                        DataTable dtProxyAccount = Socket_Cache.DataBase.SelectTable_ProxyAccount();
-
-                        foreach (DataRow dataRow in dtProxyAccount.Rows)
+                        Socket_Cache.System.SystemListLoadFailed = true;
+                        return;
+                    }
+                    List<Proxy_AccountInfo> loadedAccounts = new List<Proxy_AccountInfo>();
+                    foreach (DataRow dataRow in dtProxyAccount.Rows)
+                    {
+                        loadedAccounts.Add(new Proxy_AccountInfo(
+                            Guid.Parse(dataRow["GUID"].ToString()),
+                            Convert.ToBoolean(dataRow["IsEnable"]),
+                            dataRow["UserName"].ToString(),
+                            dataRow["PassWord"].ToString(),
+                            Convert.ToDateTime(dataRow["LoginTime"]),
+                            dataRow["LoginIP"].ToString(),
+                            dataRow["IPLocation"].ToString(),
+                            Convert.ToBoolean(dataRow["IsLimitLinks"]),
+                            Convert.ToInt32(dataRow["LimitLinks"]),
+                            Convert.ToBoolean(dataRow["IsLimitDevices"]),
+                            Convert.ToInt32(dataRow["LimitDevices"]),
+                            Convert.ToBoolean(dataRow["IsExpiry"]),
+                            Convert.ToDateTime(dataRow["ExpiryTime"]),
+                            Convert.ToDateTime(dataRow["CreateTime"])));
+                    }
+                    Action load = () =>
+                    {
+                        Socket_Cache.ProxyAccount.lstProxyAccount.RaiseListChangedEvents = false;
+                        try
                         {
-                            Guid AID = Guid.Parse(dataRow["GUID"].ToString());
-                            bool IsEnable = Convert.ToBoolean(dataRow["IsEnable"]);
-                            string UserName = dataRow["UserName"].ToString();
-                            string PassWord = dataRow["PassWord"].ToString();
-                            DateTime LoginTime = Convert.ToDateTime(dataRow["LoginTime"]);
-                            string LoginIP = dataRow["LoginIP"].ToString();
-                            string IPLocation = dataRow["IPLocation"].ToString();
-                            bool IsLimitLinks = Convert.ToBoolean(dataRow["IsLimitLinks"]);
-                            int LimitLinks = int.Parse(dataRow["LimitLinks"].ToString());
-                            bool IsLimitDevices = Convert.ToBoolean(dataRow["IsLimitDevices"]);
-                            int LimitDevices = int.Parse(dataRow["LimitDevices"].ToString());
-                            bool IsExpiry = Convert.ToBoolean(dataRow["IsExpiry"]);
-                            DateTime ExpiryTime = Convert.ToDateTime(dataRow["ExpiryTime"]);
-                            DateTime CreateTime = Convert.ToDateTime(dataRow["CreateTime"]);
-
-                            Socket_Cache.ProxyAccount.AddProxyAccount(
-                                AID, 
-                                IsEnable, 
-                                UserName, 
-                                PassWord, 
-                                LoginTime, 
-                                LoginIP, 
-                                IPLocation, 
-                                IsLimitLinks, 
-                                LimitLinks, 
-                                IsLimitDevices,
-                                LimitDevices,
-                                IsExpiry, 
-                                ExpiryTime, 
-                                CreateTime);
+                            Socket_Cache.ProxyAccount.lstProxyAccount.Clear();
+                            foreach (Proxy_AccountInfo account in loadedAccounts)
+                            {
+                                Socket_Cache.ProxyAccount.lstProxyAccount.Add(account);
+                            }
                         }
-                    }
-                    catch (Exception ex)
+                        finally
+                        {
+                            Socket_Cache.ProxyAccount.lstProxyAccount.RaiseListChangedEvents = true;
+                            Socket_Cache.ProxyAccount.lstProxyAccount.ResetBindings();
+                        }
+                    };
+
+                    if (Socket_Cache.System.InvokeAction != null)
                     {
-                        Socket_Operation.DoLog_Proxy(nameof(LoadProxyAccountList_FromDB), ex.Message);
+                        Socket_Cache.System.InvokeAction(load);
                     }
-                });
+                    else
+                    {
+                        load();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Cache.System.SystemListLoadFailed = true;
+                    Socket_Operation.DoLog_Proxy(nameof(LoadProxyAccountList_FromDB), ex.Message);
+                }
             }
 
             #endregion
@@ -4092,7 +4531,9 @@ namespace WPELibrary.Lib
                                 new XElement("IsEnable", pai.IsEnable.ToString()),
                                 new XElement("AID", pai.AID.ToString().ToUpper()),
                                 new XElement("UserName", pai.UserName),
-                                new XElement("PassWord", pai.PassWord),
+                                new XElement(
+                                    "PassWord",
+                                    Socket_Operation.PassWord_EncryptForPortableExport(pai.PassWord)),
                                 new XElement("LoginIP", pai.LoginIP),
                                 new XElement("IPLocation", pai.IPLocation),
                                 new XElement("IsOnLine", pai.IsOnLine.ToString()),
@@ -4492,6 +4933,114 @@ namespace WPELibrary.Lib
             public static List<Proxy_MapLocal> lstMapLocal = new List<Proxy_MapLocal>();
             public static List<Proxy_MapRemote> lstMapRemote = new List<Proxy_MapRemote>();
 
+            public static bool TryApplyMapLocalChangeAndSave(Action mutation)
+            {
+                if (mutation == null)
+                {
+                    return false;
+                }
+
+                bool saved = false;
+                Action apply = () =>
+                {
+                    List<Proxy_MapLocal> originalRules = lstMapLocal.ToList();
+                    List<Proxy_MapLocal> originalValues = originalRules
+                        .Select(item => item == null ? null : item.Clone())
+                        .ToList();
+
+                    try
+                    {
+                        mutation();
+                        saved = SaveProxyMapLocal_ToDB(Socket_Cache.System.StartMode);
+                        if (saved)
+                        {
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Socket_Operation.DoLog_Proxy(
+                            nameof(TryApplyMapLocalChangeAndSave),
+                            ex.Message);
+                    }
+
+                    for (int index = 0; index < originalRules.Count; index++)
+                    {
+                        if (originalRules[index] != null && originalValues[index] != null)
+                        {
+                            originalRules[index].CopyFrom(originalValues[index]);
+                        }
+                    }
+
+                    lstMapLocal.Clear();
+                    lstMapLocal.AddRange(originalRules);
+                };
+
+                if (Socket_Cache.System.InvokeAction != null)
+                {
+                    Socket_Cache.System.InvokeAction(apply);
+                }
+                else
+                {
+                    apply();
+                }
+                return saved;
+            }
+
+            public static bool TryApplyMapRemoteChangeAndSave(Action mutation)
+            {
+                if (mutation == null)
+                {
+                    return false;
+                }
+
+                bool saved = false;
+                Action apply = () =>
+                {
+                    List<Proxy_MapRemote> originalRules = lstMapRemote.ToList();
+                    List<Proxy_MapRemote> originalValues = originalRules
+                        .Select(item => item == null ? null : item.Clone())
+                        .ToList();
+
+                    try
+                    {
+                        mutation();
+                        saved = SaveProxyMapRemote_ToDB(Socket_Cache.System.StartMode);
+                        if (saved)
+                        {
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Socket_Operation.DoLog_Proxy(
+                            nameof(TryApplyMapRemoteChangeAndSave),
+                            ex.Message);
+                    }
+
+                    for (int index = 0; index < originalRules.Count; index++)
+                    {
+                        if (originalRules[index] != null && originalValues[index] != null)
+                        {
+                            originalRules[index].CopyFrom(originalValues[index]);
+                        }
+                    }
+
+                    lstMapRemote.Clear();
+                    lstMapRemote.AddRange(originalRules);
+                };
+
+                if (Socket_Cache.System.InvokeAction != null)
+                {
+                    Socket_Cache.System.InvokeAction(apply);
+                }
+                else
+                {
+                    apply();
+                }
+                return saved;
+            }
+
             #region//获取 MapProtocol 类型
 
             public static Socket_Cache.SocketProxy.MapProtocol GetMapProtocol_ByString(string MapProtocol)
@@ -4514,15 +5063,27 @@ namespace WPELibrary.Lib
 
             #region//新增本地代理映射    
 
+            private static void AddMapLocalCore(
+                bool IsEnable,
+                Socket_Cache.SocketProxy.MapProtocol ProtocolType,
+                string Host,
+                int Port,
+                string RemotePath,
+                string LocalPath)
+            {
+                if (!string.IsNullOrEmpty(Host) && Port > 0)
+                {
+                    Proxy_MapLocal pml = new Proxy_MapLocal(
+                        IsEnable, ProtocolType, Host, Port, RemotePath, LocalPath);
+                    Socket_Cache.ProxyMapping.lstMapLocal.Add(pml);
+                }
+            }
+
             public static void AddMapLocal(bool IsEnable, Socket_Cache.SocketProxy.MapProtocol ProtocolType, string Host, int Port, string RemotePath, string LocalPath)
             {
                 try
                 {
-                    if (!string.IsNullOrEmpty(Host) && Port > 0)
-                    {
-                        Proxy_MapLocal pml = new Proxy_MapLocal(IsEnable, ProtocolType, Host, Port, RemotePath, LocalPath);
-                        Socket_Cache.ProxyMapping.lstMapLocal.Add(pml);
-                    }
+                    AddMapLocalCore(IsEnable, ProtocolType, Host, Port, RemotePath, LocalPath);
                 }
                 catch (Exception ex)
                 {
@@ -4533,6 +5094,34 @@ namespace WPELibrary.Lib
             #endregion
 
             #region//新增远程代理映射    
+
+            private static void AddMapRemoteCore(
+                bool IsEnable,
+                Socket_Cache.SocketProxy.MapProtocol ProtocolType_From,
+                string Host_From,
+                int Port_From,
+                string Path_From,
+                Socket_Cache.SocketProxy.MapProtocol ProtocolType_To,
+                string Host_To,
+                int Port_To,
+                string Path_To)
+            {
+                if (!string.IsNullOrEmpty(Host_From) && Port_From > 0 &&
+                    !string.IsNullOrEmpty(Host_To) && Port_To > 0)
+                {
+                    Proxy_MapRemote pmr = new Proxy_MapRemote(
+                        IsEnable,
+                        ProtocolType_From,
+                        Host_From,
+                        Port_From,
+                        Path_From,
+                        ProtocolType_To,
+                        Host_To,
+                        Port_To,
+                        Path_To);
+                    Socket_Cache.ProxyMapping.lstMapRemote.Add(pmr);
+                }
+            }
 
             public static void AddMapRemote(
                 bool IsEnable, 
@@ -4547,21 +5136,16 @@ namespace WPELibrary.Lib
             {
                 try
                 {
-                    if (!string.IsNullOrEmpty(Host_From) && Port_From > 0 && !string.IsNullOrEmpty(Host_To) && Port_To > 0)
-                    {
-                        Proxy_MapRemote pmr = new Proxy_MapRemote(
-                            IsEnable, 
-                            ProtocolType_From, 
-                            Host_From, 
-                            Port_From, 
-                            Path_From, 
-                            ProtocolType_To, 
-                            Host_To, 
-                            Port_To, 
-                            Path_To);
-
-                        Socket_Cache.ProxyMapping.lstMapRemote.Add(pmr);
-                    }
+                    AddMapRemoteCore(
+                        IsEnable,
+                        ProtocolType_From,
+                        Host_From,
+                        Port_From,
+                        Path_From,
+                        ProtocolType_To,
+                        Host_To,
+                        Port_To,
+                        Path_To);
                 }
                 catch (Exception ex)
                 {
@@ -4619,7 +5203,11 @@ namespace WPELibrary.Lib
 
                     if (dr.Equals(DialogResult.OK))
                     {
-                        Socket_Cache.ProxyMapping.MapLocalClear();
+                        if (!Socket_Cache.ProxyMapping.TryApplyMapLocalChangeAndSave(
+                            Socket_Cache.ProxyMapping.MapLocalClear))
+                        {
+                            Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -4652,7 +5240,11 @@ namespace WPELibrary.Lib
 
                     if (dr.Equals(DialogResult.OK))
                     {
-                        Socket_Cache.ProxyMapping.MapRemoteClear();
+                        if (!Socket_Cache.ProxyMapping.TryApplyMapRemoteChangeAndSave(
+                            Socket_Cache.ProxyMapping.MapRemoteClear))
+                        {
+                            Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -4932,19 +5524,33 @@ namespace WPELibrary.Lib
 
             #region//保存本地代理映射到数据库
 
-            public static void SaveProxyMapLocal_ToDB(Socket_Cache.System.SystemMode FromMode)
+            public static bool SaveProxyMapLocal_ToDB(Socket_Cache.System.SystemMode FromMode)
             {
                 try
                 {
-                    if (Socket_Cache.System.StartMode == FromMode)
+                    if (Socket_Cache.System.StartMode != FromMode)
                     {
-                        Socket_Cache.DataBase.DeleteTable_ProxyMapLocal();
-                        Socket_Cache.DataBase.InsertTable_ProxyMapLocal();
+                        return false;
                     }
+                    bool saved = Socket_Cache.DataBase.ExecuteAtomicSave(
+                        () =>
+                        {
+                            Socket_Cache.DataBase.DeleteTable_ProxyMapLocal();
+                            Socket_Cache.DataBase.InsertTable_ProxyMapLocal();
+                        },
+                        nameof(SaveProxyMapLocal_ToDB));
+                    if (!saved)
+                    {
+                        Socket_Operation.DoLog_Proxy(
+                            nameof(SaveProxyMapLocal_ToDB),
+                            "本地代理映射保存失败，原数据库已保留。");
+                    }
+                    return saved;
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog_Proxy(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    return false;
                 }
             }
 
@@ -4952,19 +5558,33 @@ namespace WPELibrary.Lib
 
             #region//保存远程代理映射到数据库
 
-            public static void SaveProxyMapRemote_ToDB(Socket_Cache.System.SystemMode FromMode)
+            public static bool SaveProxyMapRemote_ToDB(Socket_Cache.System.SystemMode FromMode)
             {
                 try
                 {
-                    if (Socket_Cache.System.StartMode == FromMode)
+                    if (Socket_Cache.System.StartMode != FromMode)
                     {
-                        Socket_Cache.DataBase.DeleteTable_ProxyMapRemote();
-                        Socket_Cache.DataBase.InsertTable_ProxyMapRemote();
-                    }                    
+                        return false;
+                    }
+                    bool saved = Socket_Cache.DataBase.ExecuteAtomicSave(
+                        () =>
+                        {
+                            Socket_Cache.DataBase.DeleteTable_ProxyMapRemote();
+                            Socket_Cache.DataBase.InsertTable_ProxyMapRemote();
+                        },
+                        nameof(SaveProxyMapRemote_ToDB));
+                    if (!saved)
+                    {
+                        Socket_Operation.DoLog_Proxy(
+                            nameof(SaveProxyMapRemote_ToDB),
+                            "远程代理映射保存失败，原数据库已保留。");
+                    }
+                    return saved;
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog_Proxy(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    return false;
                 }
             }
 
@@ -4972,76 +5592,97 @@ namespace WPELibrary.Lib
 
             #region//从数据库加载本地代理映射（异步）
 
-            public static async void LoadProxyMapLocal_FromDB()
+            public static void LoadProxyMapLocal_FromDB()
             {
-                await Task.Run(() =>
+                try
                 {
-                    try
+                    DataTable dtProxyMapLocal = Socket_Cache.DataBase.SelectTable_ProxyMapLocal();
+                    if (dtProxyMapLocal == null || dtProxyMapLocal.Columns.Count == 0)
                     {
-                        DataTable dtProxyMapLocal = Socket_Cache.DataBase.SelectTable_ProxyMapLocal();
-
-                        foreach (DataRow dataRow in dtProxyMapLocal.Rows)
-                        {
-                            bool IsEnable = Convert.ToBoolean(dataRow["IsEnable"]);
-                            Socket_Cache.SocketProxy.MapProtocol ProtocolType = Socket_Cache.ProxyMapping.GetMapProtocol_ByString(dataRow["ProtocolType"].ToString());
-                            string Host = dataRow["Host"].ToString();
-                            int Port = int.Parse(dataRow["Port"].ToString());
-                            string RemotePath = dataRow["RemotePath"].ToString();
-                            string LocalPath = dataRow["LocalPath"].ToString();
-
-                            Socket_Cache.ProxyMapping.AddMapLocal(IsEnable, ProtocolType, Host, Port, RemotePath, LocalPath);
-                        }
+                        Socket_Cache.System.SystemListLoadFailed = true;
+                        return;
                     }
-                    catch (Exception ex)
+                    List<Proxy_MapLocal> loadedMaps = new List<Proxy_MapLocal>();
+                    foreach (DataRow dataRow in dtProxyMapLocal.Rows)
                     {
-                        Socket_Operation.DoLog_Proxy(nameof(LoadProxyMapLocal_FromDB), ex.Message);
+                        loadedMaps.Add(new Proxy_MapLocal(
+                            Convert.ToBoolean(dataRow["IsEnable"]),
+                            Socket_Cache.ProxyMapping.GetMapProtocol_ByString(dataRow["ProtocolType"].ToString()),
+                            dataRow["Host"].ToString(),
+                            Convert.ToInt32(dataRow["Port"]),
+                            dataRow["RemotePath"].ToString(),
+                            dataRow["LocalPath"].ToString()));
                     }
-                });
+                    Action load = () =>
+                    {
+                        Socket_Cache.ProxyMapping.lstMapLocal.Clear();
+                        Socket_Cache.ProxyMapping.lstMapLocal.AddRange(loadedMaps);
+                    };
+
+                    if (Socket_Cache.System.InvokeAction != null)
+                    {
+                        Socket_Cache.System.InvokeAction(load);
+                    }
+                    else
+                    {
+                        load();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Cache.System.SystemListLoadFailed = true;
+                    Socket_Operation.DoLog_Proxy(nameof(LoadProxyMapLocal_FromDB), ex.Message);
+                }
             }
 
             #endregion
 
             #region//从数据库加载远程代理映射（异步）
 
-            public static async void LoadProxyMapRemote_FromDB()
+            public static void LoadProxyMapRemote_FromDB()
             {
-                await Task.Run(() =>
+                try
                 {
-                    try
+                    DataTable dtProxyMapRemote = Socket_Cache.DataBase.SelectTable_ProxyMapRemote();
+                    if (dtProxyMapRemote == null || dtProxyMapRemote.Columns.Count == 0)
                     {
-                        DataTable dtProxyMapRemote = Socket_Cache.DataBase.SelectTable_ProxyMapRemote();
-
-                        foreach (DataRow dataRow in dtProxyMapRemote.Rows)
-                        {
-                            bool IsEnable = Convert.ToBoolean(dataRow["IsEnable"]);
-
-                            Socket_Cache.SocketProxy.MapProtocol ProtocolType_From = Socket_Cache.ProxyMapping.GetMapProtocol_ByString(dataRow["ProtocolType_From"].ToString());
-                            string Host_From = dataRow["Host_From"].ToString();
-                            int Port_From = int.Parse(dataRow["Port_From"].ToString());
-                            string Path_From = dataRow["Path_From"].ToString();
-
-                            Socket_Cache.SocketProxy.MapProtocol ProtocolType_To = Socket_Cache.ProxyMapping.GetMapProtocol_ByString(dataRow["ProtocolType_To"].ToString());
-                            string Host_To = dataRow["Host_To"].ToString();
-                            int Port_To = int.Parse(dataRow["Port_To"].ToString());
-                            string Path_To = dataRow["Path_To"].ToString();
-
-                            Socket_Cache.ProxyMapping.AddMapRemote(
-                                IsEnable,
-                                ProtocolType_From,
-                                Host_From,
-                                Port_From,
-                                Path_From,
-                                ProtocolType_To,
-                                Host_To,
-                                Port_To,
-                                Path_To);
-                        }
+                        Socket_Cache.System.SystemListLoadFailed = true;
+                        return;
                     }
-                    catch (Exception ex)
+                    List<Proxy_MapRemote> loadedMaps = new List<Proxy_MapRemote>();
+                    foreach (DataRow dataRow in dtProxyMapRemote.Rows)
                     {
-                        Socket_Operation.DoLog_Proxy(nameof(LoadProxyMapRemote_FromDB), ex.Message);
+                        loadedMaps.Add(new Proxy_MapRemote(
+                            Convert.ToBoolean(dataRow["IsEnable"]),
+                            Socket_Cache.ProxyMapping.GetMapProtocol_ByString(dataRow["ProtocolType_From"].ToString()),
+                            dataRow["Host_From"].ToString(),
+                            Convert.ToInt32(dataRow["Port_From"]),
+                            dataRow["Path_From"].ToString(),
+                            Socket_Cache.ProxyMapping.GetMapProtocol_ByString(dataRow["ProtocolType_To"].ToString()),
+                            dataRow["Host_To"].ToString(),
+                            Convert.ToInt32(dataRow["Port_To"]),
+                            dataRow["Path_To"].ToString()));
                     }
-                });
+                    Action load = () =>
+                    {
+                        Socket_Cache.ProxyMapping.lstMapRemote.Clear();
+                        Socket_Cache.ProxyMapping.lstMapRemote.AddRange(loadedMaps);
+                    };
+
+                    if (Socket_Cache.System.InvokeAction != null)
+                    {
+                        Socket_Cache.System.InvokeAction(load);
+                    }
+                    else
+                    {
+                        load();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Cache.System.SystemListLoadFailed = true;
+                    Socket_Operation.DoLog_Proxy(nameof(LoadProxyMapRemote_FromDB), ex.Message);
+                }
             }
 
             #endregion
@@ -5334,7 +5975,12 @@ namespace WPELibrary.Lib
                         }
                         else
                         {
-                            LoadMapLocal_FromXDocument(xdoc);
+                            if (!Socket_Cache.ProxyMapping.TryApplyMapLocalChangeAndSave(
+                                () => LoadMapLocal_FromXDocument(xdoc)))
+                            {
+                                Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                                return;
+                            }
 
                             if (bEncrypt)
                             {
@@ -5395,12 +6041,14 @@ namespace WPELibrary.Lib
                             LocalPath = xeMapLocal.Element("LocalPath").Value;
                         }
 
-                        Socket_Cache.ProxyMapping.AddMapLocal(IsEnable, ProtocolType, Host, Port, RemotePath, LocalPath);
+                        Socket_Cache.ProxyMapping.AddMapLocalCore(
+                            IsEnable, ProtocolType, Host, Port, RemotePath, LocalPath);
                     }
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    throw;
                 }
             }
 
@@ -5473,7 +6121,12 @@ namespace WPELibrary.Lib
                         }
                         else
                         {
-                            LoadMapRemote_FromXDocument(xdoc);
+                            if (!Socket_Cache.ProxyMapping.TryApplyMapRemoteChangeAndSave(
+                                () => LoadMapRemote_FromXDocument(xdoc)))
+                            {
+                                Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                                return;
+                            }
 
                             if (bEncrypt)
                             {
@@ -5552,7 +6205,7 @@ namespace WPELibrary.Lib
                             Path_To = xeMapRemote.Element("Path_To").Value;
                         }
 
-                        Socket_Cache.ProxyMapping.AddMapRemote(
+                        Socket_Cache.ProxyMapping.AddMapRemoteCore(
                             IsEnable,
                             ProtocolType_From,
                             Host_From,
@@ -5567,6 +6220,7 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    throw;
                 }
             }
 
@@ -5848,6 +6502,7 @@ namespace WPELibrary.Lib
 
         public static class SocketQueue
         {            
+            public const int MaxQueueCount = 10000;
             public static int Send_CNT = 0;
             public static int SendTo_CNT = 0;
             public static int Recv_CNT = 0;
@@ -5857,8 +6512,10 @@ namespace WPELibrary.Lib
             public static int WSARecv_CNT = 0;
             public static int WSARecvFrom_CNT = 0;
             public static int FilterSocketList_CNT = 0;                       
+            public static long Dropped_CNT = 0;
 
             public static ConcurrentQueue<Socket_PacketInfo> qSocket_PacketInfo = new ConcurrentQueue<Socket_PacketInfo>();
+            private static readonly object QueueSync = new object();
 
             #region//封包入队列            
 
@@ -5886,7 +6543,16 @@ namespace WPELibrary.Lib
                             string sIPTo = ipParts[1];                            
 
                             Socket_PacketInfo spi = new Socket_PacketInfo(PacketTime, iSocket, ptPacketType, sIPFrom, sIPTo, bRawBuff, bBuffByte, bBuffByte.Length, pAction);
-                            qSocket_PacketInfo.Enqueue(spi);
+                            lock (QueueSync)
+                            {
+                                while (qSocket_PacketInfo.Count >= MaxQueueCount &&
+                                    qSocket_PacketInfo.TryDequeue(out Socket_PacketInfo discardedPacket))
+                                {
+                                    Interlocked.Increment(ref Dropped_CNT);
+                                }
+
+                                qSocket_PacketInfo.Enqueue(spi);
+                            }
                         }
                     }
                 }
@@ -5904,10 +6570,14 @@ namespace WPELibrary.Lib
             {
                 try
                 {
-                    while (!qSocket_PacketInfo.IsEmpty)
+                    lock (QueueSync)
                     {
-                        qSocket_PacketInfo.TryDequeue(out Socket_PacketInfo spc);
-                    }                      
+                        while (!qSocket_PacketInfo.IsEmpty)
+                        {
+                            qSocket_PacketInfo.TryDequeue(out Socket_PacketInfo spc);
+                        }
+                        Interlocked.Exchange(ref Dropped_CNT, 0);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -6014,38 +6684,51 @@ namespace WPELibrary.Lib
        
             #region//封包入列表
 
-            public static async Task SocketToList()
+            public static async Task SocketToList(int maxItems = 1)
             {
                 try
                 {
+                    List<Socket_PacketInfo> visiblePackets = new List<Socket_PacketInfo>();
                     await Task.Run(() =>
                     {
-                        if (SocketQueue.qSocket_PacketInfo.TryDequeue(out Socket_PacketInfo spi))
+                        int processed = 0;
+                        while (processed < Math.Max(1, maxItems) &&
+                            SocketQueue.qSocket_PacketInfo.TryDequeue(out Socket_PacketInfo spi))
                         {
+                            processed++;
                             bool bIsShow = Socket_Operation.IsShowSocketPacket_ByFilter(spi);
                             if (bIsShow)
                             {
                                 Span<byte> bufferSpan = spi.PacketBuffer.AsSpan();
                                 spi.PacketData = Socket_Operation.GetPacketData_Hex(bufferSpan, Socket_Cache.SocketPacket.PacketData_MaxLen);
-
-                                if (Socket_Cache.System.InvokeAction != null)
-                                {
-                                    Socket_Cache.System.InvokeAction(() =>
-                                    {
-                                        Socket_Cache.SocketList.lstRecPacket.Add(spi);
-                                    });
-                                }
-                                else
-                                {
-                                    Socket_Cache.SocketList.lstRecPacket.Add(spi);
-                                }
+                                visiblePackets.Add(spi);
                             }
                             else
                             {
                                 SocketQueue.FilterSocketList_CNT++;
                             }
                         }
-                    });                    
+                    });
+
+                    if (visiblePackets.Count > 0)
+                    {
+                        Action appendVisiblePackets = () =>
+                        {
+                            foreach (Socket_PacketInfo packet in visiblePackets)
+                            {
+                                Socket_Cache.SocketList.lstRecPacket.Add(packet);
+                            }
+                        };
+
+                        if (Socket_Cache.System.InvokeAction != null)
+                        {
+                            Socket_Cache.System.InvokeAction(appendVisiblePackets);
+                        }
+                        else
+                        {
+                            appendVisiblePackets();
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -6343,8 +7026,29 @@ namespace WPELibrary.Lib
 
         public static class LogQueue
         {
+            private const int MaxLogQueueCount = 5000;
+            private static readonly object LogQueueSync = new object();
             public static ConcurrentQueue<Socket_LogInfo> qSocket_Log = new ConcurrentQueue<Socket_LogInfo>();
             public static ConcurrentQueue<Socket_LogInfo> qProxy_Log = new ConcurrentQueue<Socket_LogInfo>();
+            public static long DroppedSocketLog_CNT;
+            public static long DroppedProxyLog_CNT;
+
+            private static void EnqueueBounded(
+                ConcurrentQueue<Socket_LogInfo> queue,
+                Socket_LogInfo item,
+                ref long droppedCount)
+            {
+                lock (LogQueueSync)
+                {
+                    while (queue.Count >= MaxLogQueueCount &&
+                        queue.TryDequeue(out Socket_LogInfo discarded))
+                    {
+                        Interlocked.Increment(ref droppedCount);
+                    }
+
+                    queue.Enqueue(item);
+                }
+            }
 
             #region//日志入队列
 
@@ -6357,11 +7061,11 @@ namespace WPELibrary.Lib
                     switch (logType)
                     {
                         case Socket_Cache.System.LogType.Socket:
-                            qSocket_Log.Enqueue(sli);
+                            EnqueueBounded(qSocket_Log, sli, ref DroppedSocketLog_CNT);
                             break;
 
                         case Socket_Cache.System.LogType.Proxy:
-                            qProxy_Log.Enqueue(sli);
+                            EnqueueBounded(qProxy_Log, sli, ref DroppedProxyLog_CNT);
                             break;
                     }
                 }
@@ -6555,6 +7259,15 @@ namespace WPELibrary.Lib
             public static long FilterExecute_CNT = 0;            
             public static int FilterSize_MaxLen = 500;
             public static Socket_Cache.Filter.Execute FilterExecute = Socket_Cache.Filter.Execute.Sequence;
+            private const int MaxDeferredExecutions = 128;
+            private static readonly SemaphoreSlim DeferredExecutionSlots =
+                new SemaphoreSlim(MaxDeferredExecutions, MaxDeferredExecutions);
+            private static readonly object DeferredExecutionSync = new object();
+            private static CancellationTokenSource deferredExecutionCancellation =
+                new CancellationTokenSource();
+            private static int deferredExecutionStopping;
+            [ThreadStatic]
+            private static DeferredExecutionBatch currentPacketBatch;
             public static readonly Color FilterActionForeColor_Replace = Color.Black;
             public static readonly Color FilterActionBackColor_Replace = Color.Goldenrod;
             public static readonly Color FilterActionForeColor_Intercept = Color.White;
@@ -6598,7 +7311,129 @@ namespace WPELibrary.Lib
             {
                 Head,
                 Position,
-            }            
+            }
+
+            internal sealed class DeferredExecutionBatch
+            {
+                internal readonly List<Tuple<Action<CancellationToken>, string>> Requests =
+                    new List<Tuple<Action<CancellationToken>, string>>();
+            }
+
+            internal static DeferredExecutionBatch BeginPacketDeferredExecution()
+            {
+                DeferredExecutionBatch batch = new DeferredExecutionBatch();
+                currentPacketBatch = batch;
+                return batch;
+            }
+
+            internal static void CommitPacketDeferredExecution(DeferredExecutionBatch batch)
+            {
+                if (batch == null)
+                {
+                    return;
+                }
+                if (ReferenceEquals(currentPacketBatch, batch))
+                {
+                    currentPacketBatch = null;
+                }
+                foreach (Tuple<Action<CancellationToken>, string> request in batch.Requests)
+                {
+                    QueueDeferredExecution(request.Item1, request.Item2);
+                }
+                batch.Requests.Clear();
+            }
+
+            internal static bool QueueDeferredExecution(Action action, string actionName)
+            {
+                return QueueDeferredExecution(
+                    cancellationToken => action(),
+                    actionName);
+            }
+
+            internal static bool QueueDeferredExecution(
+                Action<CancellationToken> action,
+                string actionName)
+            {
+                if (action == null)
+                {
+                    return false;
+                }
+
+                DeferredExecutionBatch packetBatch = currentPacketBatch;
+                if (packetBatch != null)
+                {
+                    packetBatch.Requests.Add(Tuple.Create(action, actionName ?? "action"));
+                    return true;
+                }
+
+                CancellationToken cancellationToken;
+                lock (DeferredExecutionSync)
+                {
+                    if (Volatile.Read(ref deferredExecutionStopping) != 0 ||
+                        !DeferredExecutionSlots.Wait(0))
+                    {
+                        Socket_Operation.DoLog(
+                            nameof(QueueDeferredExecution),
+                            string.Format(
+                                "Deferred filter action queue is unavailable or full; skipped {0}.",
+                                actionName ?? "action"));
+                        return false;
+                    }
+                    cancellationToken = deferredExecutionCancellation.Token;
+                }
+
+                try
+                {
+                    Task.Run(() =>
+                    {
+                        try
+                        {
+                            action(cancellationToken);
+                        }
+                        catch (Exception ex)
+                        {
+                            Socket_Operation.DoLog(
+                                nameof(QueueDeferredExecution),
+                                string.Format(
+                                    "Deferred filter action {0} failed: {1}",
+                                    actionName ?? "action",
+                                    ex.Message));
+                        }
+                        finally
+                        {
+                            DeferredExecutionSlots.Release();
+                        }
+                    });
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    DeferredExecutionSlots.Release();
+                    Socket_Operation.DoLog(nameof(QueueDeferredExecution), ex.Message);
+                    return false;
+                }
+            }
+
+            internal static void StartDeferredExecution()
+            {
+                lock (DeferredExecutionSync)
+                {
+                    if (deferredExecutionCancellation.IsCancellationRequested)
+                    {
+                        deferredExecutionCancellation = new CancellationTokenSource();
+                    }
+                    Volatile.Write(ref deferredExecutionStopping, 0);
+                }
+            }
+
+            internal static void StopDeferredExecution()
+            {
+                lock (DeferredExecutionSync)
+                {
+                    Volatile.Write(ref deferredExecutionStopping, 1);
+                    deferredExecutionCancellation.Cancel();
+                }
+            }
 
             public struct FilterFunction
             {
@@ -6656,7 +7491,11 @@ namespace WPELibrary.Lib
                     Socket_Cache.Filter.FilterFunction FilterFunction = new Socket_Cache.Filter.FilterFunction(true, true, true, true, false, false, false, false);
                     Socket_Cache.Filter.FilterStartFrom FilterStartFrom = Socket_Cache.Filter.FilterStartFrom.Head;
 
-                    Socket_Cache.Filter.AddFilter(false, FID, FName, false, string.Empty, false, 0, false, string.Empty, false, 0, FilterMode, FilterAction, false, FilterExecuteType, SID, RID, FilterFunction, FilterStartFrom, false, false, 1, false, 1, string.Empty, 0, string.Empty, string.Empty);
+                    if (!Socket_Cache.FilterList.TryApplyListChangeAndSave(() =>
+                        Socket_Cache.Filter.AddFilter(false, FID, FName, false, string.Empty, false, 0, false, string.Empty, false, 0, FilterMode, FilterAction, false, FilterExecuteType, SID, RID, FilterFunction, FilterStartFrom, false, false, 1, false, 1, string.Empty, 0, string.Empty, string.Empty)))
+                    {
+                        Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -6687,7 +7526,11 @@ namespace WPELibrary.Lib
                         Socket_Cache.Filter.FilterStartFrom FilterStartFrom = Socket_Cache.Filter.FilterStartFrom.Head;
                         string sFSearch = Socket_Cache.Filter.GetFilterString_ByBytes(bBuffer);
 
-                        Socket_Cache.Filter.AddFilter(false, FID, sFName, false, string.Empty, false, 0, false, string.Empty, false, 0, FilterMode, FilterAction, false, FilterExecuteType, SID, RID, FilterFunction, FilterStartFrom, false, false, 1, false, 1, string.Empty, 0, sFSearch, string.Empty);
+                        if (!Socket_Cache.FilterList.TryApplyListChangeAndSave(() =>
+                            Socket_Cache.Filter.AddFilter(false, FID, sFName, false, string.Empty, false, 0, false, string.Empty, false, 0, FilterMode, FilterAction, false, FilterExecuteType, SID, RID, FilterFunction, FilterStartFrom, false, false, 1, false, 1, string.Empty, 0, sFSearch, string.Empty)))
+                        {
+                            Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -7404,36 +8247,45 @@ namespace WPELibrary.Lib
                 try
                 {
                     string[] searchParts = sfi.FSearch.Split(',');
+                    bool hasCondition = false;
                     foreach (string part in searchParts)
                     {
-                        if (!string.IsNullOrEmpty(part) && part.IndexOf('|') > 0)
+                        string normalizedPart = part == null ? string.Empty : part.Trim();
+                        if (string.IsNullOrEmpty(normalizedPart))
                         {
-                            string[] pair = part.Split('|');
-                            if (pair.Length != 2)
-                                return false;
-
-                            if (!TryParseNonNegativeInt(pair[0], out int index) ||
-                                index >= bufferSpan.Length)
-                            {
-                                return false;
-                            }
-
-                            if (pair[1].Length != 2 ||
-                                !HexCharsToByte(pair[1], out byte expected) ||
-                                bufferSpan[index] != expected)
-                            {
-                                return false;
-                            }
+                            continue;
                         }
+
+                        string[] pair = normalizedPart.Split('|');
+                        if (pair.Length != 2)
+                        {
+                            return false;
+                        }
+
+                        if (!TryParseNonNegativeInt(pair[0].Trim(), out int index) ||
+                            index >= bufferSpan.Length)
+                        {
+                            return false;
+                        }
+
+                        string expectedText = pair[1].Trim();
+                        if (expectedText.Length != 2 ||
+                            !HexCharsToByte(expectedText, out byte expected) ||
+                            bufferSpan[index] != expected)
+                        {
+                            return false;
+                        }
+
+                        hasCondition = true;
                     }
+
+                    return hasCondition;
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
                     return false;
                 }
-
-                return true;
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -7960,6 +8812,57 @@ namespace WPELibrary.Lib
                 }                
             }
 
+            public static bool TryApplyListChangeAndSave(Action mutation)
+            {
+                if (mutation == null)
+                {
+                    return false;
+                }
+
+                List<Socket_FilterInfo> originalFilters = lstFilter.ToList();
+                List<Socket_FilterInfo> originalValues = originalFilters
+                    .Select(item => item == null ? null : item.Clone())
+                    .ToList();
+
+                try
+                {
+                    mutation();
+                    if (SaveFilterList_ToDB())
+                    {
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(
+                        nameof(TryApplyListChangeAndSave),
+                        ex.Message);
+                }
+
+                for (int index = 0; index < originalFilters.Count; index++)
+                {
+                    if (originalFilters[index] != null && originalValues[index] != null)
+                    {
+                        originalFilters[index].CopyFrom(originalValues[index]);
+                    }
+                }
+                lstFilter.RaiseListChangedEvents = false;
+                try
+                {
+                    lstFilter.Clear();
+                    foreach (Socket_FilterInfo filter in originalFilters)
+                    {
+                        lstFilter.Add(filter);
+                    }
+                }
+                finally
+                {
+                    lstFilter.RaiseListChangedEvents = true;
+                    lstFilter.ResetBindings();
+                }
+                return false;
+            }
+
             #endregion
 
             #region//初始化滤镜列表的计数
@@ -7992,7 +8895,11 @@ namespace WPELibrary.Lib
 
                     if (dr.Equals(DialogResult.OK))
                     {
-                        Socket_Cache.FilterList.FilterListClear();
+                        if (!Socket_Cache.FilterList.TryApplyListChangeAndSave(
+                            Socket_Cache.FilterList.FilterListClear))
+                        {
+                            Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -8042,8 +8949,31 @@ namespace WPELibrary.Lib
             {
                 try
                 {
-                    switch (listAction)
+                    if (listAction == Socket_Cache.System.ListAction.Export)
                     {
+                        string sFName = sfiList[0].FName;
+                        Socket_Cache.FilterList.SaveFilterList_Dialog(sFName, sfiList);
+                        return;
+                    }
+
+                    if (!Socket_Cache.FilterList.TryApplyListChangeAndSave(
+                        () => UpdateFilterList_ByListAction_Core(listAction, sfiList)))
+                    {
+                        Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+            }
+
+            private static void UpdateFilterList_ByListAction_Core(
+                Socket_Cache.System.ListAction listAction,
+                List<Socket_FilterInfo> sfiList)
+            {
+                switch (listAction)
+                {
                         case Socket_Cache.System.ListAction.Top:
 
                             sfiList.Reverse();
@@ -8108,10 +9038,6 @@ namespace WPELibrary.Lib
                             break;
 
                         case Socket_Cache.System.ListAction.Export:
-
-                            string sFName = sfiList[0].FName;
-                            Socket_Cache.FilterList.SaveFilterList_Dialog(sFName, sfiList);
-
                             break;
 
                         case Socket_Cache.System.ListAction.Delete:
@@ -8119,11 +9045,6 @@ namespace WPELibrary.Lib
                             Socket_Cache.Filter.DeleteFilter_Dialog(sfiList);
 
                             break;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
                 }
             }
 
@@ -8241,17 +9162,59 @@ namespace WPELibrary.Lib
                                 {
                                     case Socket_Cache.Filter.FilterExecuteType.Send:
 
-                                        Socket_Cache.Send.DoSend(sfi.SID);
+                                        Guid sendId = sfi.SID;
+                                        Socket_Cache.Filter.QueueDeferredExecution(
+                                            cancellationToken =>
+                                            {
+                                                if (cancellationToken.IsCancellationRequested)
+                                                {
+                                                    return;
+                                                }
+                                                Socket_Send send = Socket_Cache.Send.DoSend(sendId);
+                                                if (send != null)
+                                                {
+                                                    while (!send.WaitForCompletion(100))
+                                                    {
+                                                        if (cancellationToken.IsCancellationRequested)
+                                                        {
+                                                            send.StopSend();
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "send");
 
                                         break;
                                     case Socket_Cache.Filter.FilterExecuteType.Robot:
 
                                         var parameters = new Dictionary<string, object>
-                                        {                                            
+                                        {
                                             { "FilterSocket", iSocket }
                                         };
 
-                                        Socket_Cache.Robot.DoRobot(sfi.RID, parameters);
+                                        Guid robotId = sfi.RID;
+                                        Socket_Cache.Filter.QueueDeferredExecution(
+                                            cancellationToken =>
+                                            {
+                                                if (cancellationToken.IsCancellationRequested)
+                                                {
+                                                    return;
+                                                }
+                                                Socket_Robot robot = Socket_Cache.Robot.DoRobot(robotId, parameters);
+                                                if (robot != null)
+                                                {
+                                                    while (!robot.WaitForCompletion(100))
+                                                    {
+                                                        if (cancellationToken.IsCancellationRequested)
+                                                        {
+                                                            robot.StopRobot();
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "robot");
                                         break;
                                 }
                             }
@@ -8308,20 +9271,31 @@ namespace WPELibrary.Lib
 
             #region//保存滤镜列表到数据库
 
-            public static void SaveFilterList_ToDB()
+            public static bool SaveFilterList_ToDB()
             {
                 try
                 {
-                    Socket_Cache.DataBase.DeleteTable_Filter();
+                    bool saved = Socket_Cache.DataBase.ExecuteAtomicSave(
+                        () =>
+                        {
+                            Socket_Cache.DataBase.DeleteTable_Filter();
 
-                    foreach (Socket_FilterInfo sfi in Socket_Cache.FilterList.lstFilter)
+                            foreach (Socket_FilterInfo sfi in Socket_Cache.FilterList.lstFilter)
+                            {
+                                Socket_Cache.DataBase.InsertTable_Filter(sfi);
+                            }
+                        },
+                        nameof(SaveFilterList_ToDB));
+                    if (!saved)
                     {
-                        Socket_Cache.DataBase.InsertTable_Filter(sfi);
+                        Socket_Operation.DoLog(nameof(SaveFilterList_ToDB), "滤镜列表保存失败，原数据库已保留。");
                     }
+                    return saved;
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    return false;
                 }
             }
 
@@ -8334,6 +9308,14 @@ namespace WPELibrary.Lib
                 try
                 {
                     DataTable dtFilter = Socket_Cache.DataBase.SelectTable_Filter();
+                    if (dtFilter == null || dtFilter.Columns.Count == 0)
+                    {
+                        Socket_Cache.System.SystemListLoadFailed = true;
+                        return;
+                    }
+
+                    // 支持重复初始化时从干净集合加载，避免同一条滤镜记录被反复追加。
+                    Socket_Cache.FilterList.FilterListClear();
 
                     foreach (DataRow dataRow in dtFilter.Rows) 
                     {
@@ -8399,6 +9381,7 @@ namespace WPELibrary.Lib
                 }
                 catch (Exception ex)
                 {
+                    Socket_Cache.System.SystemListLoadFailed = true;
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
                 }
             }
@@ -8863,6 +9846,8 @@ namespace WPELibrary.Lib
 
         public static class Robot
         {
+            public const string VisionInstructionContentPrefix = "VisionStep|";
+
             #region//结构定义
 
             public enum KeyBoardType
@@ -8900,6 +9885,7 @@ namespace WPELibrary.Lib
                 Mouse = 5,
                 SendSocketList = 6,
                 SetSystemSocket = 7,
+                VisionWait = 8,
             }
 
             #endregion
@@ -9000,6 +9986,12 @@ namespace WPELibrary.Lib
                     DataTable RInstruction_Copy = sri.RInstruction.Copy();
 
                     Socket_Cache.Robot.AddRobot(IsEnable, RID_New, RName_Copy, RInstruction_Copy, sri.RFolder);
+                    Socket_RobotInfo copiedRobot = Socket_Cache.RobotList.lstRobot
+                        .FirstOrDefault(item => item.RID == RID_New);
+                    if (copiedRobot != null && sri.VisionProfile != null)
+                    {
+                        copiedRobot.VisionProfile = sri.VisionProfile.Clone();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -9021,10 +10013,18 @@ namespace WPELibrary.Lib
 
                         if (dr.Equals(DialogResult.OK))
                         {
-                            foreach (Socket_RobotInfo sri in sriList)
+                            if (!Socket_Cache.RobotList.TryApplyListChangeAndSave(
+                                delegate
+                                {
+                                    foreach (Socket_RobotInfo sri in sriList)
+                                    {
+                                        Socket_Cache.RobotList.lstRobot.Remove(sri);
+                                    }
+                                }))
                             {
-                                Socket_Cache.RobotList.lstRobot.Remove(sri);                                
-                            }                            
+                                Socket_Operation.ShowMessageBox(
+                                    Socket_Operation.GetUiText("UI_AssistantSaveFailed"));
+                            }
                         }
                     }
                 }
@@ -9076,6 +10076,10 @@ namespace WPELibrary.Lib
 
                         case Socket_Cache.Robot.InstructionType.Mouse:
                             sReturn = MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_107);
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.VisionWait:
+                            sReturn = MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_239);
                             break;
                     }
                 }
@@ -9129,6 +10133,10 @@ namespace WPELibrary.Lib
 
                         case Socket_Cache.Robot.InstructionType.Mouse:
                             cReturn = Color.LightSkyBlue;
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.VisionWait:
+                            cReturn = Color.MediumPurple;
                             break;
                     }
                 }
@@ -9303,6 +10311,27 @@ namespace WPELibrary.Lib
                             }
 
                             break;
+
+                        case Socket_Cache.Robot.InstructionType.VisionWait:
+                            string visionName = string.Empty;
+                            if (!string.IsNullOrEmpty(sContent) &&
+                                sContent.StartsWith(
+                                    Socket_Cache.Robot.VisionInstructionContentPrefix,
+                                    StringComparison.Ordinal))
+                            {
+                                string payload = sContent.Substring(
+                                    Socket_Cache.Robot.VisionInstructionContentPrefix.Length);
+                                int separator = payload.IndexOf('|');
+                                visionName = separator >= 0
+                                    ? payload.Substring(separator + 1)
+                                    : payload;
+                            }
+                            sReturn = string.Format(
+                                MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_240),
+                                string.IsNullOrWhiteSpace(visionName)
+                                    ? MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_239)
+                                    : visionName);
+                            break;
                     }
                 }
                 catch (Exception ex)
@@ -9380,18 +10409,24 @@ namespace WPELibrary.Lib
             public static int CheckRobotInstruction(DataTable dtRInstruction, bool bFromSystem)
             {
                 int iReturn = -1;
+                int currentInstructionIndex = -1;
 
                 try
                 {
                     if (dtRInstruction != null && dtRInstruction.Rows.Count > 0)
                     {
                         List<int> listSendSendList = new List<int>();                 
-                        List<int> listLoopStart = new List<int>();
-                        List<int> listLoopEnd = new List<int>();
 
                         for (int i = 0; i < dtRInstruction.Rows.Count; i++)
                         {
-                            Socket_Cache.Robot.InstructionType instructionType = (Socket_Cache.Robot.InstructionType)dtRInstruction.Rows[i]["Type"];
+                            currentInstructionIndex = i;
+                            int instructionValue = Convert.ToInt32(dtRInstruction.Rows[i]["Type"]);
+                            if (!Enum.IsDefined(typeof(Socket_Cache.Robot.InstructionType), instructionValue))
+                            {
+                                return i;
+                            }
+                            Socket_Cache.Robot.InstructionType instructionType =
+                                (Socket_Cache.Robot.InstructionType)instructionValue;
 
                             switch (instructionType)
                             {
@@ -9399,13 +10434,6 @@ namespace WPELibrary.Lib
                                     listSendSendList.Add(i);
                                     break;                      
 
-                                case Socket_Cache.Robot.InstructionType.LoopStart:
-                                    listLoopStart.Add(i);
-                                    break;
-
-                                case Socket_Cache.Robot.InstructionType.LoopEnd:
-                                    listLoopEnd.Add(i);
-                                    break;
                             }                      
                         }
 
@@ -9417,7 +10445,17 @@ namespace WPELibrary.Lib
 
                             if (!string.IsNullOrEmpty(sSendContent))
                             {
-                                Guid SID = Guid.Parse(sSendContent);
+                                if (!Guid.TryParse(sSendContent, out Guid SID) || SID == Guid.Empty)
+                                {
+                                    string sError = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_99), iSendIndex + 1, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_103));
+
+                                    if (!bFromSystem)
+                                    {
+                                        Socket_Operation.ShowMessageBox(sError);
+                                    }
+
+                                    return iSendIndex;
+                                }
                                 string SName = Socket_Cache.Send.GetSendName_ByGuid(SID);
 
                                 if (string.IsNullOrEmpty(SName))
@@ -9438,44 +10476,61 @@ namespace WPELibrary.Lib
 
                         #region//检测循环指令
 
-                        if (listLoopStart.Count != listLoopEnd.Count)
+                        Stack<int> openLoops = new Stack<int>();
+                        for (int i = 0; i < dtRInstruction.Rows.Count; i++)
                         {
-                            int iErrorIndex = 0;
-                            if (listLoopStart.Count > 0)
+                            currentInstructionIndex = i;
+                            int instructionValue = Convert.ToInt32(dtRInstruction.Rows[i]["Type"]);
+                            if (!Enum.IsDefined(typeof(Socket_Cache.Robot.InstructionType), instructionValue))
                             {
-                                iErrorIndex = listLoopStart[0];
+                                return i;
                             }
-                            else if (listLoopEnd.Count > 0)
+                            Socket_Cache.Robot.InstructionType instructionType =
+                                (Socket_Cache.Robot.InstructionType)instructionValue;
+                            if (instructionType == Socket_Cache.Robot.InstructionType.LoopStart)
                             {
-                                iErrorIndex = listLoopEnd[0];
-                            }
+                                if (!int.TryParse(dtRInstruction.Rows[i]["Content"].ToString(), out int loopCount) ||
+                                    loopCount <= 0)
+                                {
+                                    string sError = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_99), i + 1, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_104));
 
+                                    if (!bFromSystem)
+                                    {
+                                        Socket_Operation.ShowMessageBox(sError);
+                                    }
+
+                                    return i;
+                                }
+                                openLoops.Push(i);
+                            }
+                            else if (instructionType == Socket_Cache.Robot.InstructionType.LoopEnd)
+                            {
+                                if (openLoops.Count == 0)
+                                {
+                                    string sError = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_99), i + 1, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_104));
+
+                                    if (!bFromSystem)
+                                    {
+                                        Socket_Operation.ShowMessageBox(sError);
+                                    }
+
+                                    return i;
+                                }
+                                openLoops.Pop();
+                            }
+                        }
+
+                        if (openLoops.Count > 0)
+                        {
+                            int iErrorIndex = openLoops.Peek();
                             string sError = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_99), iErrorIndex + 1, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_104));
 
                             if (!bFromSystem)
                             {
                                 Socket_Operation.ShowMessageBox(sError);
-                            }                            
-                            
-                            return iErrorIndex;
-                        }
-
-                        for (int i = 0; i < listLoopStart.Count; i++) 
-                        {
-                            int iLoopStartIndex = listLoopStart[i];
-                            int iLoopEndIndex = listLoopEnd[i];
-
-                            if (iLoopStartIndex >= iLoopEndIndex)
-                            {
-                                string sError = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_99), iLoopEndIndex + 1, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_104));
-
-                                if (!bFromSystem)
-                                {
-                                    Socket_Operation.ShowMessageBox(sError);
-                                }                                
-
-                                return iLoopEndIndex;
                             }
+
+                            return iErrorIndex;
                         }
 
                         #endregion
@@ -9484,6 +10539,7 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    iReturn = currentInstructionIndex >= 0 ? currentInstructionIndex : 0;
                 }
 
                 return iReturn;
@@ -9522,14 +10578,42 @@ namespace WPELibrary.Lib
                 {
                     if (RID != Guid.Empty)
                     {
-                        Socket_RobotInfo sri = Socket_Cache.RobotList.lstRobot.Where(item => item.RID == RID).FirstOrDefault();
-
-                        if (sri != null)
+                        string robotName = null;
+                        DataTable instruction = null;
+                        Action capture = () =>
                         {
-                            if (sri.RInstruction.Rows.Count > 0)
+                            Socket_RobotInfo sri = Socket_Cache.RobotList.lstRobot
+                                .Where(item => item.RID == RID)
+                                .FirstOrDefault();
+                            if (sri != null)
+                            {
+                                robotName = sri.RName;
+                                instruction = sri.RInstruction == null
+                                    ? null
+                                    : sri.RInstruction.Copy();
+                            }
+                        };
+
+                        if (Socket_Cache.System.InvokeAction != null)
+                        {
+                            Socket_Cache.System.InvokeAction(capture);
+                        }
+                        else
+                        {
+                            capture();
+                        }
+
+                        if (instruction != null)
+                        {
+                            if (instruction.Rows.Count > 0)
                             {
                                 srReturn = new Socket_Robot();
-                                await Task.Run(() => srReturn.StartRobot(sri.RName, sri.RInstruction, parameters));
+                                bool started = await Task.Run(() =>
+                                    srReturn.StartRobot(robotName, instruction, parameters));
+                                if (!started)
+                                {
+                                    srReturn = null;
+                                }
                             }
                         }
                     }
@@ -9634,6 +10718,57 @@ namespace WPELibrary.Lib
                 }
             }
 
+            public static bool TryApplyListChangeAndSave(Action mutation)
+            {
+                if (mutation == null)
+                {
+                    return false;
+                }
+
+                List<Socket_RobotInfo> originalRobots = lstRobot.ToList();
+                List<string> originalFolders = lstFolders.ToList();
+                Dictionary<Socket_RobotInfo, string> originalRobotFolders =
+                    new Dictionary<Socket_RobotInfo, string>();
+                foreach (Socket_RobotInfo robot in originalRobots)
+                {
+                    if (robot != null && !originalRobotFolders.ContainsKey(robot))
+                    {
+                        originalRobotFolders[robot] = robot.RFolder;
+                    }
+                }
+
+                try
+                {
+                    mutation();
+                    if (SaveRobotList_ToDB())
+                    {
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(
+                        MethodBase.GetCurrentMethod().Name,
+                        ex.Message);
+                }
+
+                foreach (KeyValuePair<Socket_RobotInfo, string> pair in originalRobotFolders)
+                {
+                    pair.Key.RFolder = pair.Value;
+                }
+                lstRobot.Clear();
+                foreach (Socket_RobotInfo robot in originalRobots)
+                {
+                    lstRobot.Add(robot);
+                }
+                lstFolders.Clear();
+                foreach (string folder in originalFolders)
+                {
+                    lstFolders.Add(folder);
+                }
+                return false;
+            }
+
             #endregion
 
             #region//清空机器人列表（对话框）
@@ -9646,7 +10781,12 @@ namespace WPELibrary.Lib
 
                     if (dr.Equals(DialogResult.OK))
                     {
-                        Socket_Cache.RobotList.RobotListClear();
+                        if (!Socket_Cache.RobotList.TryApplyListChangeAndSave(
+                            Socket_Cache.RobotList.RobotListClear))
+                        {
+                            Socket_Operation.ShowMessageBox(
+                                Socket_Operation.GetUiText("UI_AssistantSaveFailed"));
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -9669,6 +10809,81 @@ namespace WPELibrary.Lib
                 }
             }
 
+            private static bool VisionColumnExists(DataRow row, string columnName)
+            {
+                return row != null && row.Table != null &&
+                    row.Table.Columns.Contains(columnName) &&
+                    row[columnName] != DBNull.Value;
+            }
+
+            private static int VisionInt(DataRow row, string columnName, int fallback)
+            {
+                return VisionColumnExists(row, columnName)
+                    ? Convert.ToInt32(row[columnName])
+                    : fallback;
+            }
+
+            private static long VisionLong(DataRow row, string columnName, long fallback)
+            {
+                return VisionColumnExists(row, columnName)
+                    ? Convert.ToInt64(row[columnName])
+                    : fallback;
+            }
+
+            private static double VisionDouble(DataRow row, string columnName, double fallback)
+            {
+                return VisionColumnExists(row, columnName)
+                    ? Convert.ToDouble(row[columnName], CultureInfo.InvariantCulture)
+                    : fallback;
+            }
+
+            private static bool VisionBool(DataRow row, string columnName, bool fallback)
+            {
+                return VisionColumnExists(row, columnName)
+                    ? Convert.ToBoolean(row[columnName])
+                    : fallback;
+            }
+
+            private static string VisionString(DataRow row, string columnName, string fallback)
+            {
+                return VisionColumnExists(row, columnName)
+                    ? row[columnName].ToString()
+                    : fallback;
+            }
+
+            private static T VisionEnum<T>(DataRow row, string columnName, T fallback)
+                where T : struct
+            {
+                int value = VisionInt(row, columnName, Convert.ToInt32(fallback));
+                return Enum.IsDefined(typeof(T), value)
+                    ? (T)Enum.ToObject(typeof(T), value)
+                    : fallback;
+            }
+
+            private static void DisposeVisionConditionResources(VisionConditionDefinition condition)
+            {
+                if (condition == null)
+                {
+                    return;
+                }
+                if (condition.Template != null)
+                {
+                    condition.Template.Dispose();
+                    condition.Template = null;
+                }
+                if (condition.TemplateVariants != null)
+                {
+                    foreach (Bitmap variant in condition.TemplateVariants)
+                    {
+                        if (variant != null)
+                        {
+                            variant.Dispose();
+                        }
+                    }
+                    condition.TemplateVariants.Clear();
+                }
+            }
+
             #endregion                        
 
             #region//机器人列表的列表操作
@@ -9677,83 +10892,86 @@ namespace WPELibrary.Lib
             {
                 try
                 {
-                    switch (listAction)
+                    if (sriList == null || sriList.Count == 0)
                     {
-                        case Socket_Cache.System.ListAction.Top:
+                        return;
+                    }
 
-                            sriList.Reverse();
+                    if (listAction == Socket_Cache.System.ListAction.Export)
+                    {
+                        string sRName = sriList[0].RName;
+                        Socket_Cache.RobotList.SaveRobotList_Dialog(sRName, sriList);
+                        return;
+                    }
+                    if (listAction == Socket_Cache.System.ListAction.Delete)
+                    {
+                        Socket_Cache.Robot.DeleteRobot_Dialog(sriList);
+                        return;
+                    }
 
-                            foreach (Socket_RobotInfo sri in sriList)
+                    List<Socket_RobotInfo> orderedSelection = sriList.ToList();
+                    bool saved = Socket_Cache.RobotList.TryApplyListChangeAndSave(
+                        delegate
+                        {
+                            switch (listAction)
                             {
-                                Socket_Cache.RobotList.lstRobot.Remove(sri);
-                                Socket_Cache.RobotList.lstRobot.Insert(0, sri);
+                                case Socket_Cache.System.ListAction.Top:
+                                    orderedSelection.Reverse();
+                                    foreach (Socket_RobotInfo sri in orderedSelection)
+                                    {
+                                        Socket_Cache.RobotList.lstRobot.Remove(sri);
+                                        Socket_Cache.RobotList.lstRobot.Insert(0, sri);
+                                    }
+                                    break;
+
+                                case Socket_Cache.System.ListAction.Up:
+                                    foreach (Socket_RobotInfo sri in orderedSelection)
+                                    {
+                                        int iIndex = Socket_Cache.RobotList.lstRobot.IndexOf(sri);
+                                        if (iIndex > 0)
+                                        {
+                                            Socket_Cache.RobotList.lstRobot.Remove(sri);
+                                            Socket_Cache.RobotList.lstRobot.Insert(iIndex - 1, sri);
+                                        }
+                                    }
+                                    break;
+
+                                case Socket_Cache.System.ListAction.Down:
+                                    orderedSelection.Reverse();
+                                    foreach (Socket_RobotInfo sri in orderedSelection)
+                                    {
+                                        int iIndex = Socket_Cache.RobotList.lstRobot.IndexOf(sri);
+                                        if (iIndex > -1 && iIndex < Socket_Cache.RobotList.lstRobot.Count - 1)
+                                        {
+                                            Socket_Cache.RobotList.lstRobot.Remove(sri);
+                                            Socket_Cache.RobotList.lstRobot.Insert(iIndex + 1, sri);
+                                        }
+                                    }
+                                    break;
+
+                                case Socket_Cache.System.ListAction.Bottom:
+                                    foreach (Socket_RobotInfo sri in orderedSelection)
+                                    {
+                                        Socket_Cache.RobotList.lstRobot.Remove(sri);
+                                        Socket_Cache.RobotList.lstRobot.Add(sri);
+                                    }
+                                    break;
+
+                                case Socket_Cache.System.ListAction.Copy:
+                                    foreach (Socket_RobotInfo sri in orderedSelection)
+                                    {
+                                        Socket_Cache.Robot.CopyRobot(sri);
+                                    }
+                                    break;
+
+                                default:
+                                    throw new ArgumentOutOfRangeException("listAction");
                             }
-
-                            break;
-
-                        case Socket_Cache.System.ListAction.Up:
-
-                            foreach (Socket_RobotInfo sri in sriList)
-                            {
-                                int iIndex = Socket_Cache.RobotList.lstRobot.IndexOf(sri);
-
-                                if (iIndex > 0)
-                                {
-                                    Socket_Cache.RobotList.lstRobot.Remove(sri);
-                                    Socket_Cache.RobotList.lstRobot.Insert(iIndex - 1, sri);
-                                }
-                            }
-
-                            break;
-
-                        case Socket_Cache.System.ListAction.Down:
-
-                            sriList.Reverse();
-
-                            foreach (Socket_RobotInfo sri in sriList)
-                            {
-                                int iIndex = Socket_Cache.RobotList.lstRobot.IndexOf(sri);
-
-                                if (iIndex > -1 && iIndex < Socket_Cache.RobotList.lstRobot.Count - 1)
-                                {
-                                    Socket_Cache.RobotList.lstRobot.Remove(sri);
-                                    Socket_Cache.RobotList.lstRobot.Insert(iIndex + 1, sri);
-                                }
-                            }
-
-                            break;
-
-                        case Socket_Cache.System.ListAction.Bottom:
-
-                            foreach (Socket_RobotInfo sri in sriList)
-                            {
-                                Socket_Cache.RobotList.lstRobot.Remove(sri);
-                                Socket_Cache.RobotList.lstRobot.Add(sri);
-                            }
-
-                            break;
-
-                        case Socket_Cache.System.ListAction.Copy:
-
-                            foreach (Socket_RobotInfo sri in sriList)
-                            {
-                                Socket_Cache.Robot.CopyRobot(sri);
-                            }
-
-                            break;
-
-                        case Socket_Cache.System.ListAction.Export:
-
-                            string sRName = sriList[0].RName;
-                            Socket_Cache.RobotList.SaveRobotList_Dialog(sRName, sriList);
-
-                            break;
-
-                        case Socket_Cache.System.ListAction.Delete:
-
-                            Socket_Cache.Robot.DeleteRobot_Dialog(sriList);
-                            
-                            break;
+                        });
+                    if (!saved)
+                    {
+                        Socket_Operation.ShowMessageBox(
+                            Socket_Operation.GetUiText("UI_AssistantSaveFailed"));
                     }
                 }
                 catch (Exception ex)
@@ -9766,25 +10984,36 @@ namespace WPELibrary.Lib
 
             #region//保存机器人列表到数据库
 
-            public static void SaveRobotList_ToDB()
+            public static bool SaveRobotList_ToDB()
             {
                 try
                 {
-                    Socket_Cache.DataBase.DeleteTable_Robot();
-                    Socket_Cache.DataBase.DeleteTable_RobotFolder();
+                    bool saved = Socket_Cache.DataBase.ExecuteAtomicSave(
+                        () =>
+                        {
+                            Socket_Cache.DataBase.DeleteTable_Robot();
+                            Socket_Cache.DataBase.DeleteTable_RobotFolder();
 
-                    foreach (Socket_RobotInfo sri in Socket_Cache.RobotList.lstRobot)
+                            foreach (Socket_RobotInfo sri in Socket_Cache.RobotList.lstRobot)
+                            {
+                                Socket_Cache.DataBase.InsertTable_Robot(sri);
+                            }
+                            for (int i = 0; i < Socket_Cache.RobotList.lstFolders.Count; i++)
+                            {
+                                Socket_Cache.DataBase.InsertTable_RobotFolder(Socket_Cache.RobotList.lstFolders[i], i);
+                            }
+                        },
+                        nameof(SaveRobotList_ToDB));
+                    if (!saved)
                     {
-                        Socket_Cache.DataBase.InsertTable_Robot(sri);
+                        Socket_Operation.DoLog(nameof(SaveRobotList_ToDB), "机器人列表保存失败，原数据库已保留。");
                     }
-                    for (int i = 0; i < Socket_Cache.RobotList.lstFolders.Count; i++)
-                    {
-                        Socket_Cache.DataBase.InsertTable_RobotFolder(Socket_Cache.RobotList.lstFolders[i], i);
-                    }
+                    return saved;
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    return false;
                 }
             }
 
@@ -9797,8 +11026,16 @@ namespace WPELibrary.Lib
                 try
                 {
                     DataTable dtRobot = Socket_Cache.DataBase.SelectTable_Robot();
-                    Socket_Cache.RobotList.lstFolders.Clear();
                     DataTable dtFolders = Socket_Cache.DataBase.SelectTable_RobotFolder();
+                    if (dtRobot == null || dtRobot.Columns.Count == 0 ||
+                        dtFolders == null || dtFolders.Columns.Count == 0)
+                    {
+                        Socket_Cache.System.SystemListLoadFailed = true;
+                        return;
+                    }
+
+                    // 支持重复初始化时从干净集合加载，避免助手预设在内存中重复显示。
+                    Socket_Cache.RobotList.RobotListClear();
                     foreach (DataRow folderRow in dtFolders.Rows)
                     {
                         string folder = folderRow["Name"].ToString();
@@ -9824,6 +11061,11 @@ namespace WPELibrary.Lib
 
                         DataTable RInstruction = Socket_Cache.Robot.InitInstructions();
                         DataTable dtInstruction = Socket_Cache.DataBase.SelectTable_RobotInstruction(RID);
+                        if (dtInstruction == null || dtInstruction.Columns.Count == 0)
+                        {
+                            Socket_Cache.System.SystemListLoadFailed = true;
+                            return;
+                        }
 
                         foreach (DataRow row in dtInstruction.Rows)
                         {
@@ -9834,6 +11076,85 @@ namespace WPELibrary.Lib
                         }
 
                         Socket_Cache.Robot.AddRobot(IsEnable, RID, RName, RInstruction, RFolder);
+
+                        Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot
+                            .FirstOrDefault(item => item.RID == RID);
+                        DataTable dtVisionProfile = Socket_Cache.DataBase.SelectTable_RobotVisionProfile(RID);
+                        if (robot != null && dtVisionProfile.Rows.Count > 0)
+                        {
+                            DataRow visionRow = dtVisionProfile.Rows[0];
+                            Socket_VisionProfile profile = new Socket_VisionProfile
+                            {
+                                WindowHandle = VisionLong(visionRow, "WindowHandle", 0L),
+                                ProcessId = VisionInt(visionRow, "ProcessId", 0),
+                                ProcessName = VisionString(visionRow, "ProcessName", string.Empty),
+                                ProcessPath = VisionString(visionRow, "ProcessPath", string.Empty),
+                                ProcessStartTimeUtcTicks = VisionLong(visionRow, "ProcessStartTimeUtcTicks", 0L),
+                                WindowTitle = VisionString(visionRow, "WindowTitle", string.Empty),
+                                Region = new VisionRegion
+                                {
+                                    X = VisionInt(visionRow, "RegionX", 0),
+                                    Y = VisionInt(visionRow, "RegionY", 0),
+                                    Width = VisionInt(visionRow, "RegionWidth", 0),
+                                    Height = VisionInt(visionRow, "RegionHeight", 0),
+                                    UseNormalizedCoordinates = VisionBool(visionRow, "RegionNormalized", false),
+                                    ReferenceWidth = VisionInt(visionRow, "RegionReferenceWidth", 0),
+                                    ReferenceHeight = VisionInt(visionRow, "RegionReferenceHeight", 0)
+                                },
+                                OcrOptions = new VisionOcrOptions
+                                {
+                                    ScaleFactor = VisionInt(visionRow, "OcrScale", 2),
+                                    ConvertToGrayscale = true,
+                                    UseBinaryThreshold = VisionBool(visionRow, "OcrBinary", false),
+                                    BinaryThreshold = (byte)Math.Max(0, Math.Min(255, VisionInt(visionRow, "OcrThreshold", 160))),
+                                    Contrast = VisionDouble(visionRow, "OcrContrast", 1D),
+                                    UseAdaptiveThreshold = VisionBool(visionRow, "OcrAdaptive", false),
+                                    AdaptiveThresholdWindowSize = VisionInt(visionRow, "OcrAdaptiveWindow", 15),
+                                    AdaptiveThresholdOffset = VisionInt(visionRow, "OcrAdaptiveOffset", 8),
+                                    Invert = VisionBool(visionRow, "OcrInvert", false),
+                                    UseDenoise = VisionBool(visionRow, "OcrDenoise", false),
+                                    UseSharpen = VisionBool(visionRow, "OcrSharpen", false),
+                                    CharacterWhitelist = VisionString(visionRow, "OcrWhitelist", string.Empty),
+                                    CharacterBlacklist = VisionString(visionRow, "OcrBlacklist", string.Empty),
+                                    Language = VisionString(visionRow, "OcrLanguage", "chi_sim+eng"),
+                                    ExecutablePath = VisionString(visionRow, "OcrExecutable", "tesseract.exe"),
+                                    TessdataPath = VisionString(visionRow, "OcrTessdataPath", string.Empty),
+                                    TimeoutMilliseconds = VisionInt(visionRow, "OcrTimeout", 5000),
+                                    PageSegmentationMode = VisionInt(visionRow, "OcrPsm", 6),
+                                    Engine = VisionEnum(visionRow, "OcrEngine", VisionOcrEngine.Auto),
+                                    OnnxModelDirectory = VisionString(visionRow, "OcrModelDirectory", "models\\ocr"),
+                                    OnnxDetectionThreshold = VisionDouble(visionRow, "OcrDetectionThreshold", 0.3D),
+                                    OnnxRecognitionThreshold = VisionDouble(visionRow, "OcrRecognitionThreshold", 0.5D),
+                                    OnnxMaxImageSide = VisionInt(visionRow, "OcrMaxImageSide", 960),
+                                    PythonExecutablePath = VisionString(visionRow, "OcrPythonExecutable", string.Empty),
+                                    PythonWorkerScriptPath = VisionString(visionRow, "OcrPythonWorkerScript", string.Empty),
+                                    PythonWorkerTimeoutMilliseconds = VisionInt(visionRow, "OcrPythonWorkerTimeout", 15000)
+                                },
+                                OcrCondition = new VisionTextCondition
+                                {
+                                    ExpectedText = VisionString(visionRow, "OcrKeyword", string.Empty),
+                                    MatchMode = VisionEnum(visionRow, "OcrMatchMode", VisionTextMatchMode.Contains),
+                                    MinimumConfidence = VisionDouble(visionRow, "OcrMinimumConfidence", 0.5D),
+                                     MinimumNumber = VisionDouble(visionRow, "OcrMinimumNumber", double.MinValue),
+                                     MaximumNumber = VisionDouble(visionRow, "OcrMaximumNumber", double.MaxValue)
+                                 },
+                                  CaptureSettings = new VisionCaptureSettings
+                                {
+                                    SourceMode = VisionEnum(visionRow, "CaptureSource", VisionCaptureSourceMode.Auto),
+                                    MinimumIntervalMilliseconds = VisionInt(visionRow, "CaptureInterval", 150),
+                                    SkipUnchangedFrames = VisionBool(visionRow, "CaptureSkipUnchanged", true),
+                                    HistoryLimit = VisionInt(visionRow, "CaptureHistoryLimit", 30),
+                                    SaveFailureSnapshots = VisionBool(visionRow, "CaptureSaveFailures", false),
+                                    FailureSnapshotDirectory = VisionString(visionRow, "CaptureFailureDirectory", string.Empty),
+                                    RequireExactClientSize = VisionBool(visionRow, "CaptureRequireExactClientSize", false),
+                                    RequiredClientWidth = VisionInt(visionRow, "CaptureRequiredClientWidth", 0),
+                                    RequiredClientHeight = VisionInt(visionRow, "CaptureRequiredClientHeight", 0)
+                                }
+                            };
+                            robot.VisionProfile = profile;
+                        }
+
+                        LoadVisionAssistantSteps(RID, robot);
                     }
                     foreach (Socket_RobotInfo robot in Socket_Cache.RobotList.lstRobot)
                     {
@@ -9845,7 +11166,186 @@ namespace WPELibrary.Lib
                 }
                 catch (Exception ex)
                 {
+                    Socket_Cache.System.SystemListLoadFailed = true;
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+            }
+
+            private static void LoadVisionAssistantSteps(Guid rid, Socket_RobotInfo robot)
+            {
+                if (robot == null)
+                {
+                    return;
+                }
+
+                DataTable dtConditions = Socket_Cache.DataBase.SelectTable_RobotVisionCondition(rid);
+                foreach (DataRow row in dtConditions.Rows)
+                {
+                    VisionConditionDefinition condition = null;
+                    VisionConditionDefinition verification = null;
+                    try
+                    {
+                        int conditionTypeValue = VisionInt(row, "ConditionType", 0);
+                        if (!Enum.IsDefined(typeof(VisionConditionType), conditionTypeValue))
+                        {
+                            continue;
+                        }
+
+                        condition = new VisionConditionDefinition
+                        {
+                            Name = VisionString(row, "Name", string.Empty),
+                            Type = (VisionConditionType)conditionTypeValue,
+                            Region = new VisionRegion
+                            {
+                                X = VisionInt(row, "RegionX", 0),
+                                Y = VisionInt(row, "RegionY", 0),
+                                Width = VisionInt(row, "RegionWidth", 0),
+                                Height = VisionInt(row, "RegionHeight", 0),
+                                UseNormalizedCoordinates = VisionBool(row, "RegionNormalized", false),
+                                ReferenceWidth = VisionInt(row, "RegionReferenceWidth", 0),
+                                ReferenceHeight = VisionInt(row, "RegionReferenceHeight", 0)
+                            },
+                             TextCondition = new VisionTextCondition
+                             {
+                                 ExpectedText = VisionString(row, "Keyword", string.Empty),
+                                 MatchMode = VisionEnum(row, "MatchMode", VisionTextMatchMode.Contains),
+                                 MinimumNumber = VisionDouble(row, "MinimumNumber", double.MinValue),
+                                 MaximumNumber = VisionDouble(row, "MaximumNumber", double.MaxValue),
+                                 MinimumConfidence = VisionDouble(row, "MinimumConfidence", 0.5D)
+                             },
+                             ColorCondition = new VisionColorCondition
+                             {
+                                 Red = (byte)Math.Max(0, Math.Min(255, VisionInt(row, "ColorR", 255))),
+                                 Green = (byte)Math.Max(0, Math.Min(255, VisionInt(row, "ColorG", 255))),
+                                 Blue = (byte)Math.Max(0, Math.Min(255, VisionInt(row, "ColorB", 255))),
+                                 Tolerance = VisionInt(row, "ColorTolerance", 16),
+                                 MinimumPixelCount = VisionInt(row, "ColorMinimumPixels", 10),
+                                 MinimumMatchRatio = VisionDouble(row, "ColorMinimumRatio", 0D)
+                             },
+                             MinimumSimilarity = VisionDouble(row, "MinimumSimilarity", 0.9D),
+                            NormalizeTemplateBrightness = VisionBool(row, "TemplateNormalize", true),
+                            AllowTemplateScaleVariation = VisionBool(row, "TemplateScaleVariation", false),
+                            TemplateMinimumScale = VisionDouble(row, "TemplateMinScale", 0.9D),
+                            TemplateMaximumScale = VisionDouble(row, "TemplateMaxScale", 1.1D),
+                            TemplateScaleStep = VisionDouble(row, "TemplateScaleStep", 0.05D),
+                            RequiredConfirmations = VisionInt(row, "RequiredConfirmations", 2),
+                            PollIntervalMilliseconds = VisionInt(row, "PollInterval", 150),
+                            TimeoutMilliseconds = VisionInt(row, "Timeout", 8000),
+                            MaxRetries = VisionInt(row, "MaxRetries", 1),
+                            FailurePolicy = VisionEnum(row, "FailurePolicy", VisionFailurePolicy.Stop)
+                        };
+                        VisionActionDefinition actionDefinition = new VisionActionDefinition
+                        {
+                            Type = VisionEnum(row, "ActionType", VisionActionType.None),
+                            ScrollDirection = VisionEnum(row, "ScrollDirection", VisionScrollDirection.Down),
+                            ScrollAmount = VisionInt(row, "ScrollAmount", 3),
+                            DelayMilliseconds = VisionInt(row, "ActionDelay", 300)
+                        };
+                        if (VisionBool(row, "VerificationEnabled", false))
+                        {
+                            int verificationTypeValue = VisionInt(row, "VerificationType", 0);
+                            if (!Enum.IsDefined(typeof(VisionConditionType), verificationTypeValue))
+                            {
+                                throw new InvalidDataException("The stored vision verification type is invalid.");
+                            }
+                            VisionConditionType verificationType = (VisionConditionType)verificationTypeValue;
+                            if (verificationType != VisionConditionType.TextAppears &&
+                                verificationType != VisionConditionType.TemplateAppears)
+                            {
+                                throw new InvalidDataException("The stored vision verification type is invalid.");
+                            }
+                            verification = new VisionConditionDefinition
+                            {
+                                Type = verificationType,
+                                Region = condition.Region == null ? new VisionRegion() : condition.Region.Clone(),
+                                RequiredConfirmations = condition.RequiredConfirmations,
+                                PollIntervalMilliseconds = condition.PollIntervalMilliseconds,
+                                TimeoutMilliseconds = condition.TimeoutMilliseconds,
+                                MaxRetries = condition.MaxRetries,
+                                FailurePolicy = condition.FailurePolicy,
+                                MinimumSimilarity = condition.MinimumSimilarity,
+                                NormalizeTemplateBrightness = condition.NormalizeTemplateBrightness,
+                                AllowTemplateScaleVariation = condition.AllowTemplateScaleVariation,
+                                TemplateMinimumScale = condition.TemplateMinimumScale,
+                                TemplateMaximumScale = condition.TemplateMaximumScale,
+                                TemplateScaleStep = condition.TemplateScaleStep,
+                                TextCondition = new VisionTextCondition
+                                {
+                                    ExpectedText = VisionString(row, "VerificationKeyword", string.Empty),
+                                    MatchMode = VisionTextMatchMode.Contains,
+                                    MinimumConfidence = 0D
+                                }
+                            };
+                            if (VisionColumnExists(row, "VerificationTemplatePng"))
+                            {
+                                verification.Template = VisionResourceSerializer.FromPngBytes(
+                                    row["VerificationTemplatePng"] as byte[]);
+                            }
+                            if (VisionBool(row, "VerificationSeparateRegion", false))
+                            {
+                                verification.Region = new VisionRegion
+                                {
+                                    X = VisionInt(row, "VerificationRegionX", verification.Region.X),
+                                    Y = VisionInt(row, "VerificationRegionY", verification.Region.Y),
+                                    Width = VisionInt(row, "VerificationRegionWidth", verification.Region.Width),
+                                    Height = VisionInt(row, "VerificationRegionHeight", verification.Region.Height),
+                                    UseNormalizedCoordinates = VisionBool(row, "VerificationRegionNormalized", false),
+                                    ReferenceWidth = VisionInt(row, "VerificationRegionReferenceWidth", 0),
+                                    ReferenceHeight = VisionInt(row, "VerificationRegionReferenceHeight", 0)
+                                };
+                            }
+                        }
+
+                        if (VisionColumnExists(row, "TemplatePng"))
+                        {
+                            byte[] templateBytes = row["TemplatePng"] as byte[];
+                            condition.Template = VisionResourceSerializer.FromPngBytes(templateBytes);
+                        }
+                        string variantText = VisionString(row, "TemplateVariants", string.Empty);
+                        if (!string.IsNullOrWhiteSpace(variantText))
+                        {
+                            foreach (string encoded in variantText.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+                            {
+                                try
+                                {
+                                    Bitmap variant = VisionResourceSerializer.FromPngBytes(Convert.FromBase64String(encoded));
+                                    if (variant != null)
+                                    {
+                                        condition.TemplateVariants.Add(variant);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                                }
+                            }
+                        }
+
+                        VisionAssistantStep loadedStep = new VisionAssistantStep
+                        {
+                            Name = condition.Name,
+                            Condition = condition,
+                            Action = null,
+                            ActionDefinition = actionDefinition,
+                            VerificationEnabled = verification != null,
+                            Verification = verification,
+                            VerificationUsesSeparateRegion = verification != null &&
+                                VisionBool(row, "VerificationSeparateRegion", false)
+                        };
+                        condition.Validate();
+                        actionDefinition.Validate();
+                        if (verification != null)
+                        {
+                            verification.Validate();
+                        }
+                        robot.VisionProfile.AssistantSteps.Add(loadedStep);
+                    }
+                    catch (Exception ex)
+                    {
+                        DisposeVisionConditionResources(condition);
+                        DisposeVisionConditionResources(verification);
+                        Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    }
                 }
             }
 
@@ -9967,6 +11467,12 @@ namespace WPELibrary.Lib
                             xeRobot.Add(xeInstruction);
                         }
 
+                        XElement xeVisionProfile = BuildVisionProfileXml(sri.VisionProfile);
+                        if (xeVisionProfile != null)
+                        {
+                            xeRobot.Add(xeVisionProfile);
+                        }
+
                         xeRoot.Add(xeRobot);
                     }
 
@@ -9978,6 +11484,171 @@ namespace WPELibrary.Lib
                 }
 
                 return null;
+            }
+
+            private static XElement BuildVisionProfileXml(Socket_VisionProfile profile)
+            {
+                if (profile == null || !profile.HasConfiguration)
+                {
+                    return null;
+                }
+
+                VisionOcrOptions ocrOptions = profile.OcrOptions ?? new VisionOcrOptions();
+                VisionTextCondition ocrCondition = profile.OcrCondition ?? new VisionTextCondition();
+                XElement vision = new XElement(
+                    "VisionProfile",
+                    new XElement("WindowHandle", profile.WindowHandle),
+                    new XElement("ProcessId", profile.ProcessId),
+                    new XElement("ProcessName", profile.ProcessName ?? string.Empty),
+                    new XElement("ProcessPath", profile.ProcessPath ?? string.Empty),
+                    new XElement("ProcessStartTimeUtcTicks", profile.ProcessStartTimeUtcTicks),
+                    new XElement("WindowTitle", profile.WindowTitle ?? string.Empty),
+                    new XElement("Region",
+                        new XElement("X", profile.Region == null ? 0 : profile.Region.X),
+                        new XElement("Y", profile.Region == null ? 0 : profile.Region.Y),
+                        new XElement("Width", profile.Region == null ? 0 : profile.Region.Width),
+                        new XElement("Height", profile.Region == null ? 0 : profile.Region.Height),
+                        new XElement("UseNormalizedCoordinates", profile.Region != null && profile.Region.UseNormalizedCoordinates),
+                        new XElement("ReferenceWidth", profile.Region == null ? 0 : profile.Region.ReferenceWidth),
+                        new XElement("ReferenceHeight", profile.Region == null ? 0 : profile.Region.ReferenceHeight)),
+                    new XElement("CaptureSettings",
+                        new XElement("SourceMode", profile.CaptureSettings == null ? 0 : (int)profile.CaptureSettings.SourceMode),
+                        new XElement("MinimumIntervalMilliseconds", profile.CaptureSettings == null ? 150 : profile.CaptureSettings.MinimumIntervalMilliseconds),
+                        new XElement("SkipUnchangedFrames", profile.CaptureSettings == null || profile.CaptureSettings.SkipUnchangedFrames),
+                        new XElement("HistoryLimit", profile.CaptureSettings == null ? 30 : profile.CaptureSettings.HistoryLimit),
+                        new XElement("SaveFailureSnapshots", profile.CaptureSettings != null && profile.CaptureSettings.SaveFailureSnapshots),
+                        new XElement("FailureSnapshotDirectory", profile.CaptureSettings == null ? string.Empty : profile.CaptureSettings.FailureSnapshotDirectory ?? string.Empty),
+                        new XElement("RequireExactClientSize", profile.CaptureSettings != null && profile.CaptureSettings.RequireExactClientSize),
+                        new XElement("RequiredClientWidth", profile.CaptureSettings == null ? 0 : profile.CaptureSettings.RequiredClientWidth),
+                        new XElement("RequiredClientHeight", profile.CaptureSettings == null ? 0 : profile.CaptureSettings.RequiredClientHeight)),
+                    new XElement("OcrOptions",
+                        new XElement("ScaleFactor", ocrOptions.ScaleFactor),
+                        new XElement("ConvertToGrayscale", ocrOptions.ConvertToGrayscale),
+                        new XElement("UseBinaryThreshold", ocrOptions.UseBinaryThreshold),
+                        new XElement("BinaryThreshold", ocrOptions.BinaryThreshold),
+                        new XElement("Contrast", ocrOptions.Contrast.ToString(CultureInfo.InvariantCulture)),
+                        new XElement("UseAdaptiveThreshold", ocrOptions.UseAdaptiveThreshold),
+                        new XElement("AdaptiveThresholdWindowSize", ocrOptions.AdaptiveThresholdWindowSize),
+                        new XElement("AdaptiveThresholdOffset", ocrOptions.AdaptiveThresholdOffset),
+                        new XElement("Invert", ocrOptions.Invert),
+                        new XElement("UseDenoise", ocrOptions.UseDenoise),
+                        new XElement("UseSharpen", ocrOptions.UseSharpen),
+                        new XElement("CharacterWhitelist", ocrOptions.CharacterWhitelist ?? string.Empty),
+                        new XElement("CharacterBlacklist", ocrOptions.CharacterBlacklist ?? string.Empty),
+                        new XElement("Language", ocrOptions.Language ?? string.Empty),
+                        new XElement("ExecutablePath", ocrOptions.ExecutablePath ?? string.Empty),
+                        new XElement("TessdataPath", ocrOptions.TessdataPath ?? string.Empty),
+                        new XElement("TimeoutMilliseconds", ocrOptions.TimeoutMilliseconds),
+                        new XElement("PageSegmentationMode", ocrOptions.PageSegmentationMode),
+                        new XElement("Engine", (int)ocrOptions.Engine),
+                        new XElement("OnnxModelDirectory", ocrOptions.OnnxModelDirectory ?? string.Empty),
+                        new XElement("OnnxDetectionThreshold", ocrOptions.OnnxDetectionThreshold.ToString(CultureInfo.InvariantCulture)),
+                        new XElement("OnnxRecognitionThreshold", ocrOptions.OnnxRecognitionThreshold.ToString(CultureInfo.InvariantCulture)),
+                        new XElement("OnnxMaxImageSide", ocrOptions.OnnxMaxImageSide),
+                        new XElement("PythonExecutablePath", ocrOptions.PythonExecutablePath ?? string.Empty),
+                        new XElement("PythonWorkerScriptPath", ocrOptions.PythonWorkerScriptPath ?? string.Empty),
+                        new XElement("PythonWorkerTimeoutMilliseconds", ocrOptions.PythonWorkerTimeoutMilliseconds)),
+                        new XElement("OcrCondition",
+                        new XElement("MatchMode", (int)ocrCondition.MatchMode),
+                        new XElement("ExpectedText", ocrCondition.ExpectedText ?? string.Empty),
+                        new XElement("MinimumConfidence", ocrCondition.MinimumConfidence.ToString(CultureInfo.InvariantCulture)),
+                        new XElement("MinimumNumber", ocrCondition.MinimumNumber.ToString(CultureInfo.InvariantCulture)),
+                        new XElement("MaximumNumber", ocrCondition.MaximumNumber.ToString(CultureInfo.InvariantCulture))));
+
+                if (profile.AssistantSteps != null && profile.AssistantSteps.Count > 0)
+                {
+                    XElement steps = new XElement("AssistantSteps");
+                    foreach (VisionAssistantStep step in profile.AssistantSteps)
+                    {
+                        if (step == null || step.Condition == null)
+                        {
+                            continue;
+                        }
+
+                        VisionConditionDefinition condition = step.Condition;
+                        VisionTextCondition textCondition = condition.TextCondition ?? new VisionTextCondition();
+                        VisionRegion verificationRegion = step.Verification == null || step.Verification.Region == null
+                            ? condition.Region
+                            : step.Verification.Region;
+                        XElement xeStep = new XElement(
+                            "Step",
+                            new XAttribute("Name", step.Name ?? string.Empty),
+                            new XElement("Condition",
+                                new XAttribute("Type", (int)condition.Type),
+                                new XAttribute("MinimumSimilarity", condition.MinimumSimilarity.ToString(CultureInfo.InvariantCulture)),
+                                new XAttribute("NormalizeTemplateBrightness", condition.NormalizeTemplateBrightness),
+                                new XAttribute("AllowTemplateScaleVariation", condition.AllowTemplateScaleVariation),
+                                new XAttribute("TemplateMinimumScale", condition.TemplateMinimumScale.ToString(CultureInfo.InvariantCulture)),
+                                new XAttribute("TemplateMaximumScale", condition.TemplateMaximumScale.ToString(CultureInfo.InvariantCulture)),
+                                new XAttribute("TemplateScaleStep", condition.TemplateScaleStep.ToString(CultureInfo.InvariantCulture)),
+                                new XAttribute("RequiredConfirmations", condition.RequiredConfirmations),
+                                new XAttribute("PollInterval", condition.PollIntervalMilliseconds),
+                                new XAttribute("Timeout", condition.TimeoutMilliseconds),
+                                new XAttribute("MaxRetries", condition.MaxRetries),
+                                new XAttribute("FailurePolicy", (int)condition.FailurePolicy),
+                                new XAttribute("ActionType", step.ActionDefinition == null ? 0 : (int)step.ActionDefinition.Type),
+                                new XAttribute("ScrollDirection", step.ActionDefinition == null ? 1 : (int)step.ActionDefinition.ScrollDirection),
+                                new XAttribute("ScrollAmount", step.ActionDefinition == null ? 3 : step.ActionDefinition.ScrollAmount),
+                                new XAttribute("ActionDelay", step.ActionDefinition == null ? 300 : step.ActionDefinition.DelayMilliseconds),
+                                new XAttribute("VerificationEnabled", step.VerificationEnabled),
+                                new XAttribute("VerificationType", step.Verification == null ? 0 : (int)step.Verification.Type),
+                                new XAttribute("VerificationKeyword", step.Verification == null || step.Verification.TextCondition == null ? string.Empty : step.Verification.TextCondition.ExpectedText ?? string.Empty),
+                                new XAttribute("VerificationSeparateRegion", step.VerificationUsesSeparateRegion),
+                                new XElement("Region",
+                                    new XElement("X", condition.Region == null ? 0 : condition.Region.X),
+                                    new XElement("Y", condition.Region == null ? 0 : condition.Region.Y),
+                                    new XElement("Width", condition.Region == null ? 0 : condition.Region.Width),
+                                    new XElement("Height", condition.Region == null ? 0 : condition.Region.Height),
+                                    new XElement("UseNormalizedCoordinates", condition.Region != null && condition.Region.UseNormalizedCoordinates),
+                                    new XElement("ReferenceWidth", condition.Region == null ? 0 : condition.Region.ReferenceWidth),
+                                    new XElement("ReferenceHeight", condition.Region == null ? 0 : condition.Region.ReferenceHeight)),
+                                 new XElement("TextCondition",
+                                     new XAttribute("MatchMode", (int)textCondition.MatchMode),
+                                     new XAttribute("ExpectedText", textCondition.ExpectedText ?? string.Empty),
+                                     new XAttribute("MinimumConfidence", textCondition.MinimumConfidence.ToString(CultureInfo.InvariantCulture)),
+                                     new XAttribute("MinimumNumber", textCondition.MinimumNumber.ToString(CultureInfo.InvariantCulture)),
+                                     new XAttribute("MaximumNumber", textCondition.MaximumNumber.ToString(CultureInfo.InvariantCulture))),
+                                 new XElement("ColorCondition",
+                                     new XAttribute("Red", condition.ColorCondition == null ? 255 : condition.ColorCondition.Red),
+                                     new XAttribute("Green", condition.ColorCondition == null ? 255 : condition.ColorCondition.Green),
+                                     new XAttribute("Blue", condition.ColorCondition == null ? 255 : condition.ColorCondition.Blue),
+                                     new XAttribute("Tolerance", condition.ColorCondition == null ? 16 : condition.ColorCondition.Tolerance),
+                                     new XAttribute("MinimumPixelCount", condition.ColorCondition == null ? 10 : condition.ColorCondition.MinimumPixelCount),
+                                     new XAttribute("MinimumMatchRatio", (condition.ColorCondition == null ? 0D : condition.ColorCondition.MinimumMatchRatio).ToString(CultureInfo.InvariantCulture))),
+                                 new XElement(
+                                    "TemplatePng",
+                                    Convert.ToBase64String(VisionResourceSerializer.ToPngBytes(condition.Template))),
+                                new XElement(
+                                    "VerificationTemplatePng",
+                                    Convert.ToBase64String(VisionResourceSerializer.ToPngBytes(
+                                        step.Verification == null ? null : step.Verification.Template))),
+                                new XElement(
+                                    "VerificationRegion",
+                                    new XElement("X", verificationRegion == null ? 0 : verificationRegion.X),
+                                    new XElement("Y", verificationRegion == null ? 0 : verificationRegion.Y),
+                                    new XElement("Width", verificationRegion == null ? 0 : verificationRegion.Width),
+                                    new XElement("Height", verificationRegion == null ? 0 : verificationRegion.Height),
+                                    new XElement("UseNormalizedCoordinates", verificationRegion != null && verificationRegion.UseNormalizedCoordinates),
+                                    new XElement("ReferenceWidth", verificationRegion == null ? 0 : verificationRegion.ReferenceWidth),
+                                    new XElement("ReferenceHeight", verificationRegion == null ? 0 : verificationRegion.ReferenceHeight))));
+                        if (condition.TemplateVariants != null && condition.TemplateVariants.Count > 0)
+                        {
+                            xeStep.Element("Condition").Add(
+                                new XElement(
+                                    "TemplateVariants",
+                                    string.Join(";", condition.TemplateVariants
+                                        .Where(variant => variant != null)
+                                        .Select(variant => Convert.ToBase64String(VisionResourceSerializer.ToPngBytes(variant))))));
+                        }
+                        steps.Add(xeStep);
+                    }
+                    if (steps.HasElements)
+                    {
+                        vision.Add(steps);
+                    }
+                }
+
+                return vision;
             }
 
             #endregion
@@ -10129,12 +11800,385 @@ namespace WPELibrary.Lib
                         }
 
                         Socket_Cache.Robot.AddRobot(IsEnable, RID, RName, RInstruction, RFolder);
+                        Socket_RobotInfo importedRobot = Socket_Cache.RobotList.lstRobot
+                            .FirstOrDefault(item => item.RID == RID);
+                        XElement xeVision = xeRobot.Element("VisionProfile");
+                        if (importedRobot != null && xeVision != null)
+                        {
+                            importedRobot.VisionProfile = ParseVisionProfile(xeVision);
+                        }
                     }
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
                 }
+            }
+
+            private static Socket_VisionProfile ParseVisionProfile(XElement xeVision)
+            {
+                Socket_VisionProfile profile = new Socket_VisionProfile();
+                if (xeVision == null)
+                {
+                    return profile;
+                }
+
+                XElement xeRegion = xeVision.Element("Region");
+                profile.WindowHandle = XmlLong(xeVision, "WindowHandle", 0L);
+                profile.ProcessId = XmlInt(xeVision, "ProcessId", 0);
+                profile.ProcessName = XmlString(xeVision, "ProcessName", string.Empty);
+                profile.ProcessPath = XmlString(xeVision, "ProcessPath", string.Empty);
+                profile.ProcessStartTimeUtcTicks = XmlLong(xeVision, "ProcessStartTimeUtcTicks", 0L);
+                profile.WindowTitle = XmlString(xeVision, "WindowTitle", string.Empty);
+                if (xeRegion != null)
+                {
+                    profile.Region = new VisionRegion
+                    {
+                        X = XmlInt(xeRegion, "X", 0),
+                        Y = XmlInt(xeRegion, "Y", 0),
+                        Width = XmlInt(xeRegion, "Width", 0),
+                        Height = XmlInt(xeRegion, "Height", 0),
+                        UseNormalizedCoordinates = XmlBool(xeRegion, "UseNormalizedCoordinates", false),
+                        ReferenceWidth = XmlInt(xeRegion, "ReferenceWidth", 0),
+                        ReferenceHeight = XmlInt(xeRegion, "ReferenceHeight", 0)
+                    };
+                }
+
+                XElement xeCaptureSettings = xeVision.Element("CaptureSettings");
+                if (xeCaptureSettings != null)
+                {
+                    profile.CaptureSettings = new VisionCaptureSettings
+                    {
+                        SourceMode = XmlEnum(xeCaptureSettings, "SourceMode", VisionCaptureSourceMode.Auto),
+                        MinimumIntervalMilliseconds = XmlInt(xeCaptureSettings, "MinimumIntervalMilliseconds", 150),
+                        SkipUnchangedFrames = XmlBool(xeCaptureSettings, "SkipUnchangedFrames", true),
+                        HistoryLimit = XmlInt(xeCaptureSettings, "HistoryLimit", 30),
+                        SaveFailureSnapshots = XmlBool(xeCaptureSettings, "SaveFailureSnapshots", false),
+                        FailureSnapshotDirectory = XmlString(xeCaptureSettings, "FailureSnapshotDirectory", string.Empty),
+                        RequireExactClientSize = XmlBool(xeCaptureSettings, "RequireExactClientSize", false),
+                        RequiredClientWidth = XmlInt(xeCaptureSettings, "RequiredClientWidth", 0),
+                        RequiredClientHeight = XmlInt(xeCaptureSettings, "RequiredClientHeight", 0)
+                    };
+                }
+
+                XElement xeOcrOptions = xeVision.Element("OcrOptions");
+                if (xeOcrOptions != null)
+                {
+                    profile.OcrOptions = new VisionOcrOptions
+                    {
+                        ScaleFactor = XmlInt(xeOcrOptions, "ScaleFactor", 2),
+                        ConvertToGrayscale = XmlBool(xeOcrOptions, "ConvertToGrayscale", true),
+                        UseBinaryThreshold = XmlBool(xeOcrOptions, "UseBinaryThreshold", false),
+                        BinaryThreshold = (byte)Math.Max(0, Math.Min(255, XmlInt(xeOcrOptions, "BinaryThreshold", 160))),
+                        Contrast = XmlDouble(xeOcrOptions, "Contrast", 1D),
+                        UseAdaptiveThreshold = XmlBool(xeOcrOptions, "UseAdaptiveThreshold", false),
+                        AdaptiveThresholdWindowSize = XmlInt(xeOcrOptions, "AdaptiveThresholdWindowSize", 15),
+                        AdaptiveThresholdOffset = XmlInt(xeOcrOptions, "AdaptiveThresholdOffset", 8),
+                        Invert = XmlBool(xeOcrOptions, "Invert", false),
+                        UseDenoise = XmlBool(xeOcrOptions, "UseDenoise", false),
+                        UseSharpen = XmlBool(xeOcrOptions, "UseSharpen", false),
+                        CharacterWhitelist = XmlString(xeOcrOptions, "CharacterWhitelist", string.Empty),
+                        CharacterBlacklist = XmlString(xeOcrOptions, "CharacterBlacklist", string.Empty),
+                        Language = XmlString(xeOcrOptions, "Language", "chi_sim+eng"),
+                        ExecutablePath = XmlString(xeOcrOptions, "ExecutablePath", "tesseract.exe"),
+                        TessdataPath = XmlString(xeOcrOptions, "TessdataPath", string.Empty),
+                        TimeoutMilliseconds = XmlInt(xeOcrOptions, "TimeoutMilliseconds", 5000),
+                        PageSegmentationMode = XmlInt(xeOcrOptions, "PageSegmentationMode", 6),
+                        Engine = XmlEnum(xeOcrOptions, "Engine", VisionOcrEngine.Auto),
+                        OnnxModelDirectory = XmlString(xeOcrOptions, "OnnxModelDirectory", "models\\ocr"),
+                        OnnxDetectionThreshold = XmlDouble(xeOcrOptions, "OnnxDetectionThreshold", 0.3D),
+                        OnnxRecognitionThreshold = XmlDouble(xeOcrOptions, "OnnxRecognitionThreshold", 0.5D),
+                        OnnxMaxImageSide = XmlInt(xeOcrOptions, "OnnxMaxImageSide", 960),
+                        PythonExecutablePath = XmlString(xeOcrOptions, "PythonExecutablePath", string.Empty),
+                        PythonWorkerScriptPath = XmlString(xeOcrOptions, "PythonWorkerScriptPath", string.Empty),
+                        PythonWorkerTimeoutMilliseconds = XmlInt(xeOcrOptions, "PythonWorkerTimeoutMilliseconds", 15000)
+                    };
+                }
+
+                XElement xeOcrCondition = xeVision.Element("OcrCondition");
+                if (xeOcrCondition != null)
+                {
+                    profile.OcrCondition = new VisionTextCondition
+                    {
+                        MatchMode = XmlEnum(xeOcrCondition, "MatchMode", VisionTextMatchMode.Contains),
+                        ExpectedText = XmlString(xeOcrCondition, "ExpectedText", string.Empty),
+                        MinimumConfidence = XmlDouble(xeOcrCondition, "MinimumConfidence", 0.5D),
+                        MinimumNumber = XmlDouble(xeOcrCondition, "MinimumNumber", double.MinValue),
+                        MaximumNumber = XmlDouble(xeOcrCondition, "MaximumNumber", double.MaxValue)
+                    };
+                }
+
+                XElement xeSteps = xeVision.Element("AssistantSteps");
+                if (xeSteps != null)
+                {
+                    foreach (XElement xeStep in xeSteps.Elements("Step"))
+                    {
+                        XElement xeCondition = xeStep.Element("Condition");
+                        if (xeCondition == null)
+                        {
+                            continue;
+                        }
+
+                        int typeValue = XmlAttributeInt(xeCondition, "Type", 0);
+                        if (!Enum.IsDefined(typeof(VisionConditionType), typeValue))
+                        {
+                            continue;
+                        }
+
+                        XElement xeConditionRegion = xeCondition.Element("Region");
+                        XElement xeTextCondition = xeCondition.Element("TextCondition");
+                        XElement xeColorCondition = xeCondition.Element("ColorCondition");
+                        VisionConditionDefinition condition = new VisionConditionDefinition
+                        {
+                            Type = (VisionConditionType)typeValue,
+                            NormalizeTemplateBrightness = XmlAttributeBool(xeCondition, "NormalizeTemplateBrightness", true),
+                            AllowTemplateScaleVariation = XmlAttributeBool(xeCondition, "AllowTemplateScaleVariation", false),
+                            TemplateMinimumScale = XmlAttributeDouble(xeCondition, "TemplateMinimumScale", 0.9D),
+                            TemplateMaximumScale = XmlAttributeDouble(xeCondition, "TemplateMaximumScale", 1.1D),
+                            TemplateScaleStep = XmlAttributeDouble(xeCondition, "TemplateScaleStep", 0.05D),
+                            Region = new VisionRegion
+                            {
+                                X = xeConditionRegion == null ? 0 : XmlInt(xeConditionRegion, "X", 0),
+                                Y = xeConditionRegion == null ? 0 : XmlInt(xeConditionRegion, "Y", 0),
+                                Width = xeConditionRegion == null ? 0 : XmlInt(xeConditionRegion, "Width", 0),
+                                Height = xeConditionRegion == null ? 0 : XmlInt(xeConditionRegion, "Height", 0),
+                                UseNormalizedCoordinates = xeConditionRegion != null && XmlBool(xeConditionRegion, "UseNormalizedCoordinates", false),
+                                ReferenceWidth = xeConditionRegion == null ? 0 : XmlInt(xeConditionRegion, "ReferenceWidth", 0),
+                                ReferenceHeight = xeConditionRegion == null ? 0 : XmlInt(xeConditionRegion, "ReferenceHeight", 0)
+                            },
+                            TextCondition = new VisionTextCondition
+                            {
+                                MatchMode = XmlAttributeEnum(xeTextCondition, "MatchMode", VisionTextMatchMode.Contains),
+                                ExpectedText = XmlAttributeString(xeTextCondition, "ExpectedText", string.Empty),
+                                MinimumConfidence = XmlAttributeDouble(xeTextCondition, "MinimumConfidence", 0.5D),
+                                MinimumNumber = XmlAttributeDouble(xeTextCondition, "MinimumNumber", double.MinValue),
+                                 MaximumNumber = XmlAttributeDouble(xeTextCondition, "MaximumNumber", double.MaxValue)
+                             },
+                             ColorCondition = new VisionColorCondition
+                             {
+                                 Red = (byte)Math.Max(0, Math.Min(255, XmlAttributeInt(xeColorCondition, "Red", 255))),
+                                 Green = (byte)Math.Max(0, Math.Min(255, XmlAttributeInt(xeColorCondition, "Green", 255))),
+                                 Blue = (byte)Math.Max(0, Math.Min(255, XmlAttributeInt(xeColorCondition, "Blue", 255))),
+                                 Tolerance = XmlAttributeInt(xeColorCondition, "Tolerance", 16),
+                                 MinimumPixelCount = XmlAttributeInt(xeColorCondition, "MinimumPixelCount", 10),
+                                 MinimumMatchRatio = XmlAttributeDouble(xeColorCondition, "MinimumMatchRatio", 0D)
+                             },
+                             MinimumSimilarity = XmlAttributeDouble(xeCondition, "MinimumSimilarity", 0.9D),
+                            RequiredConfirmations = XmlAttributeInt(xeCondition, "RequiredConfirmations", 2),
+                            PollIntervalMilliseconds = XmlAttributeInt(xeCondition, "PollInterval", 150),
+                            TimeoutMilliseconds = XmlAttributeInt(xeCondition, "Timeout", 8000),
+                            MaxRetries = XmlAttributeInt(xeCondition, "MaxRetries", 1),
+                                FailurePolicy = XmlAttributeEnum(xeCondition, "FailurePolicy", VisionFailurePolicy.Stop)
+                        };
+                        VisionActionDefinition actionDefinition = new VisionActionDefinition
+                        {
+                            Type = XmlAttributeEnum(xeCondition, "ActionType", VisionActionType.None),
+                            ScrollDirection = XmlAttributeEnum(xeCondition, "ScrollDirection", VisionScrollDirection.Down),
+                            ScrollAmount = XmlAttributeInt(xeCondition, "ScrollAmount", 3),
+                            DelayMilliseconds = XmlAttributeInt(xeCondition, "ActionDelay", 300)
+                        };
+                        string templateText = XmlString(xeCondition, "TemplatePng", string.Empty);
+                        if (!string.IsNullOrWhiteSpace(templateText))
+                        {
+                            try
+                            {
+                                condition.Template = VisionResourceSerializer.FromPngBytes(
+                                    Convert.FromBase64String(templateText));
+                            }
+                            catch (Exception ex)
+                            {
+                                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                            }
+                        }
+                        string variantsText = XmlString(xeCondition, "TemplateVariants", string.Empty);
+                        if (!string.IsNullOrWhiteSpace(variantsText))
+                        {
+                            foreach (string encoded in variantsText.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+                            {
+                                try
+                                {
+                                    Bitmap variant = VisionResourceSerializer.FromPngBytes(Convert.FromBase64String(encoded));
+                                    if (variant != null)
+                                    {
+                                        condition.TemplateVariants.Add(variant);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                                }
+                            }
+                        }
+
+                        VisionConditionDefinition verification = null;
+                        if (XmlAttributeBool(xeCondition, "VerificationEnabled", false))
+                        {
+                            int verificationType = XmlAttributeInt(xeCondition, "VerificationType", 0);
+                            if (verificationType != (int)VisionConditionType.TextAppears &&
+                                verificationType != (int)VisionConditionType.TemplateAppears)
+                            {
+                                Socket_Operation.DoLog(
+                                    MethodBase.GetCurrentMethod().Name,
+                                    "Ignored an invalid vision verification type.");
+                            }
+                            else
+                            {
+                                verification = new VisionConditionDefinition
+                                {
+                                    Type = (VisionConditionType)verificationType,
+                                Region = condition.Region == null ? new VisionRegion() : condition.Region.Clone(),
+                                RequiredConfirmations = condition.RequiredConfirmations,
+                                PollIntervalMilliseconds = condition.PollIntervalMilliseconds,
+                                TimeoutMilliseconds = condition.TimeoutMilliseconds,
+                                MaxRetries = condition.MaxRetries,
+                                FailurePolicy = condition.FailurePolicy,
+                                MinimumSimilarity = condition.MinimumSimilarity,
+                                NormalizeTemplateBrightness = condition.NormalizeTemplateBrightness,
+                                AllowTemplateScaleVariation = condition.AllowTemplateScaleVariation,
+                                TemplateMinimumScale = condition.TemplateMinimumScale,
+                                TemplateMaximumScale = condition.TemplateMaximumScale,
+                                TemplateScaleStep = condition.TemplateScaleStep,
+                                TextCondition = new VisionTextCondition
+                                {
+                                    ExpectedText = XmlAttributeString(xeCondition, "VerificationKeyword", string.Empty),
+                                    MatchMode = VisionTextMatchMode.Contains,
+                                    MinimumConfidence = 0D
+                                }
+                                };
+                                string verificationTemplate = XmlString(xeCondition, "VerificationTemplatePng", string.Empty);
+                                if (!string.IsNullOrWhiteSpace(verificationTemplate))
+                                {
+                                    try
+                                    {
+                                        verification.Template = VisionResourceSerializer.FromPngBytes(
+                                            Convert.FromBase64String(verificationTemplate));
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                                    }
+                                }
+                                if (XmlAttributeBool(xeCondition, "VerificationSeparateRegion", false))
+                                {
+                                    XElement verificationRegion = xeCondition.Element("VerificationRegion");
+                                    if (verificationRegion != null)
+                                    {
+                                        verification.Region = new VisionRegion
+                                        {
+                                            X = XmlInt(verificationRegion, "X", verification.Region.X),
+                                            Y = XmlInt(verificationRegion, "Y", verification.Region.Y),
+                                            Width = XmlInt(verificationRegion, "Width", verification.Region.Width),
+                                            Height = XmlInt(verificationRegion, "Height", verification.Region.Height),
+                                            UseNormalizedCoordinates = XmlBool(verificationRegion, "UseNormalizedCoordinates", false),
+                                            ReferenceWidth = XmlInt(verificationRegion, "ReferenceWidth", 0),
+                                            ReferenceHeight = XmlInt(verificationRegion, "ReferenceHeight", 0)
+                                        };
+                                    }
+                                }
+                            }
+                        }
+
+                        profile.AssistantSteps.Add(new VisionAssistantStep
+                        {
+                            Name = XmlAttributeString(xeStep, "Name", string.Empty),
+                            Condition = condition,
+                            Action = null,
+                            ActionDefinition = actionDefinition,
+                            VerificationEnabled = verification != null,
+                            Verification = verification,
+                            VerificationUsesSeparateRegion = verification != null &&
+                                XmlAttributeBool(xeCondition, "VerificationSeparateRegion", false)
+                        });
+                    }
+                }
+
+                return profile;
+            }
+
+            private static string XmlString(XElement parent, string name, string fallback)
+            {
+                XElement element = parent == null ? null : parent.Element(name);
+                return element == null ? fallback : element.Value;
+            }
+
+            private static int XmlInt(XElement parent, string name, int fallback)
+            {
+                int value;
+                return int.TryParse(XmlString(parent, name, string.Empty), out value) ? value : fallback;
+            }
+
+            private static long XmlLong(XElement parent, string name, long fallback)
+            {
+                long value;
+                return long.TryParse(XmlString(parent, name, string.Empty), out value) ? value : fallback;
+            }
+
+            private static double XmlDouble(XElement parent, string name, double fallback)
+            {
+                double value;
+                return double.TryParse(
+                    XmlString(parent, name, string.Empty),
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out value)
+                    ? value
+                    : fallback;
+            }
+
+            private static bool XmlBool(XElement parent, string name, bool fallback)
+            {
+                bool value;
+                return bool.TryParse(XmlString(parent, name, string.Empty), out value) ? value : fallback;
+            }
+
+            private static string XmlAttributeString(XElement element, string name, string fallback)
+            {
+                XAttribute attribute = element == null ? null : element.Attribute(name);
+                return attribute == null ? fallback : attribute.Value;
+            }
+
+            private static int XmlAttributeInt(XElement element, string name, int fallback)
+            {
+                int value;
+                return int.TryParse(XmlAttributeString(element, name, string.Empty), out value) ? value : fallback;
+            }
+
+            private static T XmlEnum<T>(XElement parent, string name, T fallback)
+                where T : struct
+            {
+                int value = XmlInt(parent, name, Convert.ToInt32(fallback));
+                return Enum.IsDefined(typeof(T), value)
+                    ? (T)Enum.ToObject(typeof(T), value)
+                    : fallback;
+            }
+
+            private static T XmlAttributeEnum<T>(XElement element, string name, T fallback)
+                where T : struct
+            {
+                int value = XmlAttributeInt(element, name, Convert.ToInt32(fallback));
+                return Enum.IsDefined(typeof(T), value)
+                    ? (T)Enum.ToObject(typeof(T), value)
+                    : fallback;
+            }
+
+            private static double XmlAttributeDouble(XElement element, string name, double fallback)
+            {
+                double value;
+                return double.TryParse(
+                    XmlAttributeString(element, name, string.Empty),
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out value)
+                    ? value
+                    : fallback;
+            }
+
+            private static bool XmlAttributeBool(XElement element, string name, bool fallback)
+            {
+                bool value;
+                return bool.TryParse(XmlAttributeString(element, name, string.Empty), out value)
+                    ? value
+                    : fallback;
             }
 
             #endregion
@@ -10191,7 +12235,7 @@ namespace WPELibrary.Lib
                             {
                                 foreach (Socket_PacketInfo spi in spiList)
                                 {
-                                    Socket_Cache.Send.AddSendCollection(ssi.SCollection, spi.PacketSocket, spi.PacketType, spi.PacketFrom, spi.PacketTo, spi.PacketBuffer, spi.ByteAnnotations);
+                                    Socket_Cache.Send.AddSendCollection(ssi.SCollection, spi.PacketSocket, spi.PacketType, spi.PacketFrom, spi.PacketTo, spi.PacketBuffer, spi.ByteAnnotations, spi.VariableBindings, spi.SortOrder);
                                 }                                
                             }
                         }
@@ -10203,7 +12247,7 @@ namespace WPELibrary.Lib
                 }
             }
 
-            public static void AddSendCollection(BindingList<Socket_PacketInfo> SCollection, int Socket, Socket_Cache.SocketPacket.PacketType ptType, string PacketFrom, string PacketTo, byte[] PacketBuffer, IEnumerable<Socket_ByteAnnotationInfo> annotations = null)
+            public static void AddSendCollection(BindingList<Socket_PacketInfo> SCollection, int Socket, Socket_Cache.SocketPacket.PacketType ptType, string PacketFrom, string PacketTo, byte[] PacketBuffer, IEnumerable<Socket_ByteAnnotationInfo> annotations = null, IEnumerable<PresetVariableBinding> variableBindings = null, int sortOrder = 0)
             {
                 try
                 {
@@ -10214,6 +12258,11 @@ namespace WPELibrary.Lib
                     spi.PacketTo = PacketTo;
                     spi.PacketBuffer = PacketBuffer;
                     spi.ByteAnnotations = Socket_ByteAnnotationEngine.Clone(annotations);
+                    spi.VariableBindings = (variableBindings ?? Enumerable.Empty<PresetVariableBinding>())
+                        .Where(item => item != null)
+                        .Select(item => item.Clone())
+                        .ToList();
+                    spi.SortOrder = sortOrder > 0 ? sortOrder : SCollection.Count + 1;
                     SCollection.Add(spi);
                 }
                 catch (Exception ex)
@@ -10496,12 +12545,54 @@ namespace WPELibrary.Lib
 
             #region//执行发送
 
+            public sealed class SendStartResult
+            {
+                public Socket_Send Send { get; private set; }
+                public string Error { get; private set; }
+                public string ErrorCode { get; private set; }
+
+                internal static SendStartResult Succeeded(Socket_Send send)
+                {
+                    return new SendStartResult
+                    {
+                        Send = send,
+                        Error = string.Empty,
+                        ErrorCode = string.Empty
+                    };
+                }
+
+                internal static SendStartResult Failed(string error, string errorCode = "preset_invalid")
+                {
+                    return new SendStartResult
+                    {
+                        Send = null,
+                        Error = string.IsNullOrWhiteSpace(error)
+                            ? "发送预设未能启动。"
+                            : error,
+                        ErrorCode = string.IsNullOrWhiteSpace(errorCode)
+                            ? "preset_invalid"
+                            : errorCode
+                    };
+                }
+            }
+
             public static Socket_Send DoSend(Guid SID)
             {
-                return Task.Run(() => DoSendAsync(SID))
-                          .ConfigureAwait(false)
-                          .GetAwaiter()
-                          .GetResult();
+                SendStartResult result = Task.Run(() => DoSendWithResultAsync(SID))
+                    .ConfigureAwait(false)
+                    .GetAwaiter().GetResult();
+                if (result != null && result.Send == null && !string.IsNullOrWhiteSpace(result.Error))
+                {
+                    Socket_Operation.DoLog(nameof(DoSend), result.Error);
+                }
+                return result == null ? null : result.Send;
+            }
+
+            public static SendStartResult DoSendWithResult(Guid SID)
+            {
+                return Task.Run(() => DoSendWithResultAsync(SID))
+                    .ConfigureAwait(false)
+                    .GetAwaiter().GetResult();
             }
 
             public static void DoSend_ByIndex(int SendListIndex)
@@ -10526,45 +12617,168 @@ namespace WPELibrary.Lib
 
             public static async Task<Socket_Send> DoSendAsync(Guid SID)
             {
+                SendStartResult result = await DoSendWithResultAsync(SID);
+                return result.Send;
+            }
+
+            public static async Task<SendStartResult> DoSendWithResultAsync(Guid SID)
+            {
                 Socket_Send ssReturn = null;
 
                 try
                 {
-                    if (SID != null && SID != Guid.Empty)
+                    if (SID == Guid.Empty)
                     {
-                        Socket_SendInfo ssi = Socket_Cache.SendList.lstSend.Where(item => item.SID == SID).FirstOrDefault();
-
-                        if (ssi != null)
-                        {
-                            if (ssi.SCollection.Count > 0)
-                            {
-                                int resolvedSocket =
-                                    Socket_Cache.SocketList.ResolveCurrentSocket(ssi.SCollection);
-                                if (resolvedSocket <= 0)
-                                {
-                                    Socket_Operation.DoLog(
-                                        nameof(DoSendAsync),
-                                        MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_49));
-                                    return null;
-                                }
-
-                                ssReturn = new Socket_Send();
-                                await Task.Run(() => ssReturn.StartSend(
-                                    ssi.SName,
-                                    resolvedSocket,
-                                    ssi.SLoopCNT,
-                                    ssi.SLoopINT,
-                                    ssi.SCollection));
-                            }
-                        }
+                        return SendStartResult.Failed("发送预设 ID 无效。");
                     }
+
+                    string sendName = null;
+                    int loopCount = 0;
+                    int loopInterval = 0;
+                    BindingList<Socket_PacketInfo> sendCollection = null;
+                    Action capture = () =>
+                    {
+                        Socket_SendInfo ssi = Socket_Cache.SendList.lstSend
+                            .Where(item => item.SID == SID)
+                            .FirstOrDefault();
+                        if (ssi == null || ssi.SCollection == null)
+                        {
+                            return;
+                        }
+
+                        sendName = ssi.SName;
+                        loopCount = ssi.SLoopCNT;
+                        loopInterval = ssi.SLoopINT;
+                        sendCollection = new BindingList<Socket_PacketInfo>();
+                        foreach (Socket_PacketInfo packet in ssi.SCollection)
+                        {
+                            if (packet == null)
+                            {
+                                continue;
+                            }
+
+                            sendCollection.Add(new Socket_PacketInfo
+                            {
+                                PacketTime = packet.PacketTime,
+                                PacketSocket = packet.PacketSocket,
+                                PacketType = packet.PacketType,
+                                PacketFrom = packet.PacketFrom,
+                                PacketTo = packet.PacketTo,
+                                RawBuffer = packet.RawBuffer == null
+                                    ? null
+                                    : (byte[])packet.RawBuffer.Clone(),
+                                PacketBuffer = packet.PacketBuffer == null
+                                    ? null
+                                    : (byte[])packet.PacketBuffer.Clone(),
+                                PacketData = packet.PacketData,
+                                PacketLen = packet.PacketLen,
+                                FilterAction = packet.FilterAction,
+                                ByteAnnotations = Socket_ByteAnnotationEngine.Clone(packet.ByteAnnotations),
+                                VariableBindings = (packet.VariableBindings ?? new List<PresetVariableBinding>())
+                                    .Where(item => item != null)
+                                    .Select(item => item.Clone())
+                                    .ToList(),
+                                SortOrder = packet.SortOrder
+                            });
+                        }
+                    };
+
+                    if (Socket_Cache.System.InvokeAction != null)
+                    {
+                        Socket_Cache.System.InvokeAction(capture);
+                    }
+                    else
+                    {
+                        capture();
+                    }
+
+                    if (sendCollection == null)
+                    {
+                        return SendStartResult.Failed("电脑端找不到当前发送预设。请先更新预设。");
+                    }
+                    if (sendCollection.Count == 0)
+                    {
+                        return SendStartResult.Failed("当前发送预设没有可发送的封包。");
+                    }
+
+                    DynamicVariableSnapshot variableSnapshot = DynamicVariableRuntime.CaptureSnapshot();
+                    foreach (Socket_PacketInfo packet in sendCollection)
+                    {
+                        if (packet.VariableBindings == null || packet.VariableBindings.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        byte[] resolvedBuffer;
+                        string variableError;
+                        Guid failedVariableId;
+                        if (!VariableResolver.TryResolveBuffer(
+                            packet.PacketBuffer,
+                            packet.VariableBindings,
+                            variableSnapshot,
+                            variableId =>
+                            {
+                                DynamicVariableDefinition definition;
+                                    return DynamicVariableRuntime.TryGetDefinition(variableId, out definition)
+                                        ? definition
+                                        : null;
+                            },
+                            out resolvedBuffer,
+                            out variableError,
+                            out failedVariableId))
+                        {
+                            DynamicVariableDefinition failedDefinition;
+                            string symbol = failedVariableId != Guid.Empty &&
+                                DynamicVariableRuntime.TryGetDefinition(failedVariableId, out failedDefinition)
+                                ? failedDefinition.Symbol
+                                : failedVariableId == Guid.Empty
+                                    ? "未知"
+                                    : failedVariableId.ToString("N");
+                            return SendStartResult.Failed(
+                                string.Format("变量 {0} 无法解析：{1}", symbol, variableError),
+                                "dynamic_variable_invalid");
+                        }
+                        packet.PacketBuffer = resolvedBuffer;
+                        packet.PacketLen = resolvedBuffer.Length;
+                        packet.PacketData = Socket_Operation.BytesToString(SocketPacket.EncodingFormat.Hex, resolvedBuffer);
+                        packet.VariableBindings.Clear();
+                    }
+
+                    // A saved preset's PacketSocket is tied to the connection that
+                    // produced the capture.  Reuse the current matching socket for
+                    // every preset, including legacy non-system-socket presets;
+                    // otherwise a reconnect can make the worker report completed
+                    // while sending through a stale handle.
+                    int resolvedSocket = Socket_Cache.SocketList.ResolveCurrentSocket(sendCollection);
+                    if (resolvedSocket <= 0)
+                    {
+                        Socket_Operation.DoLog(
+                            nameof(DoSendWithResultAsync),
+                            MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_49));
+                        return SendStartResult.Failed(
+                            "未找到与当前预设匹配的目标套接字。请先让目标程序产生对应封包，并确认电脑端已捕获。",
+                            "runtime_not_connected");
+                    }
+
+                    ssReturn = new Socket_Send();
+                    bool started = false;
+                    await Task.Run(() => started = ssReturn.StartSend(
+                        sendName,
+                        resolvedSocket,
+                        loopCount,
+                        loopInterval,
+                        sendCollection));
+                    if (!started)
+                    {
+                        return SendStartResult.Failed("发送预设未能启动。请检查发送线程状态和封包内容。", "send_start_failed");
+                    }
+                    return SendStartResult.Succeeded(ssReturn);
                 }
                 catch (Exception ex)
                 {
-                    Socket_Operation.DoLog(nameof(DoSendAsync), ex.Message);
+                    Socket_Operation.DoLog(nameof(DoSendWithResultAsync), ex.Message);
+                    return SendStartResult.Failed("发送预设启动异常：" + ex.Message);
                 }
-
-                return ssReturn;
             }
 
             public static void DoSend_ByHotKey(int HOTKEY_ID)
@@ -10662,6 +12876,11 @@ namespace WPELibrary.Lib
 
                         if (sfdSaveFile.ShowDialog() == DialogResult.OK)
                         {
+                            if (SendCollection.Any(packet => packet != null &&
+                                packet.VariableBindings != null && packet.VariableBindings.Count > 0))
+                            {
+                                Socket_Operation.ShowMessageBox("当前导出包含动态变量绑定，旧版软件打开后会忽略这些绑定。请使用新版软件导入。");
+                            }
                             Socket_PasswordFrom pwForm = new Socket_PasswordFrom(Socket_Cache.System.PWType.SendList_Export);
                             pwForm.ShowDialog();
 
@@ -10714,7 +12933,7 @@ namespace WPELibrary.Lib
                         Declaration = new XDeclaration("1.0", "utf-8", "yes")
                     };
 
-                    XElement xeRoot = new XElement("SendCollection");
+                    XElement xeRoot = new XElement("SendCollection", new XAttribute("Version", "2"));
                     xdoc.Add(xeRoot);
 
                     foreach (Socket_PacketInfo spi in SendCollection)
@@ -10728,8 +12947,15 @@ namespace WPELibrary.Lib
                             new XElement("IPFrom", spi.PacketFrom),
                             new XElement("IPTo", spi.PacketTo),
                             new XElement("Buffer", sBuffer),
+                            new XElement("SortOrder", spi.SortOrder),
                             Socket_ByteAnnotationEngine.ToXElement(spi.ByteAnnotations)
                             );
+
+                        XElement bindingsElement = DynamicVariableSerialization.ToBindingsElement(spi.VariableBindings);
+                        if (bindingsElement != null)
+                        {
+                            xeColl.Add(bindingsElement);
+                        }
 
                         xeRoot.Add(xeColl);
                     }
@@ -10872,9 +13098,17 @@ namespace WPELibrary.Lib
                                     bBuffer = Socket_Operation.StringToBytes(SocketPacket.EncodingFormat.Hex, xeSend.Element("Data").Value);
                                 }
 
+                                int sortOrder = 0;
+                                if (xeSend.Element("SortOrder") != null)
+                                {
+                                    int.TryParse(xeSend.Element("SortOrder").Value, out sortOrder);
+                                }
+
                                 Socket_Cache.Send.AddSendCollection(SendCollection, iSocket, ptType, sIPFrom, sIPTo, bBuffer,
                                     Socket_ByteAnnotationEngine.FromXElement(
-                                        xeSend.Element("Annotations"), bBuffer == null ? 0 : bBuffer.Length));
+                                        xeSend.Element("Annotations"), bBuffer == null ? 0 : bBuffer.Length),
+                                    DynamicVariableSerialization.FromBindingsElement(xeSend.Element("VariableBindings")),
+                                    sortOrder);
                             }
 
                             #endregion
@@ -10917,9 +13151,17 @@ namespace WPELibrary.Lib
                                     bBuffer = Socket_Operation.StringToBytes(SocketPacket.EncodingFormat.Hex, xeCollection.Element("Buffer").Value);
                                 }
 
+                                int sortOrder = 0;
+                                if (xeCollection.Element("SortOrder") != null)
+                                {
+                                    int.TryParse(xeCollection.Element("SortOrder").Value, out sortOrder);
+                                }
+
                                 Socket_Cache.Send.AddSendCollection(SendCollection, iSocket, ptType, sIPFrom, sIPTo, bBuffer,
                                     Socket_ByteAnnotationEngine.FromXElement(
-                                        xeCollection.Element("Annotations"), bBuffer == null ? 0 : bBuffer.Length));
+                                        xeCollection.Element("Annotations"), bBuffer == null ? 0 : bBuffer.Length),
+                                    DynamicVariableSerialization.FromBindingsElement(xeCollection.Element("VariableBindings")),
+                                    sortOrder);
                             }
 
                             #endregion
@@ -10950,7 +13192,7 @@ namespace WPELibrary.Lib
             #region//发送列表索引项
 
             public class SendListItem
-            {                
+            {
                 public string SName { get; set; }
 
                 public Guid SID { get; set; }
@@ -10963,6 +13205,210 @@ namespace WPELibrary.Lib
                 }
             }
 
+            private sealed class SendListSnapshot
+            {
+                public Socket_SendInfo Original { get; set; }
+                public Socket_SendInfo Values { get; set; }
+                public BindingList<Socket_PacketInfo> OriginalCollection { get; set; }
+                public List<Socket_PacketInfo> OriginalPackets { get; set; }
+            }
+
+            private static Socket_PacketInfo ClonePacket(Socket_PacketInfo source)
+            {
+                if (source == null)
+                {
+                    return null;
+                }
+
+                return new Socket_PacketInfo
+                {
+                    PacketTime = source.PacketTime,
+                    PacketSocket = source.PacketSocket,
+                    PacketType = source.PacketType,
+                    PacketFrom = source.PacketFrom,
+                    PacketTo = source.PacketTo,
+                    RawBuffer = source.RawBuffer == null ? null : (byte[])source.RawBuffer.Clone(),
+                    PacketBuffer = source.PacketBuffer == null ? null : (byte[])source.PacketBuffer.Clone(),
+                    PacketData = source.PacketData,
+                    PacketLen = source.PacketLen,
+                    FilterAction = source.FilterAction,
+                    ByteAnnotations = Socket_ByteAnnotationEngine.Clone(source.ByteAnnotations),
+                    VariableBindings = (source.VariableBindings ?? new List<PresetVariableBinding>())
+                        .Where(item => item != null)
+                        .Select(item => item.Clone())
+                        .ToList(),
+                    SortOrder = source.SortOrder
+                };
+            }
+
+            private static Socket_SendInfo CloneSendInfo(Socket_SendInfo source)
+            {
+                if (source == null)
+                {
+                    return null;
+                }
+
+                BindingList<Socket_PacketInfo> collection = null;
+                if (source.SCollection != null)
+                {
+                    collection = new BindingList<Socket_PacketInfo>(
+                        source.SCollection.Select(ClonePacket).ToList());
+                }
+
+                return new Socket_SendInfo(
+                    source.IsEnable,
+                    source.SID,
+                    source.SName,
+                    source.SSystemSocket,
+                    source.SLoopCNT,
+                    source.SLoopINT,
+                    collection,
+                    source.SNotes,
+                    source.SFolder,
+                    source.SSortOrder);
+            }
+
+            private static void CopyPacketValues(Socket_PacketInfo target, Socket_PacketInfo source)
+            {
+                if (target == null || source == null)
+                {
+                    return;
+                }
+
+                target.PacketTime = source.PacketTime;
+                target.PacketSocket = source.PacketSocket;
+                target.PacketType = source.PacketType;
+                target.PacketFrom = source.PacketFrom;
+                target.PacketTo = source.PacketTo;
+                target.RawBuffer = source.RawBuffer == null ? null : (byte[])source.RawBuffer.Clone();
+                target.PacketBuffer = source.PacketBuffer == null ? null : (byte[])source.PacketBuffer.Clone();
+                target.PacketData = source.PacketData;
+                target.PacketLen = source.PacketLen;
+                target.FilterAction = source.FilterAction;
+                target.ByteAnnotations = Socket_ByteAnnotationEngine.Clone(source.ByteAnnotations);
+                target.VariableBindings = (source.VariableBindings ?? new List<PresetVariableBinding>())
+                    .Where(item => item != null)
+                    .Select(item => item.Clone())
+                    .ToList();
+                target.SortOrder = source.SortOrder;
+            }
+
+            private static void RestoreSendSnapshot(SendListSnapshot snapshot)
+            {
+                if (snapshot == null || snapshot.Original == null || snapshot.Values == null)
+                {
+                    return;
+                }
+
+                Socket_SendInfo target = snapshot.Original;
+                target.IsEnable = snapshot.Values.IsEnable;
+                target.SID = snapshot.Values.SID;
+                target.SName = snapshot.Values.SName;
+                target.SSystemSocket = snapshot.Values.SSystemSocket;
+                target.SLoopCNT = snapshot.Values.SLoopCNT;
+                target.SLoopINT = snapshot.Values.SLoopINT;
+                target.SNotes = snapshot.Values.SNotes;
+                target.SFolder = snapshot.Values.SFolder;
+                target.SSortOrder = snapshot.Values.SSortOrder;
+
+                if (snapshot.OriginalCollection == null)
+                {
+                    target.SCollection = null;
+                    return;
+                }
+
+                for (int index = 0; index < snapshot.OriginalPackets.Count; index++)
+                {
+                    Socket_PacketInfo originalPacket = snapshot.OriginalPackets[index];
+                    Socket_PacketInfo savedPacket = snapshot.Values.SCollection == null ||
+                        index >= snapshot.Values.SCollection.Count
+                        ? null
+                        : snapshot.Values.SCollection[index];
+                    CopyPacketValues(originalPacket, savedPacket);
+                }
+
+                snapshot.OriginalCollection.RaiseListChangedEvents = false;
+                try
+                {
+                    snapshot.OriginalCollection.Clear();
+                    foreach (Socket_PacketInfo packet in snapshot.OriginalPackets)
+                    {
+                        snapshot.OriginalCollection.Add(packet);
+                    }
+                }
+                finally
+                {
+                    snapshot.OriginalCollection.RaiseListChangedEvents = true;
+                    snapshot.OriginalCollection.ResetBindings();
+                }
+                target.SCollection = snapshot.OriginalCollection;
+            }
+
+            public static bool TryApplyListChangeAndSave(Action mutation)
+            {
+                if (mutation == null)
+                {
+                    return false;
+                }
+
+                List<Socket_SendInfo> originalSends = lstSend.ToList();
+                List<SendListSnapshot> snapshots = originalSends
+                    .Select(item => new SendListSnapshot
+                    {
+                        Original = item,
+                        Values = CloneSendInfo(item),
+                        OriginalCollection = item == null ? null : item.SCollection,
+                        OriginalPackets = item == null || item.SCollection == null
+                            ? new List<Socket_PacketInfo>()
+                            : item.SCollection.ToList()
+                    })
+                    .ToList();
+                List<string> originalFolders = lstFolders.ToList();
+
+                try
+                {
+                    mutation();
+                    if (SaveSendList_ToDB())
+                    {
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(
+                        nameof(TryApplyListChangeAndSave),
+                        ex.Message);
+                }
+
+                foreach (SendListSnapshot snapshot in snapshots)
+                {
+                    RestoreSendSnapshot(snapshot);
+                }
+                lstSend.RaiseListChangedEvents = false;
+                lstFolders.RaiseListChangedEvents = false;
+                try
+                {
+                    lstSend.Clear();
+                    foreach (Socket_SendInfo send in originalSends)
+                    {
+                        lstSend.Add(send);
+                    }
+                    lstFolders.Clear();
+                    foreach (string folder in originalFolders)
+                    {
+                        lstFolders.Add(folder);
+                    }
+                }
+                finally
+                {
+                    lstSend.RaiseListChangedEvents = true;
+                    lstFolders.RaiseListChangedEvents = true;
+                    lstSend.ResetBindings();
+                    lstFolders.ResetBindings();
+                }
+                return false;
+            }
+
             #endregion
 
             #region//发送文件夹
@@ -10970,22 +13416,33 @@ namespace WPELibrary.Lib
             public static bool AddFolder(string folderName)
             {
                 string normalizedName = (folderName ?? string.Empty).Trim();
-                if (string.IsNullOrEmpty(normalizedName) ||
-                    lstFolders.Any(item => string.Equals(item, normalizedName, StringComparison.OrdinalIgnoreCase)))
+                if (string.IsNullOrEmpty(normalizedName))
                 {
                     return false;
                 }
 
+                bool added = false;
+                Action add = () =>
+                {
+                    if (lstFolders.Any(item => string.Equals(item, normalizedName, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        return;
+                    }
+
+                    lstFolders.Add(normalizedName);
+                    added = true;
+                };
+
                 if (Socket_Cache.System.InvokeAction != null)
                 {
-                    Socket_Cache.System.InvokeAction(() => lstFolders.Add(normalizedName));
+                    Socket_Cache.System.InvokeAction(add);
                 }
                 else
                 {
-                    lstFolders.Add(normalizedName);
+                    add();
                 }
 
-                return true;
+                return added;
             }
 
             public static void RenameFolder(string oldName, string newName)
@@ -11210,25 +13667,36 @@ namespace WPELibrary.Lib
 
             #region//保存发送列表到数据库
 
-            public static void SaveSendList_ToDB()
+            public static bool SaveSendList_ToDB()
             {
                 try
                 {
-                    Socket_Cache.DataBase.DeleteTable_Send();
+                    bool saved = Socket_Cache.DataBase.ExecuteAtomicSave(
+                        () =>
+                        {
+                            Socket_Cache.DataBase.DeleteTable_Send();
 
-                    for (int i = 0; i < Socket_Cache.SendList.lstFolders.Count; i++)
-                    {
-                        Socket_Cache.DataBase.InsertTable_SendFolder(Socket_Cache.SendList.lstFolders[i], i);
-                    }
+                            for (int i = 0; i < Socket_Cache.SendList.lstFolders.Count; i++)
+                            {
+                                Socket_Cache.DataBase.InsertTable_SendFolder(Socket_Cache.SendList.lstFolders[i], i);
+                            }
 
-                    foreach (Socket_SendInfo ssi in Socket_Cache.SendList.lstSend)
+                            foreach (Socket_SendInfo ssi in Socket_Cache.SendList.lstSend)
+                            {
+                                Socket_Cache.DataBase.InsertTable_Send(ssi);
+                            }
+                        },
+                        nameof(SaveSendList_ToDB));
+                    if (!saved)
                     {
-                        Socket_Cache.DataBase.InsertTable_Send(ssi);
+                        Socket_Operation.DoLog(nameof(SaveSendList_ToDB), "发送列表保存失败，原数据库已保留。");
                     }
+                    return saved;
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    return false;
                 }
             }
 
@@ -11241,12 +13709,34 @@ namespace WPELibrary.Lib
                 try
                 {
                     DataTable dtFolders = Socket_Cache.DataBase.SelectTable_SendFolder();
+                    DataTable dtSend = Socket_Cache.DataBase.SelectTable_Send();
+                    if (dtFolders == null || dtFolders.Columns.Count == 0 ||
+                        dtSend == null || dtSend.Columns.Count == 0)
+                    {
+                        Socket_Cache.System.SystemListLoadFailed = true;
+                        return;
+                    }
+
+                    // 先确认所有关联封包表都能读取，再替换内存列表，避免失败时用半截数据覆盖旧列表。
+                    foreach (DataRow row in dtSend.Rows)
+                    {
+                        Guid.Parse(row["GUID"].ToString());
+                        DataTable collection = Socket_Cache.DataBase.SelectTable_SendCollection(
+                            Guid.Parse(row["GUID"].ToString()));
+                        if (collection == null || collection.Columns.Count == 0)
+                        {
+                            Socket_Cache.System.SystemListLoadFailed = true;
+                            return;
+                        }
+                    }
+
+                    // 支持重复初始化时从干净集合加载，避免发送预设被重复追加。
+                    Socket_Cache.SendList.SendListClear();
                     foreach (DataRow folderRow in dtFolders.Rows)
                     {
                         Socket_Cache.SendList.AddFolder(folderRow["Name"].ToString());
                     }
 
-                    DataTable dtSend = Socket_Cache.DataBase.SelectTable_Send();
                     foreach (DataRow dataRow in dtSend.Rows)
                     {
                         Guid SID = Guid.Parse(dataRow["GUID"].ToString());
@@ -11263,6 +13753,11 @@ namespace WPELibrary.Lib
                         BindingList<Socket_PacketInfo> SCollection = new BindingList<Socket_PacketInfo>();
 
                         DataTable dtSCollection = Socket_Cache.DataBase.SelectTable_SendCollection(SID);
+                        if (dtSCollection == null || dtSCollection.Columns.Count == 0)
+                        {
+                            Socket_Cache.System.SystemListLoadFailed = true;
+                            return;
+                        }
                         foreach (DataRow row in dtSCollection.Rows)
                         {
                             int Socket = Convert.ToInt32(row["Socket"]);
@@ -11272,9 +13767,17 @@ namespace WPELibrary.Lib
                             byte[] Buffer = (byte[])row["Buffer"];
 
                             string annotations = dtSCollection.Columns.Contains("Annotations") ? row["Annotations"].ToString() : string.Empty;
+                            string variableBindings = dtSCollection.Columns.Contains("VariableBindings")
+                                ? row["VariableBindings"].ToString()
+                                : string.Empty;
+                            int sortOrder = dtSCollection.Columns.Contains("SortOrder")
+                                ? Convert.ToInt32(row["SortOrder"])
+                                : SCollection.Count + 1;
                             Socket_Cache.Send.AddSendCollection(SCollection, Socket, ptType, IPFrom, IPTo, Buffer,
                                 Socket_ByteAnnotationEngine.Deserialize(
-                                    annotations, Buffer == null ? 0 : Buffer.Length));
+                                    annotations, Buffer == null ? 0 : Buffer.Length),
+                                Socket_Cache.DataBase.DeserializeVariableBindings(variableBindings),
+                                sortOrder);
                         }
 
                         Socket_Cache.Send.AddSend(IsEnable, SID, SName, SSystemSocket, SLoopCNT, SLoopINT, SCollection, SNotes, SFolder, SSortOrder);
@@ -11282,6 +13785,7 @@ namespace WPELibrary.Lib
                 }
                 catch (Exception ex)
                 {
+                    Socket_Cache.System.SystemListLoadFailed = true;
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
                 }
             }
@@ -11309,6 +13813,14 @@ namespace WPELibrary.Lib
 
                         if (sfdSaveFile.ShowDialog() == DialogResult.OK)
                         {
+                            if ((ssiList ?? new List<Socket_SendInfo>()).SelectMany(item =>
+                                    item == null || item.SCollection == null
+                                        ? Enumerable.Empty<Socket_PacketInfo>()
+                                        : item.SCollection)
+                                .Any(packet => packet != null && packet.VariableBindings != null && packet.VariableBindings.Count > 0))
+                            {
+                                Socket_Operation.ShowMessageBox("当前导出包含动态变量绑定，旧版软件打开后会忽略这些绑定。请使用新版软件导入。");
+                            }
                             Socket_PasswordFrom pwForm = new Socket_PasswordFrom(Socket_Cache.System.PWType.SendList_Export);
                             pwForm.ShowDialog();
 
@@ -11368,7 +13880,7 @@ namespace WPELibrary.Lib
             {
                 try
                 {
-                    XElement xeRoot = new XElement("SendList");               
+                    XElement xeRoot = new XElement("SendList", new XAttribute("Version", "2"));
 
                     XElement xeFolders = new XElement("Folders");
                     List<string> selectedFolders = ssiList
@@ -11417,8 +13929,15 @@ namespace WPELibrary.Lib
                                     new XElement("Type", spi.PacketType),
                                     new XElement("IPTo", spi.PacketTo),
                                     new XElement("Buffer", sBuffer),
+                                    new XElement("SortOrder", spi.SortOrder),
                                     Socket_ByteAnnotationEngine.ToXElement(spi.ByteAnnotations)
                                     );
+
+                                XElement bindingsElement = DynamicVariableSerialization.ToBindingsElement(spi.VariableBindings);
+                                if (bindingsElement != null)
+                                {
+                                    xeColl.Add(bindingsElement);
+                                }
 
                                 xeCollection.Add(xeColl);
                             }
@@ -11629,9 +14148,17 @@ namespace WPELibrary.Lib
                                     bBuffer = Socket_Operation.StringToBytes(SocketPacket.EncodingFormat.Hex, xeCollection.Element("Buffer").Value);
                                 }
 
+                                int sortOrder = 0;
+                                if (xeCollection.Element("SortOrder") != null)
+                                {
+                                    int.TryParse(xeCollection.Element("SortOrder").Value, out sortOrder);
+                                }
+
                                 Socket_Cache.Send.AddSendCollection(SCollection, iSocket, ptType, sIPFrom, sIPTo, bBuffer,
                                     Socket_ByteAnnotationEngine.FromXElement(
-                                        xeCollection.Element("Annotations"), bBuffer == null ? 0 : bBuffer.Length));
+                                        xeCollection.Element("Annotations"), bBuffer == null ? 0 : bBuffer.Length),
+                                    DynamicVariableSerialization.FromBindingsElement(xeCollection.Element("VariableBindings")),
+                                    sortOrder);
                             }
                         }
 
@@ -11656,6 +14183,97 @@ namespace WPELibrary.Lib
             public static BindingList<Socket_ByteSweepPresetInfo> lstPresets =
                 new BindingList<Socket_ByteSweepPresetInfo>();
             public static BindingList<string> lstFolders = new BindingList<string>();
+
+            private static void CopyPresetValues(
+                Socket_ByteSweepPresetInfo target,
+                Socket_ByteSweepPresetInfo source)
+            {
+                if (target == null || source == null)
+                {
+                    return;
+                }
+
+                Socket_ByteSweepPresetInfo copy = source.Clone();
+                target.IsEnable = copy.IsEnable;
+                target.BID = copy.BID;
+                target.BSortOrder = copy.BSortOrder;
+                target.BName = copy.BName;
+                target.BFolder = copy.BFolder;
+                target.BLoopCount = copy.BLoopCount;
+                target.BInterval = copy.BInterval;
+                target.BNextInterval = copy.BNextInterval;
+                target.BMode = copy.BMode;
+                target.BCombinationFirstPosition = copy.BCombinationFirstPosition;
+                target.BCombinationFirstInterval = copy.BCombinationFirstInterval;
+                target.BCombinationFirstLength = copy.BCombinationFirstLength;
+                target.BCombinationSecondPosition = copy.BCombinationSecondPosition;
+                target.BCombinationSecondInterval = copy.BCombinationSecondInterval;
+                target.BCombinationSecondLength = copy.BCombinationSecondLength;
+                target.BStart = copy.BStart;
+                target.BLength = copy.BLength;
+                target.PacketType = copy.PacketType;
+                target.PacketFrom = copy.PacketFrom;
+                target.PacketTo = copy.PacketTo;
+                target.Buffer = copy.Buffer;
+                target.ByteAnnotations = copy.ByteAnnotations;
+            }
+
+            public static bool TryApplyListChangeAndSave(Action mutation)
+            {
+                if (mutation == null)
+                {
+                    return false;
+                }
+
+                List<Socket_ByteSweepPresetInfo> originalPresets = lstPresets.ToList();
+                List<Socket_ByteSweepPresetInfo> originalValues = originalPresets
+                    .Select(item => item == null ? null : item.Clone())
+                    .ToList();
+                List<string> originalFolders = lstFolders.ToList();
+
+                try
+                {
+                    mutation();
+                    if (SaveByteSweepList_ToDB())
+                    {
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(
+                        nameof(TryApplyListChangeAndSave),
+                        ex.Message);
+                }
+
+                for (int index = 0; index < originalPresets.Count; index++)
+                {
+                    CopyPresetValues(originalPresets[index], originalValues[index]);
+                }
+                lstPresets.RaiseListChangedEvents = false;
+                lstFolders.RaiseListChangedEvents = false;
+                try
+                {
+                    lstPresets.Clear();
+                    foreach (Socket_ByteSweepPresetInfo preset in originalPresets)
+                    {
+                        lstPresets.Add(preset);
+                    }
+                    lstFolders.Clear();
+                    foreach (string folder in originalFolders)
+                    {
+                        lstFolders.Add(folder);
+                    }
+                }
+                finally
+                {
+                    lstPresets.RaiseListChangedEvents = true;
+                    lstFolders.RaiseListChangedEvents = true;
+                    lstPresets.ResetBindings();
+                    lstFolders.ResetBindings();
+                }
+                return false;
+            }
 
             public static bool AddFolder(string folderName)
             {
@@ -11764,7 +14382,7 @@ namespace WPELibrary.Lib
                 lstFolders.Clear();
             }
 
-            public static void SaveByteSweepList_ToDB()
+            public static bool SaveByteSweepList_ToDB()
             {
                 try
                 {
@@ -11772,16 +14390,19 @@ namespace WPELibrary.Lib
                     List<Socket_ByteSweepPresetInfo> presets = lstPresets
                         .Select(item => item.Clone())
                         .ToList();
-                    if (!Socket_Cache.DataBase.ReplaceByteSweepList(folders, presets))
+                    bool saved = Socket_Cache.DataBase.ReplaceByteSweepList(folders, presets);
+                    if (!saved)
                     {
                         Socket_Operation.DoLog(
                             nameof(SaveByteSweepList_ToDB),
                             "递进预设保存失败，数据库已回滚。");
                     }
+                    return saved;
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(nameof(SaveByteSweepList_ToDB), ex.Message);
+                    return false;
                 }
             }
 
@@ -11790,12 +14411,21 @@ namespace WPELibrary.Lib
                 try
                 {
                     DataTable folders = Socket_Cache.DataBase.SelectTable_ByteSweepFolder();
+                    DataTable presets = Socket_Cache.DataBase.SelectTable_ByteSweepPreset();
+                    if (folders == null || folders.Columns.Count == 0 ||
+                        presets == null || presets.Columns.Count == 0)
+                    {
+                        Socket_Cache.System.SystemListLoadFailed = true;
+                        return;
+                    }
+
+                    // 支持重复初始化时从干净集合加载，避免递进预设被重复追加。
+                    Socket_Cache.ByteSweepList.Clear();
                     foreach (DataRow row in folders.Rows)
                     {
                         AddFolder(row["Name"].ToString());
                     }
 
-                    DataTable presets = Socket_Cache.DataBase.SelectTable_ByteSweepPreset();
                     foreach (DataRow row in presets.Rows)
                     {
                         byte[] presetBuffer = row["Buffer"] == DBNull.Value ? null : (byte[])row["Buffer"];
@@ -11844,6 +14474,7 @@ namespace WPELibrary.Lib
                 }
                 catch (Exception ex)
                 {
+                    Socket_Cache.System.SystemListLoadFailed = true;
                     Socket_Operation.DoLog(nameof(LoadByteSweepList_FromDB), ex.Message);
                 }
             }
@@ -11963,11 +14594,102 @@ namespace WPELibrary.Lib
 
         #region//数据库
 
-        public static class DataBase
+        public static partial class DataBase
         {
             private static string dbPath = @"C:\WPE64Cache";
             private static string dbName = "小黑封包助手.db";
-            private static string conStr = string.Format("Data Source={0}\\{1};Version=3;", dbPath, dbName);
+            private static string connectionString = string.Format("Data Source={0}\\{1};Version=3;", dbPath, dbName);
+            private static readonly object AtomicSaveSync = new object();
+            private static readonly ManualResetEventSlim AtomicSaveGate =
+                new ManualResetEventSlim(true);
+            private static readonly AsyncLocal<bool> AtomicSaveOwner =
+                new AsyncLocal<bool>();
+            private static bool atomicSaveInProgress;
+
+            private static string conStr
+            {
+                get
+                {
+                    if (!AtomicSaveOwner.Value)
+                    {
+                        AtomicSaveGate.Wait();
+                    }
+
+                    return connectionString;
+                }
+                set
+                {
+                    connectionString = value;
+                }
+            }
+
+            private static string GetConnectionString(string databaseFile)
+            {
+                return string.Format("Data Source={0};Version=3;", databaseFile);
+            }
+
+            public static bool ExecuteAtomicSave(Action saveAction, string operationName)
+            {
+                if (saveAction == null)
+                {
+                    return false;
+                }
+
+                string databaseFile = Path.Combine(dbPath, dbName);
+                if (!File.Exists(databaseFile))
+                {
+                    Socket_Operation.DoLog(operationName, "数据库文件不存在，已取消保存。");
+                    return false;
+                }
+
+                string temporaryFile = Path.Combine(
+                    dbPath,
+                    dbName + ".saving-" + Guid.NewGuid().ToString("N") + ".db");
+                string originalConnectionString = conStr;
+
+                lock (AtomicSaveSync)
+                {
+                    AtomicSaveGate.Reset();
+                    AtomicSaveOwner.Value = true;
+                    try
+                    {
+                        File.Copy(databaseFile, temporaryFile, true);
+                        conStr = GetConnectionString(temporaryFile);
+                        atomicSaveInProgress = true;
+                        saveAction();
+                        atomicSaveInProgress = false;
+                        conStr = originalConnectionString;
+
+                        // Replace only after every delete/insert has succeeded;
+                        // a failed save therefore leaves the live database intact.
+                        File.Replace(temporaryFile, databaseFile, null);
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        Socket_Operation.DoLog(operationName, ex.Message);
+                        return false;
+                    }
+                    finally
+                    {
+                        atomicSaveInProgress = false;
+                        conStr = originalConnectionString;
+                        AtomicSaveOwner.Value = false;
+                        AtomicSaveGate.Set();
+                        if (File.Exists(temporaryFile))
+                        {
+                            try
+                            {
+                                File.Delete(temporaryFile);
+                            }
+                            catch (Exception ex)
+                            {
+                                Socket_Operation.DoLog(operationName, ex.Message);
+                            }
+                        }
+                    }
+                }
+            }
 
             #region//初始化
 
@@ -11982,6 +14704,7 @@ namespace WPELibrary.Lib
                 Socket_Cache.DataBase.CreateTable_Send();
                 Socket_Cache.DataBase.CreateTable_ByteSweep();
                 Socket_Cache.DataBase.CreateTable_Robot();
+                Socket_Cache.DataBase.CreateTable_DynamicVariables();
                 Socket_Cache.DataBase.CreateTable_ProxyAccount();
                 Socket_Cache.DataBase.CreateTable_ProxyMapLocal();
                 Socket_Cache.DataBase.CreateTable_ProxyMapRemote();
@@ -12113,6 +14836,10 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
                 }
             }
 
@@ -12149,7 +14876,9 @@ namespace WPELibrary.Lib
                             cmd.Parameters.AddWithValue("@SystemConfig_StartMode", Socket_Cache.System.StartMode);
                             cmd.Parameters.AddWithValue("@SystemConfig_Remote_IsEnable", Socket_Cache.System.IsRemote);
                             cmd.Parameters.AddWithValue("@SystemConfig_Remote_UserName", Socket_Cache.System.Remote_UserName);
-                            cmd.Parameters.AddWithValue("@SystemConfig_Remote_PassWord", Socket_Cache.System.Remote_PassWord);
+                            cmd.Parameters.AddWithValue(
+                                "@SystemConfig_Remote_PassWord",
+                                Socket_Operation.PassWord_Encrypt(Socket_Cache.System.Remote_PassWord));
                             cmd.Parameters.AddWithValue("@SystemConfig_Remote_Port", Socket_Cache.System.Remote_Port);
                             cmd.Parameters.AddWithValue("@SystemConfig_Remote_URL", Socket_Cache.System.Remote_URL);
 
@@ -12161,6 +14890,10 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
                 }
             }
 
@@ -12653,6 +15386,10 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
                 }
             }
 
@@ -12755,6 +15492,10 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
                 }
             }
 
@@ -12789,6 +15530,8 @@ namespace WPELibrary.Lib
                         sql += "IPTo TEXT NOT NULL,";
                         sql += "Buffer BLOB,";
                         sql += "Annotations TEXT,";
+                        sql += "VariableBindings TEXT,";
+                        sql += "SortOrder INTEGER NOT NULL DEFAULT 0,";
                         sql += "FOREIGN KEY (GUID) REFERENCES Send(GUID)";
                         sql += ");";
 
@@ -12808,6 +15551,8 @@ namespace WPELibrary.Lib
                             cmd.ExecuteNonQuery();
                         }
                         EnsureTableColumn(conn, "SendCollection", "Annotations", "TEXT");
+                        EnsureTableColumn(conn, "SendCollection", "VariableBindings", "TEXT");
+                        EnsureTableColumn(conn, "SendCollection", "SortOrder", "INTEGER NOT NULL DEFAULT 0");
 
                         bool hasSortOrder = false;
                         using (SQLiteCommand cmd = new SQLiteCommand("PRAGMA table_info(Send);", conn))
@@ -12919,7 +15664,7 @@ namespace WPELibrary.Lib
                 {
                     using (SQLiteConnection conn = new SQLiteConnection(conStr))
                     {
-                        string sql = "SELECT * FROM SendCollection WHERE GUID = @GUID;";
+                            string sql = "SELECT * FROM SendCollection WHERE GUID = @GUID;";
 
                         using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
                         {
@@ -12959,6 +15704,10 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
                 }
             }
 
@@ -13023,7 +15772,9 @@ namespace WPELibrary.Lib
                             sql += "IPFrom,";
                             sql += "IPTo,";
                             sql += "Buffer,";
-                            sql += "Annotations";
+                            sql += "Annotations,";
+                            sql += "VariableBindings,";
+                            sql += "SortOrder";
                             sql += ") VALUES (";
                             sql += "@GUID,";
                             sql += "@Socket,";
@@ -13031,7 +15782,9 @@ namespace WPELibrary.Lib
                             sql += "@IPFrom,";
                             sql += "@IPTo,";
                             sql += "@Buffer,";
-                            sql += "@Annotations";
+                            sql += "@Annotations,";
+                            sql += "@VariableBindings,";
+                            sql += "@SortOrder";
                             sql += ");";
 
                             using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
@@ -13043,6 +15796,8 @@ namespace WPELibrary.Lib
                                 cmd.Parameters.AddWithValue("@IPTo", spi.PacketTo);
                                 cmd.Parameters.AddWithValue("@Buffer", spi.PacketBuffer);
                                 cmd.Parameters.AddWithValue("@Annotations", Socket_ByteAnnotationEngine.Serialize(spi.ByteAnnotations));
+                                cmd.Parameters.AddWithValue("@VariableBindings", SerializeVariableBindings(spi.VariableBindings));
+                                cmd.Parameters.AddWithValue("@SortOrder", spi.SortOrder);
                                 cmd.ExecuteNonQuery();
                             }
                         }
@@ -13051,6 +15806,10 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
                 }
             }
 
@@ -13071,6 +15830,10 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
                 }
             }
 
@@ -13236,87 +15999,97 @@ namespace WPELibrary.Lib
                 IEnumerable<string> folders,
                 IEnumerable<Socket_ByteSweepPresetInfo> presets)
             {
-                try
+                lock (AtomicSaveSync)
                 {
-                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    AtomicSaveGate.Reset();
+                    AtomicSaveOwner.Value = true;
+                    try
                     {
-                        conn.Open();
-                        using (SQLiteTransaction transaction = conn.BeginTransaction())
+                        using (SQLiteConnection conn = new SQLiteConnection(conStr))
                         {
-                            try
+                            conn.Open();
+                            using (SQLiteTransaction transaction = conn.BeginTransaction())
                             {
-                                using (SQLiteCommand delete = new SQLiteCommand(
-                                    "DELETE FROM ByteSweepPreset;DELETE FROM ByteSweepFolder;", conn))
+                                try
                                 {
-                                    delete.Transaction = transaction;
-                                    delete.ExecuteNonQuery();
-                                }
-
-                                int sortOrder = 0;
-                                foreach (string folder in folders ?? Enumerable.Empty<string>())
-                                {
-                                    using (SQLiteCommand insertFolder = new SQLiteCommand(
-                                        "INSERT INTO ByteSweepFolder (Name, SortOrder) VALUES (@Name, @SortOrder);", conn))
+                                    using (SQLiteCommand delete = new SQLiteCommand(
+                                        "DELETE FROM ByteSweepPreset;DELETE FROM ByteSweepFolder;", conn))
                                     {
-                                        insertFolder.Transaction = transaction;
-                                        insertFolder.Parameters.AddWithValue("@Name", folder);
-                                        insertFolder.Parameters.AddWithValue("@SortOrder", sortOrder++);
-                                        insertFolder.ExecuteNonQuery();
+                                        delete.Transaction = transaction;
+                                        delete.ExecuteNonQuery();
                                     }
-                                }
 
-                                foreach (Socket_ByteSweepPresetInfo preset in
-                                    presets ?? Enumerable.Empty<Socket_ByteSweepPresetInfo>())
-                                {
-                                    using (SQLiteCommand insertPreset = new SQLiteCommand(
-                                        "INSERT INTO ByteSweepPreset (" +
-                                        "GUID,IsEnable,Name,FolderName,SortOrder,LoopCount,Interval,NextInterval,Mode,FirstPosition,FirstInterval,FirstLength,SecondPosition,SecondInterval,SecondLength,StartOffset,ByteLength," +
-                                        "PacketType,IPFrom,IPTo,Buffer,Annotations) VALUES (" +
-                                        "@GUID,@IsEnable,@Name,@FolderName,@SortOrder,@LoopCount,@Interval,@NextInterval,@Mode,@FirstPosition,@FirstInterval,@FirstLength,@SecondPosition,@SecondInterval,@SecondLength,@StartOffset,@ByteLength," +
-                                        "@PacketType,@IPFrom,@IPTo,@Buffer,@Annotations);", conn))
+                                    int sortOrder = 0;
+                                    foreach (string folder in folders ?? Enumerable.Empty<string>())
                                     {
-                                        insertPreset.Transaction = transaction;
-                                        insertPreset.Parameters.AddWithValue("@GUID", preset.BID.ToString().ToUpper());
-                                        insertPreset.Parameters.AddWithValue("@IsEnable", preset.IsEnable);
-                                        insertPreset.Parameters.AddWithValue("@Name", preset.BName);
-                                        insertPreset.Parameters.AddWithValue("@FolderName", preset.BFolder);
-                                        insertPreset.Parameters.AddWithValue("@SortOrder", preset.BSortOrder);
-                                        insertPreset.Parameters.AddWithValue("@LoopCount", preset.BLoopCount);
-                                        insertPreset.Parameters.AddWithValue("@Interval", preset.BInterval);
-                                        insertPreset.Parameters.AddWithValue("@NextInterval", preset.BNextInterval);
-                                        insertPreset.Parameters.AddWithValue("@Mode", (int)preset.BMode);
-                                        insertPreset.Parameters.AddWithValue("@FirstPosition", preset.BCombinationFirstPosition);
-                                        insertPreset.Parameters.AddWithValue("@FirstInterval", preset.BCombinationFirstInterval);
-                                        insertPreset.Parameters.AddWithValue("@FirstLength", preset.BCombinationFirstLength);
-                                        insertPreset.Parameters.AddWithValue("@SecondPosition", preset.BCombinationSecondPosition);
-                                        insertPreset.Parameters.AddWithValue("@SecondInterval", preset.BCombinationSecondInterval);
-                                        insertPreset.Parameters.AddWithValue("@SecondLength", preset.BCombinationSecondLength);
-                                        insertPreset.Parameters.AddWithValue("@StartOffset", preset.BStart);
-                                        insertPreset.Parameters.AddWithValue("@ByteLength", preset.BLength);
-                                        insertPreset.Parameters.AddWithValue("@PacketType", preset.PacketType);
-                                        insertPreset.Parameters.AddWithValue("@IPFrom", preset.PacketFrom ?? string.Empty);
-                                        insertPreset.Parameters.AddWithValue("@IPTo", preset.PacketTo ?? string.Empty);
-                                        insertPreset.Parameters.AddWithValue("@Buffer", preset.Buffer);
-                                        insertPreset.Parameters.AddWithValue("@Annotations", Socket_ByteAnnotationEngine.Serialize(preset.ByteAnnotations));
-                                        insertPreset.ExecuteNonQuery();
+                                        using (SQLiteCommand insertFolder = new SQLiteCommand(
+                                            "INSERT INTO ByteSweepFolder (Name, SortOrder) VALUES (@Name, @SortOrder);", conn))
+                                        {
+                                            insertFolder.Transaction = transaction;
+                                            insertFolder.Parameters.AddWithValue("@Name", folder);
+                                            insertFolder.Parameters.AddWithValue("@SortOrder", sortOrder++);
+                                            insertFolder.ExecuteNonQuery();
+                                        }
                                     }
-                                }
 
-                                transaction.Commit();
-                                return true;
-                            }
-                            catch
-                            {
-                                transaction.Rollback();
-                                throw;
+                                    foreach (Socket_ByteSweepPresetInfo preset in
+                                        presets ?? Enumerable.Empty<Socket_ByteSweepPresetInfo>())
+                                    {
+                                        using (SQLiteCommand insertPreset = new SQLiteCommand(
+                                            "INSERT INTO ByteSweepPreset (" +
+                                            "GUID,IsEnable,Name,FolderName,SortOrder,LoopCount,Interval,NextInterval,Mode,FirstPosition,FirstInterval,FirstLength,SecondPosition,SecondInterval,SecondLength,StartOffset,ByteLength," +
+                                            "PacketType,IPFrom,IPTo,Buffer,Annotations) VALUES (" +
+                                            "@GUID,@IsEnable,@Name,@FolderName,@SortOrder,@LoopCount,@Interval,@NextInterval,@Mode,@FirstPosition,@FirstInterval,@FirstLength,@SecondPosition,@SecondInterval,@SecondLength,@StartOffset,@ByteLength," +
+                                            "@PacketType,@IPFrom,@IPTo,@Buffer,@Annotations);", conn))
+                                        {
+                                            insertPreset.Transaction = transaction;
+                                            insertPreset.Parameters.AddWithValue("@GUID", preset.BID.ToString().ToUpper());
+                                            insertPreset.Parameters.AddWithValue("@IsEnable", preset.IsEnable);
+                                            insertPreset.Parameters.AddWithValue("@Name", preset.BName);
+                                            insertPreset.Parameters.AddWithValue("@FolderName", preset.BFolder);
+                                            insertPreset.Parameters.AddWithValue("@SortOrder", preset.BSortOrder);
+                                            insertPreset.Parameters.AddWithValue("@LoopCount", preset.BLoopCount);
+                                            insertPreset.Parameters.AddWithValue("@Interval", preset.BInterval);
+                                            insertPreset.Parameters.AddWithValue("@NextInterval", preset.BNextInterval);
+                                            insertPreset.Parameters.AddWithValue("@Mode", (int)preset.BMode);
+                                            insertPreset.Parameters.AddWithValue("@FirstPosition", preset.BCombinationFirstPosition);
+                                            insertPreset.Parameters.AddWithValue("@FirstInterval", preset.BCombinationFirstInterval);
+                                            insertPreset.Parameters.AddWithValue("@FirstLength", preset.BCombinationFirstLength);
+                                            insertPreset.Parameters.AddWithValue("@SecondPosition", preset.BCombinationSecondPosition);
+                                            insertPreset.Parameters.AddWithValue("@SecondInterval", preset.BCombinationSecondInterval);
+                                            insertPreset.Parameters.AddWithValue("@SecondLength", preset.BCombinationSecondLength);
+                                            insertPreset.Parameters.AddWithValue("@StartOffset", preset.BStart);
+                                            insertPreset.Parameters.AddWithValue("@ByteLength", preset.BLength);
+                                            insertPreset.Parameters.AddWithValue("@PacketType", preset.PacketType);
+                                            insertPreset.Parameters.AddWithValue("@IPFrom", preset.PacketFrom ?? string.Empty);
+                                            insertPreset.Parameters.AddWithValue("@IPTo", preset.PacketTo ?? string.Empty);
+                                            insertPreset.Parameters.AddWithValue("@Buffer", preset.Buffer);
+                                            insertPreset.Parameters.AddWithValue("@Annotations", Socket_ByteAnnotationEngine.Serialize(preset.ByteAnnotations));
+                                            insertPreset.ExecuteNonQuery();
+                                        }
+                                    }
+
+                                    transaction.Commit();
+                                    return true;
+                                }
+                                catch
+                                {
+                                    transaction.Rollback();
+                                    throw;
+                                }
                             }
                         }
                     }
-                }
-                catch (Exception ex)
-                {
-                    Socket_Operation.DoLog(nameof(ReplaceByteSweepList), ex.Message);
-                    return false;
+                    catch (Exception ex)
+                    {
+                        Socket_Operation.DoLog(nameof(ReplaceByteSweepList), ex.Message);
+                        return false;
+                    }
+                    finally
+                    {
+                        AtomicSaveOwner.Value = false;
+                        AtomicSaveGate.Set();
+                    }
                 }
             }
 
@@ -13433,6 +16206,116 @@ namespace WPELibrary.Lib
                         sql += "SortOrder INTEGER NOT NULL";
                         sql += ");";
 
+                        sql += "CREATE TABLE IF NOT EXISTS RobotVisionProfile (";
+                        sql += "GUID TEXT NOT NULL PRIMARY KEY,";
+                        sql += "WindowHandle INTEGER DEFAULT 0,";
+                        sql += "ProcessId INTEGER DEFAULT 0,";
+                        sql += "ProcessName TEXT,";
+                        sql += "ProcessPath TEXT,";
+                        sql += "ProcessStartTimeUtcTicks INTEGER DEFAULT 0,";
+                        sql += "WindowTitle TEXT,";
+                        sql += "RegionX INTEGER DEFAULT 0,";
+                        sql += "RegionY INTEGER DEFAULT 0,";
+                        sql += "RegionWidth INTEGER DEFAULT 0,";
+                        sql += "RegionHeight INTEGER DEFAULT 0,";
+                        sql += "RegionNormalized BOOLEAN DEFAULT 0,";
+                        sql += "RegionReferenceWidth INTEGER DEFAULT 0,";
+                        sql += "RegionReferenceHeight INTEGER DEFAULT 0,";
+                        sql += "CaptureSource INTEGER DEFAULT 0,";
+                        sql += "CaptureInterval INTEGER DEFAULT 150,";
+                        sql += "CaptureSkipUnchanged BOOLEAN DEFAULT 1,";
+                        sql += "CaptureHistoryLimit INTEGER DEFAULT 30,";
+                        sql += "CaptureSaveFailures BOOLEAN DEFAULT 0,";
+                        sql += "CaptureFailureDirectory TEXT,";
+                        sql += "CaptureRequireExactClientSize BOOLEAN DEFAULT 0,";
+                        sql += "CaptureRequiredClientWidth INTEGER DEFAULT 0,";
+                        sql += "CaptureRequiredClientHeight INTEGER DEFAULT 0,";
+                        sql += "OcrScale INTEGER DEFAULT 2,";
+                        sql += "OcrBinary BOOLEAN DEFAULT 0,";
+                        sql += "OcrThreshold INTEGER DEFAULT 160,";
+                        sql += "OcrContrast REAL DEFAULT 1,";
+                        sql += "OcrAdaptive BOOLEAN DEFAULT 0,";
+                        sql += "OcrAdaptiveWindow INTEGER DEFAULT 15,";
+                        sql += "OcrAdaptiveOffset INTEGER DEFAULT 8,";
+                        sql += "OcrInvert BOOLEAN DEFAULT 0,";
+                        sql += "OcrDenoise BOOLEAN DEFAULT 0,";
+                        sql += "OcrSharpen BOOLEAN DEFAULT 0,";
+                        sql += "OcrWhitelist TEXT,";
+                        sql += "OcrBlacklist TEXT,";
+                        sql += "OcrLanguage TEXT,";
+                        sql += "OcrExecutable TEXT,";
+                        sql += "OcrTessdataPath TEXT,";
+                        sql += "OcrTimeout INTEGER DEFAULT 5000,";
+                        sql += "OcrPsm INTEGER DEFAULT 6,";
+                        sql += "OcrEngine INTEGER DEFAULT 0,";
+                        sql += "OcrModelDirectory TEXT,";
+                        sql += "OcrDetectionThreshold REAL DEFAULT 0.3,";
+                        sql += "OcrRecognitionThreshold REAL DEFAULT 0.5,";
+                        sql += "OcrMaxImageSide INTEGER DEFAULT 960,";
+                        sql += "OcrPythonExecutable TEXT,";
+                        sql += "OcrPythonWorkerScript TEXT,";
+                        sql += "OcrPythonWorkerTimeout INTEGER DEFAULT 15000,";
+                        sql += "OcrKeyword TEXT,";
+                        sql += "OcrMatchMode INTEGER DEFAULT 0,";
+                        sql += "OcrMinimumConfidence REAL DEFAULT 0.5,";
+                        sql += "OcrMinimumNumber REAL DEFAULT 0,";
+                        sql += "OcrMaximumNumber REAL DEFAULT 0,";
+                        sql += "FOREIGN KEY (GUID) REFERENCES Robot(GUID)";
+                        sql += ");";
+
+                        sql += "CREATE TABLE IF NOT EXISTS RobotVisionCondition (";
+                        sql += "GUID TEXT NOT NULL PRIMARY KEY,";
+                        sql += "RobotGUID TEXT NOT NULL,";
+                        sql += "StepIndex INTEGER NOT NULL,";
+                        sql += "Name TEXT,";
+                        sql += "ConditionType INTEGER NOT NULL,";
+                        sql += "RegionX INTEGER DEFAULT 0,";
+                        sql += "RegionY INTEGER DEFAULT 0,";
+                        sql += "RegionWidth INTEGER DEFAULT 0,";
+                        sql += "RegionHeight INTEGER DEFAULT 0,";
+                        sql += "Keyword TEXT,";
+                        sql += "MatchMode INTEGER DEFAULT 0,";
+                        sql += "MinimumNumber REAL DEFAULT 0,";
+                        sql += "MaximumNumber REAL DEFAULT 0,";
+                        sql += "MinimumConfidence REAL DEFAULT 0.5,";
+                        sql += "ColorR INTEGER DEFAULT 255,";
+                        sql += "ColorG INTEGER DEFAULT 255,";
+                        sql += "ColorB INTEGER DEFAULT 255,";
+                        sql += "ColorTolerance INTEGER DEFAULT 16,";
+                        sql += "ColorMinimumPixels INTEGER DEFAULT 10,";
+                        sql += "ColorMinimumRatio REAL DEFAULT 0,";
+                        sql += "MinimumSimilarity REAL DEFAULT 0.9,";
+                        sql += "TemplateNormalize BOOLEAN DEFAULT 1,";
+                        sql += "TemplateScaleVariation BOOLEAN DEFAULT 0,";
+                        sql += "TemplateMinScale REAL DEFAULT 0.9,";
+                        sql += "TemplateMaxScale REAL DEFAULT 1.1,";
+                        sql += "TemplateScaleStep REAL DEFAULT 0.05,";
+                        sql += "RequiredConfirmations INTEGER DEFAULT 2,";
+                        sql += "PollInterval INTEGER DEFAULT 150,";
+                        sql += "Timeout INTEGER DEFAULT 8000,";
+                        sql += "MaxRetries INTEGER DEFAULT 1,";
+                        sql += "FailurePolicy INTEGER DEFAULT 0,";
+                        sql += "ActionType INTEGER DEFAULT 0,";
+                        sql += "ScrollDirection INTEGER DEFAULT 1,";
+                        sql += "ScrollAmount INTEGER DEFAULT 3,";
+                        sql += "ActionDelay INTEGER DEFAULT 300,";
+                        sql += "VerificationEnabled BOOLEAN DEFAULT 0,";
+                        sql += "VerificationType INTEGER DEFAULT 0,";
+                        sql += "VerificationKeyword TEXT,";
+                        sql += "VerificationTemplatePng BLOB,";
+                        sql += "VerificationSeparateRegion BOOLEAN DEFAULT 0,";
+                        sql += "VerificationRegionX INTEGER DEFAULT 0,";
+                        sql += "VerificationRegionY INTEGER DEFAULT 0,";
+                        sql += "VerificationRegionWidth INTEGER DEFAULT 0,";
+                        sql += "VerificationRegionHeight INTEGER DEFAULT 0,";
+                        sql += "VerificationRegionNormalized BOOLEAN DEFAULT 0,";
+                        sql += "VerificationRegionReferenceWidth INTEGER DEFAULT 0,";
+                        sql += "VerificationRegionReferenceHeight INTEGER DEFAULT 0,";
+                        sql += "TemplatePng BLOB,";
+                        sql += "TemplateVariants TEXT,";
+                        sql += "FOREIGN KEY (RobotGUID) REFERENCES Robot(GUID)";
+                        sql += ");";
+
                         using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
                         {
                             conn.Open();
@@ -13450,6 +16333,119 @@ namespace WPELibrary.Lib
                             catch (SQLiteException)
                             {
                                 // 已存在时无需处理。
+                            }
+
+                            string[] visionColumns =
+                            {
+                                "OcrScale INTEGER DEFAULT 2",
+                                "OcrBinary BOOLEAN DEFAULT 0",
+                                "OcrThreshold INTEGER DEFAULT 160",
+                                "OcrContrast REAL DEFAULT 1",
+                                "OcrAdaptive BOOLEAN DEFAULT 0",
+                                "OcrAdaptiveWindow INTEGER DEFAULT 15",
+                                "OcrAdaptiveOffset INTEGER DEFAULT 8",
+                                "OcrInvert BOOLEAN DEFAULT 0",
+                                "OcrDenoise BOOLEAN DEFAULT 0",
+                                "OcrSharpen BOOLEAN DEFAULT 0",
+                                "OcrWhitelist TEXT",
+                                "OcrBlacklist TEXT",
+                                "OcrLanguage TEXT",
+                                "OcrExecutable TEXT",
+                                "OcrTessdataPath TEXT",
+                                "OcrTimeout INTEGER DEFAULT 5000",
+                                "OcrPsm INTEGER DEFAULT 6",
+                                "OcrEngine INTEGER DEFAULT 0",
+                                "OcrModelDirectory TEXT",
+                                "OcrDetectionThreshold REAL DEFAULT 0.3",
+                                "OcrRecognitionThreshold REAL DEFAULT 0.5",
+                                "OcrMaxImageSide INTEGER DEFAULT 960",
+                                "OcrPythonExecutable TEXT",
+                                "OcrPythonWorkerScript TEXT",
+                                "OcrPythonWorkerTimeout INTEGER DEFAULT 15000",
+                                "OcrKeyword TEXT",
+                                "OcrMatchMode INTEGER DEFAULT 0",
+                                "OcrMinimumConfidence REAL DEFAULT 0.5",
+                                 "OcrMinimumNumber REAL DEFAULT 0",
+                                 "OcrMaximumNumber REAL DEFAULT 0",
+                                 "ProcessPath TEXT",
+                                 "ProcessStartTimeUtcTicks INTEGER DEFAULT 0",
+                                 "RegionNormalized BOOLEAN DEFAULT 0",
+                                 "RegionReferenceWidth INTEGER DEFAULT 0",
+                                 "RegionReferenceHeight INTEGER DEFAULT 0",
+                                 "CaptureSource INTEGER DEFAULT 0",
+                                 "CaptureInterval INTEGER DEFAULT 150",
+                                 "CaptureSkipUnchanged BOOLEAN DEFAULT 1",
+                                 "CaptureHistoryLimit INTEGER DEFAULT 30",
+                                 "CaptureSaveFailures BOOLEAN DEFAULT 0",
+                                 "CaptureFailureDirectory TEXT",
+                                 "CaptureRequireExactClientSize BOOLEAN DEFAULT 0",
+                                 "CaptureRequiredClientWidth INTEGER DEFAULT 0",
+                                 "CaptureRequiredClientHeight INTEGER DEFAULT 0"
+                            };
+                            foreach (string visionColumn in visionColumns)
+                            {
+                                try
+                                {
+                                    using (SQLiteCommand alterVision = new SQLiteCommand(
+                                        "ALTER TABLE RobotVisionProfile ADD COLUMN " + visionColumn + ";",
+                                        conn))
+                                    {
+                                        alterVision.ExecuteNonQuery();
+                                    }
+                                }
+                                catch (SQLiteException)
+                                {
+                                    // Existing databases may already contain this column.
+                                }
+                            }
+                            string[] conditionColumns =
+                            {
+                                "RegionNormalized BOOLEAN DEFAULT 0",
+                                "RegionReferenceWidth INTEGER DEFAULT 0",
+                                "RegionReferenceHeight INTEGER DEFAULT 0",
+                                "ColorR INTEGER DEFAULT 255",
+                                "ColorG INTEGER DEFAULT 255",
+                                "ColorB INTEGER DEFAULT 255",
+                                "ColorTolerance INTEGER DEFAULT 16",
+                                "ColorMinimumPixels INTEGER DEFAULT 10",
+                                "ColorMinimumRatio REAL DEFAULT 0",
+                                "TemplateNormalize BOOLEAN DEFAULT 1",
+                                "TemplateScaleVariation BOOLEAN DEFAULT 0",
+                                "TemplateMinScale REAL DEFAULT 0.9",
+                                "TemplateMaxScale REAL DEFAULT 1.1",
+                                "TemplateScaleStep REAL DEFAULT 0.05",
+                                "TemplateVariants TEXT",
+                                "ActionType INTEGER DEFAULT 0",
+                                "ScrollDirection INTEGER DEFAULT 1",
+                                "ScrollAmount INTEGER DEFAULT 3",
+                                "ActionDelay INTEGER DEFAULT 300",
+                                "VerificationEnabled BOOLEAN DEFAULT 0",
+                                "VerificationType INTEGER DEFAULT 0",
+                                "VerificationKeyword TEXT",
+                                "VerificationTemplatePng BLOB",
+                                "VerificationSeparateRegion BOOLEAN DEFAULT 0",
+                                "VerificationRegionX INTEGER DEFAULT 0",
+                                "VerificationRegionY INTEGER DEFAULT 0",
+                                "VerificationRegionWidth INTEGER DEFAULT 0",
+                                "VerificationRegionHeight INTEGER DEFAULT 0",
+                                "VerificationRegionNormalized BOOLEAN DEFAULT 0",
+                                "VerificationRegionReferenceWidth INTEGER DEFAULT 0",
+                                "VerificationRegionReferenceHeight INTEGER DEFAULT 0"
+                            };
+                            foreach (string conditionColumn in conditionColumns)
+                            {
+                                try
+                                {
+                                    using (SQLiteCommand alterCondition = new SQLiteCommand(
+                                        "ALTER TABLE RobotVisionCondition ADD COLUMN " + conditionColumn + ";",
+                                        conn))
+                                    {
+                                        alterCondition.ExecuteNonQuery();
+                                    }
+                                }
+                                catch (SQLiteException)
+                                {
+                                }
                             }
                         }
                     }
@@ -13534,6 +16530,52 @@ namespace WPELibrary.Lib
                 return dtReturn;
             }
 
+            public static DataTable SelectTable_RobotVisionProfile(Guid guid)
+            {
+                DataTable dtReturn = new DataTable();
+
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand(
+                        "SELECT * FROM RobotVisionProfile WHERE GUID = @GUID;", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@GUID", guid.ToString().ToUpper());
+                        SQLiteDataAdapter adapter = new SQLiteDataAdapter(cmd);
+                        adapter.Fill(dtReturn);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+
+                return dtReturn;
+            }
+
+            public static DataTable SelectTable_RobotVisionCondition(Guid guid)
+            {
+                DataTable dtReturn = new DataTable();
+
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand(
+                        "SELECT * FROM RobotVisionCondition WHERE RobotGUID = @RobotGUID ORDER BY StepIndex ASC;", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@RobotGUID", guid.ToString().ToUpper());
+                        SQLiteDataAdapter adapter = new SQLiteDataAdapter(cmd);
+                        adapter.Fill(dtReturn);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+
+                return dtReturn;
+            }
+
             public static void DeleteTable_Robot()
             {
                 try
@@ -13541,6 +16583,8 @@ namespace WPELibrary.Lib
                     using (SQLiteConnection conn = new SQLiteConnection(conStr))
                     {
                         string sql = "DELETE FROM RobotInstruction;";
+                        sql += "DELETE FROM RobotVisionCondition;";
+                        sql += "DELETE FROM RobotVisionProfile;";
                         sql += "DELETE FROM Robot;";
 
                         using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
@@ -13553,6 +16597,10 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
                 }
             }
 
@@ -13570,6 +16618,10 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
                 }
             }
 
@@ -13594,6 +16646,10 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
                 }
             }
 
@@ -13644,11 +16700,214 @@ namespace WPELibrary.Lib
                                 cmd.ExecuteNonQuery();
                             }
                         }
+
+                        if (sri.VisionProfile != null && sri.VisionProfile.HasConfiguration)
+                        {
+                            sql = "INSERT OR REPLACE INTO RobotVisionProfile (";
+                            sql += "GUID, WindowHandle, ProcessId, ProcessName, ProcessPath, ProcessStartTimeUtcTicks, WindowTitle,";
+                            sql += "RegionX, RegionY, RegionWidth, RegionHeight, RegionNormalized, RegionReferenceWidth, RegionReferenceHeight,";
+                            sql += "CaptureSource, CaptureInterval, CaptureSkipUnchanged, CaptureHistoryLimit, CaptureSaveFailures, CaptureFailureDirectory, CaptureRequireExactClientSize, CaptureRequiredClientWidth, CaptureRequiredClientHeight,";
+                            sql += "OcrScale, OcrBinary, OcrThreshold, OcrContrast, OcrAdaptive, OcrAdaptiveWindow, OcrAdaptiveOffset,";
+                            sql += "OcrInvert, OcrDenoise, OcrSharpen, OcrWhitelist, OcrBlacklist, OcrLanguage,";
+                            sql += "OcrExecutable, OcrTessdataPath, OcrTimeout, OcrPsm, OcrEngine, OcrModelDirectory, OcrDetectionThreshold, OcrRecognitionThreshold, OcrMaxImageSide, OcrPythonExecutable, OcrPythonWorkerScript, OcrPythonWorkerTimeout, OcrKeyword,";
+                            sql += "OcrMatchMode, OcrMinimumConfidence, OcrMinimumNumber, OcrMaximumNumber";
+                            sql += ") VALUES (";
+                            sql += "@GUID, @WindowHandle, @ProcessId, @ProcessName, @ProcessPath, @ProcessStartTimeUtcTicks, @WindowTitle,";
+                            sql += "@RegionX, @RegionY, @RegionWidth, @RegionHeight, @RegionNormalized, @RegionReferenceWidth, @RegionReferenceHeight,";
+                            sql += "@CaptureSource, @CaptureInterval, @CaptureSkipUnchanged, @CaptureHistoryLimit, @CaptureSaveFailures, @CaptureFailureDirectory, @CaptureRequireExactClientSize, @CaptureRequiredClientWidth, @CaptureRequiredClientHeight,";
+                            sql += "@OcrScale, @OcrBinary, @OcrThreshold, @OcrContrast, @OcrAdaptive, @OcrAdaptiveWindow, @OcrAdaptiveOffset,";
+                            sql += "@OcrInvert, @OcrDenoise, @OcrSharpen, @OcrWhitelist, @OcrBlacklist, @OcrLanguage,";
+                            sql += "@OcrExecutable, @OcrTessdataPath, @OcrTimeout, @OcrPsm, @OcrEngine, @OcrModelDirectory, @OcrDetectionThreshold, @OcrRecognitionThreshold, @OcrMaxImageSide, @OcrPythonExecutable, @OcrPythonWorkerScript, @OcrPythonWorkerTimeout, @OcrKeyword,";
+                            sql += "@OcrMatchMode, @OcrMinimumConfidence, @OcrMinimumNumber, @OcrMaximumNumber";
+                            sql += ");";
+
+                            using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
+                            {
+                                Socket_VisionProfile profile = sri.VisionProfile;
+                                VisionOcrOptions ocrOptions = profile.OcrOptions ?? new VisionOcrOptions();
+                                VisionTextCondition ocrCondition = profile.OcrCondition ?? new VisionTextCondition();
+                                cmd.Parameters.AddWithValue("@GUID", sri.RID.ToString().ToUpper());
+                                cmd.Parameters.AddWithValue("@WindowHandle", profile.WindowHandle);
+                                cmd.Parameters.AddWithValue("@ProcessId", profile.ProcessId);
+                                cmd.Parameters.AddWithValue("@ProcessName", profile.ProcessName ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@ProcessPath", profile.ProcessPath ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@ProcessStartTimeUtcTicks", profile.ProcessStartTimeUtcTicks);
+                                cmd.Parameters.AddWithValue("@WindowTitle", profile.WindowTitle ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@RegionX", profile.Region.X);
+                                cmd.Parameters.AddWithValue("@RegionY", profile.Region.Y);
+                                cmd.Parameters.AddWithValue("@RegionWidth", profile.Region.Width);
+                                cmd.Parameters.AddWithValue("@RegionHeight", profile.Region.Height);
+                                cmd.Parameters.AddWithValue("@RegionNormalized", profile.Region.UseNormalizedCoordinates);
+                                cmd.Parameters.AddWithValue("@RegionReferenceWidth", profile.Region.ReferenceWidth);
+                                cmd.Parameters.AddWithValue("@RegionReferenceHeight", profile.Region.ReferenceHeight);
+                                VisionCaptureSettings captureSettings = profile.CaptureSettings ?? new VisionCaptureSettings();
+                                cmd.Parameters.AddWithValue("@CaptureSource", (int)captureSettings.SourceMode);
+                                cmd.Parameters.AddWithValue("@CaptureInterval", captureSettings.MinimumIntervalMilliseconds);
+                                cmd.Parameters.AddWithValue("@CaptureSkipUnchanged", captureSettings.SkipUnchangedFrames);
+                                cmd.Parameters.AddWithValue("@CaptureHistoryLimit", captureSettings.HistoryLimit);
+                                cmd.Parameters.AddWithValue("@CaptureSaveFailures", captureSettings.SaveFailureSnapshots);
+                                cmd.Parameters.AddWithValue("@CaptureFailureDirectory", captureSettings.FailureSnapshotDirectory ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@CaptureRequireExactClientSize", captureSettings.RequireExactClientSize);
+                                cmd.Parameters.AddWithValue("@CaptureRequiredClientWidth", captureSettings.RequiredClientWidth);
+                                cmd.Parameters.AddWithValue("@CaptureRequiredClientHeight", captureSettings.RequiredClientHeight);
+                                cmd.Parameters.AddWithValue("@OcrScale", ocrOptions.ScaleFactor);
+                                cmd.Parameters.AddWithValue("@OcrBinary", ocrOptions.UseBinaryThreshold);
+                                cmd.Parameters.AddWithValue("@OcrThreshold", ocrOptions.BinaryThreshold);
+                                cmd.Parameters.AddWithValue("@OcrContrast", ocrOptions.Contrast);
+                                cmd.Parameters.AddWithValue("@OcrAdaptive", ocrOptions.UseAdaptiveThreshold);
+                                cmd.Parameters.AddWithValue("@OcrAdaptiveWindow", ocrOptions.AdaptiveThresholdWindowSize);
+                                cmd.Parameters.AddWithValue("@OcrAdaptiveOffset", ocrOptions.AdaptiveThresholdOffset);
+                                cmd.Parameters.AddWithValue("@OcrInvert", ocrOptions.Invert);
+                                cmd.Parameters.AddWithValue("@OcrDenoise", ocrOptions.UseDenoise);
+                                cmd.Parameters.AddWithValue("@OcrSharpen", ocrOptions.UseSharpen);
+                                cmd.Parameters.AddWithValue("@OcrWhitelist", ocrOptions.CharacterWhitelist ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrBlacklist", ocrOptions.CharacterBlacklist ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrLanguage", ocrOptions.Language ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrExecutable", ocrOptions.ExecutablePath ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrTessdataPath", ocrOptions.TessdataPath ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrTimeout", ocrOptions.TimeoutMilliseconds);
+                                cmd.Parameters.AddWithValue("@OcrPsm", ocrOptions.PageSegmentationMode);
+                                cmd.Parameters.AddWithValue("@OcrEngine", (int)ocrOptions.Engine);
+                                cmd.Parameters.AddWithValue("@OcrModelDirectory", ocrOptions.OnnxModelDirectory ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrDetectionThreshold", ocrOptions.OnnxDetectionThreshold);
+                                cmd.Parameters.AddWithValue("@OcrRecognitionThreshold", ocrOptions.OnnxRecognitionThreshold);
+                                cmd.Parameters.AddWithValue("@OcrMaxImageSide", ocrOptions.OnnxMaxImageSide);
+                                cmd.Parameters.AddWithValue("@OcrPythonExecutable", ocrOptions.PythonExecutablePath ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrPythonWorkerScript", ocrOptions.PythonWorkerScriptPath ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrPythonWorkerTimeout", ocrOptions.PythonWorkerTimeoutMilliseconds);
+                                cmd.Parameters.AddWithValue("@OcrKeyword", ocrCondition.ExpectedText ?? string.Empty);
+                                cmd.Parameters.AddWithValue("@OcrMatchMode", (int)ocrCondition.MatchMode);
+                                cmd.Parameters.AddWithValue("@OcrMinimumConfidence", ocrCondition.MinimumConfidence);
+                                cmd.Parameters.AddWithValue("@OcrMinimumNumber", ocrCondition.MinimumNumber);
+                                cmd.Parameters.AddWithValue("@OcrMaximumNumber", ocrCondition.MaximumNumber);
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+
+                        InsertTable_RobotVisionConditions(conn, sri);
                     }
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
+                }
+            }
+
+            private static void InsertTable_RobotVisionConditions(
+                SQLiteConnection conn,
+                Socket_RobotInfo sri)
+            {
+                if (sri == null || sri.VisionProfile == null ||
+                    sri.VisionProfile.AssistantSteps == null)
+                {
+                    return;
+                }
+
+                int stepIndex = 0;
+                foreach (VisionAssistantStep step in sri.VisionProfile.AssistantSteps)
+                {
+                    if (step == null || step.Condition == null)
+                    {
+                        continue;
+                    }
+
+                    VisionConditionDefinition condition = step.Condition;
+                    byte[] templatePng = VisionResourceSerializer.ToPngBytes(condition.Template);
+                    byte[] verificationTemplatePng = VisionResourceSerializer.ToPngBytes(
+                        step.Verification == null ? null : step.Verification.Template);
+                    string templateVariants = string.Empty;
+                    if (condition.TemplateVariants != null)
+                    {
+                        templateVariants = string.Join(";", condition.TemplateVariants
+                            .Where(variant => variant != null)
+                            .Select(variant => Convert.ToBase64String(VisionResourceSerializer.ToPngBytes(variant))));
+                    }
+                    string sql = "INSERT INTO RobotVisionCondition (";
+                    sql += "GUID, RobotGUID, StepIndex, Name, ConditionType,";
+                    sql += "RegionX, RegionY, RegionWidth, RegionHeight, RegionNormalized, RegionReferenceWidth, RegionReferenceHeight, Keyword, MatchMode,";
+                    sql += "MinimumNumber, MaximumNumber, MinimumConfidence, ColorR, ColorG, ColorB, ColorTolerance, ColorMinimumPixels, ColorMinimumRatio, MinimumSimilarity,";
+                    sql += "TemplateNormalize, TemplateScaleVariation, TemplateMinScale, TemplateMaxScale, TemplateScaleStep,";
+                    sql += "RequiredConfirmations, PollInterval, Timeout, MaxRetries, FailurePolicy, ActionType, ScrollDirection, ScrollAmount, ActionDelay, VerificationEnabled, VerificationType, VerificationKeyword, VerificationTemplatePng, VerificationSeparateRegion, VerificationRegionX, VerificationRegionY, VerificationRegionWidth, VerificationRegionHeight, VerificationRegionNormalized, VerificationRegionReferenceWidth, VerificationRegionReferenceHeight, TemplatePng, TemplateVariants";
+                    sql += ") VALUES (";
+                    sql += "@GUID, @RobotGUID, @StepIndex, @Name, @ConditionType,";
+                    sql += "@RegionX, @RegionY, @RegionWidth, @RegionHeight, @RegionNormalized, @RegionReferenceWidth, @RegionReferenceHeight, @Keyword, @MatchMode,";
+                    sql += "@MinimumNumber, @MaximumNumber, @MinimumConfidence, @ColorR, @ColorG, @ColorB, @ColorTolerance, @ColorMinimumPixels, @ColorMinimumRatio, @MinimumSimilarity,";
+                    sql += "@TemplateNormalize, @TemplateScaleVariation, @TemplateMinScale, @TemplateMaxScale, @TemplateScaleStep,";
+                    sql += "@RequiredConfirmations, @PollInterval, @Timeout, @MaxRetries, @FailurePolicy, @ActionType, @ScrollDirection, @ScrollAmount, @ActionDelay, @VerificationEnabled, @VerificationType, @VerificationKeyword, @VerificationTemplatePng, @VerificationSeparateRegion, @VerificationRegionX, @VerificationRegionY, @VerificationRegionWidth, @VerificationRegionHeight, @VerificationRegionNormalized, @VerificationRegionReferenceWidth, @VerificationRegionReferenceHeight, @TemplatePng, @TemplateVariants";
+                    sql += ");";
+
+                    using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
+                    {
+                        VisionTextCondition textCondition = condition.TextCondition ?? new VisionTextCondition();
+                        VisionRegion region = condition.Region ?? new VisionRegion();
+                        cmd.Parameters.AddWithValue("@GUID", Guid.NewGuid().ToString().ToUpper());
+                        cmd.Parameters.AddWithValue("@RobotGUID", sri.RID.ToString().ToUpper());
+                        cmd.Parameters.AddWithValue("@StepIndex", stepIndex++);
+                        cmd.Parameters.AddWithValue("@Name", step.Name ?? string.Empty);
+                        cmd.Parameters.AddWithValue("@ConditionType", (int)condition.Type);
+                        cmd.Parameters.AddWithValue("@RegionX", region.X);
+                        cmd.Parameters.AddWithValue("@RegionY", region.Y);
+                        cmd.Parameters.AddWithValue("@RegionWidth", region.Width);
+                        cmd.Parameters.AddWithValue("@RegionHeight", region.Height);
+                        cmd.Parameters.AddWithValue("@RegionNormalized", region.UseNormalizedCoordinates);
+                        cmd.Parameters.AddWithValue("@RegionReferenceWidth", region.ReferenceWidth);
+                        cmd.Parameters.AddWithValue("@RegionReferenceHeight", region.ReferenceHeight);
+                        cmd.Parameters.AddWithValue("@Keyword", textCondition.ExpectedText ?? string.Empty);
+                        cmd.Parameters.AddWithValue("@MatchMode", (int)textCondition.MatchMode);
+                        cmd.Parameters.AddWithValue("@MinimumNumber", textCondition.MinimumNumber);
+                        cmd.Parameters.AddWithValue("@MaximumNumber", textCondition.MaximumNumber);
+                        cmd.Parameters.AddWithValue("@MinimumConfidence", textCondition.MinimumConfidence);
+                        VisionColorCondition colorCondition = condition.ColorCondition ?? new VisionColorCondition();
+                        cmd.Parameters.AddWithValue("@ColorR", colorCondition.Red);
+                        cmd.Parameters.AddWithValue("@ColorG", colorCondition.Green);
+                        cmd.Parameters.AddWithValue("@ColorB", colorCondition.Blue);
+                        cmd.Parameters.AddWithValue("@ColorTolerance", colorCondition.Tolerance);
+                        cmd.Parameters.AddWithValue("@ColorMinimumPixels", colorCondition.MinimumPixelCount);
+                        cmd.Parameters.AddWithValue("@ColorMinimumRatio", colorCondition.MinimumMatchRatio);
+                        cmd.Parameters.AddWithValue("@MinimumSimilarity", condition.MinimumSimilarity);
+                        cmd.Parameters.AddWithValue("@TemplateNormalize", condition.NormalizeTemplateBrightness);
+                        cmd.Parameters.AddWithValue("@TemplateScaleVariation", condition.AllowTemplateScaleVariation);
+                        cmd.Parameters.AddWithValue("@TemplateMinScale", condition.TemplateMinimumScale);
+                        cmd.Parameters.AddWithValue("@TemplateMaxScale", condition.TemplateMaximumScale);
+                        cmd.Parameters.AddWithValue("@TemplateScaleStep", condition.TemplateScaleStep);
+                        cmd.Parameters.AddWithValue("@RequiredConfirmations", condition.RequiredConfirmations);
+                        cmd.Parameters.AddWithValue("@PollInterval", condition.PollIntervalMilliseconds);
+                        cmd.Parameters.AddWithValue("@Timeout", condition.TimeoutMilliseconds);
+                        cmd.Parameters.AddWithValue("@MaxRetries", condition.MaxRetries);
+                        cmd.Parameters.AddWithValue("@FailurePolicy", (int)condition.FailurePolicy);
+                        VisionActionDefinition actionDefinition = step.ActionDefinition ?? new VisionActionDefinition();
+                        actionDefinition.Validate();
+                        cmd.Parameters.AddWithValue("@ActionType", (int)actionDefinition.Type);
+                        cmd.Parameters.AddWithValue("@ScrollDirection", (int)actionDefinition.ScrollDirection);
+                        cmd.Parameters.AddWithValue("@ScrollAmount", actionDefinition.ScrollAmount);
+                        cmd.Parameters.AddWithValue("@ActionDelay", actionDefinition.DelayMilliseconds);
+                        VisionConditionDefinition verification = step.Verification;
+                        VisionTextCondition verificationText = verification == null || verification.TextCondition == null
+                            ? new VisionTextCondition()
+                            : verification.TextCondition;
+                        cmd.Parameters.AddWithValue("@VerificationEnabled", step.VerificationEnabled && verification != null);
+                        cmd.Parameters.AddWithValue("@VerificationType", verification == null ? 0 : (int)verification.Type);
+                        cmd.Parameters.AddWithValue("@VerificationKeyword", verificationText.ExpectedText ?? string.Empty);
+                        cmd.Parameters.AddWithValue("@VerificationTemplatePng", verificationTemplatePng);
+                        VisionRegion verificationRegion = verification == null || verification.Region == null
+                            ? region
+                            : verification.Region;
+                        cmd.Parameters.AddWithValue("@VerificationSeparateRegion", step.VerificationUsesSeparateRegion && verification != null);
+                        cmd.Parameters.AddWithValue("@VerificationRegionX", verificationRegion.X);
+                        cmd.Parameters.AddWithValue("@VerificationRegionY", verificationRegion.Y);
+                        cmd.Parameters.AddWithValue("@VerificationRegionWidth", verificationRegion.Width);
+                        cmd.Parameters.AddWithValue("@VerificationRegionHeight", verificationRegion.Height);
+                        cmd.Parameters.AddWithValue("@VerificationRegionNormalized", verificationRegion.UseNormalizedCoordinates);
+                        cmd.Parameters.AddWithValue("@VerificationRegionReferenceWidth", verificationRegion.ReferenceWidth);
+                        cmd.Parameters.AddWithValue("@VerificationRegionReferenceHeight", verificationRegion.ReferenceHeight);
+                        cmd.Parameters.AddWithValue("@TemplatePng", templatePng);
+                        cmd.Parameters.AddWithValue("@TemplateVariants", templateVariants);
+                        cmd.ExecuteNonQuery();
+                    }
                 }
             }
 
@@ -13776,6 +17035,10 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog_Proxy(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
                 }
             }
 
@@ -13797,6 +17060,10 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog_Proxy(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
                 }
             }
 
@@ -13841,7 +17108,7 @@ namespace WPELibrary.Lib
                                          "@GUID, @IsEnable, @UserName, @PassWord, @LoginTime, @LoginIP, @IPLocation, @IsLimitLinks, @LimitLinks, @IsLimitDevices, @LimitDevices, @IsExpiry, @ExpiryTime, @CreateTime" +
                                          ");";
 
-                            using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
+                            using (SQLiteCommand cmd = new SQLiteCommand(sql, conn, transaction))
                             {
                                 cmd.Parameters.Add(new SQLiteParameter("@GUID", DbType.String));
                                 cmd.Parameters.Add(new SQLiteParameter("@IsEnable", DbType.Boolean));
@@ -13886,6 +17153,10 @@ namespace WPELibrary.Lib
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog_Proxy(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    if (atomicSaveInProgress)
+                    {
+                        throw;
+                    }
                 }
             }
 

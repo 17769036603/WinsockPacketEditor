@@ -30,5 +30,31 @@ namespace WPELibrary.Lib
             this.RemotePath = RemotePath;
             this.LocalPath = LocalPath;   
         }
+
+        public Proxy_MapLocal Clone()
+        {
+            return new Proxy_MapLocal(
+                this.IsEnable,
+                this.ProtocolType,
+                this.Host,
+                this.Port,
+                this.RemotePath,
+                this.LocalPath);
+        }
+
+        public void CopyFrom(Proxy_MapLocal source)
+        {
+            if (source == null)
+            {
+                return;
+            }
+
+            this.IsEnable = source.IsEnable;
+            this.ProtocolType = source.ProtocolType;
+            this.Host = source.Host;
+            this.Port = source.Port;
+            this.RemotePath = source.RemotePath;
+            this.LocalPath = source.LocalPath;
+        }
     }
 }

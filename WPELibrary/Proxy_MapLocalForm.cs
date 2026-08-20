@@ -65,13 +65,34 @@ namespace WPELibrary
                     return;
                 }
 
+                bool saved;
                 if (this.pmlSelect == null)
                 {
-                    Socket_Cache.ProxyMapping.AddMapLocal(false, ProtocolType_New, Host_New, port_New, RemotePath_New, LocalPath_New);
+                    saved = Socket_Cache.ProxyMapping.TryApplyMapLocalChangeAndSave(() =>
+                        Socket_Cache.ProxyMapping.AddMapLocal(
+                            false,
+                            ProtocolType_New,
+                            Host_New,
+                            port_New,
+                            RemotePath_New,
+                            LocalPath_New));
                 }
                 else
                 {
-                    Socket_Cache.ProxyMapping.UpdateMapLocal(this.pmlSelect, ProtocolType_New, Host_New, port_New, RemotePath_New, LocalPath_New);
+                    saved = Socket_Cache.ProxyMapping.TryApplyMapLocalChangeAndSave(() =>
+                        Socket_Cache.ProxyMapping.UpdateMapLocal(
+                            this.pmlSelect,
+                            ProtocolType_New,
+                            Host_New,
+                            port_New,
+                            RemotePath_New,
+                            LocalPath_New));
+                }
+
+                if (!saved)
+                {
+                    Socket_Operation.ShowMessageBox(Socket_Operation.GetUiText("UI_PresetSaveFailed"));
+                    return;
                 }
 
                 this.Close();                

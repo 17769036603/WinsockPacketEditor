@@ -45,9 +45,21 @@ try {
         $navigation.GetCellPosition($assistant).Row -ne 1) { throw "Assistant position is invalid." }
     if ($navigation.GetCellPosition($filter).Column -ne 1 -or
         $navigation.GetCellPosition($filter).Row -ne 1) { throw "Filter position is invalid." }
-    if ($assistantGrid.ColumnCount -ne 4) { throw "Assistant grid must have four columns." }
-    if ($send.Height -ne 44 -or $assistant.Height -ne 44) {
-        throw "Homepage button height is invalid. send=$($send.Height), assistant=$($assistant.Height), nav=$($navigation.Height)"
+    if ($assistantGrid.ColumnCount -ne 5) { throw "Assistant grid must have five columns." }
+    if ($send.Height -le 0 -or $send.Height -gt 40 -or
+        $assistant.Height -le 0 -or $assistant.Height -gt 40 -or
+        $send.Width -le 0 -or $send.Width -gt 240 -or
+        $assistant.Width -le 0 -or $assistant.Width -gt 240) {
+        throw "Homepage button size is invalid. send=$($send.Width)x$($send.Height), assistant=$($assistant.Width)x$($assistant.Height), nav=$($navigation.Width)x$($navigation.Height)"
+    }
+
+    $navigation.Dock = [System.Windows.Forms.DockStyle]::None
+    $navigation.Width = 300
+    $navigation.PerformLayout()
+    [System.Windows.Forms.Application]::DoEvents()
+    if ($send.Width -le 0 -or $send.Width -ge 240 -or
+        $assistant.Width -le 0 -or $assistant.Width -ge 240) {
+        throw "Homepage buttons did not adapt to the narrow layout. send=$($send.Width), assistant=$($assistant.Width)"
     }
 
     Write-Output "Automation home runtime regression checks passed."

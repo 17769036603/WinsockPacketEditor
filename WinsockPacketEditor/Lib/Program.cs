@@ -1,4 +1,8 @@
 ﻿using System;
+using System.ComponentModel;
+using System.IO;
+using System.Reflection;
+using System.Collections.Generic;
 using System.Windows.Forms;
 using WPELibrary;
 using WPELibrary.Lib;
@@ -8,9 +12,75 @@ namespace WinsockPacketEditor
 {
     static class Program
     {
+        private static readonly string[] BundledRuntimeAssemblies =
+        {
+            "Microsoft.ML.OnnxRuntime",
+            "System.Memory",
+            "System.Buffers",
+            "System.Runtime.CompilerServices.Unsafe",
+            "System.Threading.Tasks.Extensions"
+        };
+
         public static int PID = -1;
         public static string PNAME = string.Empty;
         public static string PATH = string.Empty;        
+
+        static Program()
+        {
+            // ONNX Runtime may request an older assembly identity (for example
+            // System.Memory 4.0.1.2). Binding redirects cover the normal EXE
+            // host, while this resolver also supports ClickOnce/isolated hosts
+            // whose configuration is not inherited from the main application.
+            AppDomain.CurrentDomain.AssemblyResolve += ResolveBundledRuntimeAssembly;
+        }
+
+        private static Assembly ResolveBundledRuntimeAssembly(
+            object sender,
+            ResolveEventArgs args)
+        {
+            AssemblyName requested;
+            try
+            {
+                requested = new AssemblyName(args.Name);
+            }
+            catch (FileLoadException)
+            {
+                return null;
+            }
+
+            bool isBundledRuntimeAssembly = false;
+            foreach (string assemblyName in BundledRuntimeAssemblies)
+            {
+                if (string.Equals(requested.Name, assemblyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    isBundledRuntimeAssembly = true;
+                    break;
+                }
+            }
+            if (!isBundledRuntimeAssembly)
+            {
+                return null;
+            }
+
+            foreach (Assembly loadedAssembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                AssemblyName loadedName = loadedAssembly.GetName();
+                if (string.Equals(loadedName.Name, requested.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    return loadedAssembly;
+                }
+            }
+
+            string path = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                requested.Name + ".dll");
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            return Assembly.LoadFrom(path);
+        }
 
         #region//主函数
 
@@ -46,6 +116,28 @@ namespace WinsockPacketEditor
                     startInfo.UseShellExecute = true;
                     startInfo.WorkingDirectory = Environment.CurrentDirectory;
                     startInfo.FileName = Application.ExecutablePath;
+                    // Preserve explicit unattended switches when the normal
+                    // non-elevated launcher hands off to the administrator
+                    // process. Without this, --auto-inject was silently
+                    // dropped at the UAC boundary and the elevated injector
+                    // opened with no action pending.
+                    string[] commandLineArguments = Environment.GetCommandLineArgs();
+                    if (commandLineArguments.Length > 1)
+                    {
+                        List<string> forwardedArguments = new List<string>();
+                        for (int index = 1; index < commandLineArguments.Length; index++)
+                        {
+                            string argument = commandLineArguments[index];
+                            if (string.IsNullOrWhiteSpace(argument))
+                            {
+                                continue;
+                            }
+
+                            forwardedArguments.Add(QuoteProcessArgument(argument));
+                        }
+
+                        startInfo.Arguments = string.Join(" ", forwardedArguments.ToArray());
+                    }
                     
                     startInfo.Verb = "runas";
 
@@ -53,8 +145,24 @@ namespace WinsockPacketEditor
                     {
                         System.Diagnostics.Process.Start(startInfo);
                     }
-                    catch
+                    catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
                     {
+                        MessageBox.Show(
+                            Socket_Operation.GetUiText("Startup_AdminRequired"),
+                            Socket_Cache.System.WPE,
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning);
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show(
+                            string.Format(
+                                Socket_Operation.GetUiText("Startup_AdminRestartFailed"),
+                                ex.Message),
+                            Socket_Cache.System.WPE,
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Error);
                         return;
                     }
                    
@@ -63,8 +171,22 @@ namespace WinsockPacketEditor
             }
             catch (Exception ex)
             {
-                string sError = ex.Message;
+                MessageBox.Show(
+                    string.Format(Socket_Operation.GetUiText("Startup_Failed"), ex.Message),
+                    Socket_Cache.System.WPE,
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
             }            
+        }
+
+        private static string QuoteProcessArgument(string argument)
+        {
+            if (argument.IndexOfAny(new[] { ' ', '\t', '\"' }) < 0)
+            {
+                return argument;
+            }
+
+            return "\"" + argument.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
         }
 
         #endregion        

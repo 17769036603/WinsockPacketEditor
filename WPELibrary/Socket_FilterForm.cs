@@ -833,45 +833,51 @@ namespace WPELibrary
             }
         }
 
-        private async void PastePacketData(DataGridView dgv, string sData)
+        private void PastePacketData(DataGridView dgv, string sData)
         {
-            this.bFilterButton_Save.Enabled = false;
-
-            await Task.Run(() =>
+            try
             {
-                try
+                this.bFilterButton_Save.Enabled = false;
+
+                if (!string.IsNullOrEmpty(sData) && Socket_Operation.IsHexString(sData))
                 {
-                    if (!string.IsNullOrEmpty(sData) && Socket_Operation.IsHexString(sData))
+                    if (dgv == null || dgv.CurrentCell == null)
                     {
-                        string[] DataCells = sData.Split(' ');
+                        return;
+                    }
 
-                        int iRow = dgv.CurrentCell.RowIndex;
-                        int iCol = dgv.CurrentCell.ColumnIndex;
+                    string[] DataCells = sData.Split(' ');
+                    int iRow = dgv.CurrentCell.RowIndex;
+                    int iCol = dgv.CurrentCell.ColumnIndex;
 
-                        for (int i = 0; i < DataCells.Length; i++)
+                    for (int i = 0; i < DataCells.Length; i++)
+                    {
+                        if (iCol + i < dgv.ColumnCount)
                         {
-                            if (iCol + i < dgv.ColumnCount)
-                            {
-                                dgv[iCol + i, iRow].Value = Convert.ChangeType(DataCells[i].ToUpper(), dgv[iCol + i, iRow].ValueType);
-                            }
-                            else
-                            {
-                                break;
-                            }
+                            dgv[iCol + i, iRow].Value = Convert.ChangeType(
+                                DataCells[i].ToUpper(),
+                                dgv[iCol + i, iRow].ValueType);
+                        }
+                        else
+                        {
+                            break;
                         }
                     }
-                    else
-                    {
-                        Socket_Operation.ShowMessageBox(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_42));
-                    }
                 }
-                catch (Exception ex)
+                else
                 {
-                    Socket_Operation.DoLog(nameof(PastePacketData), ex.Message);
+                    Socket_Operation.ShowMessageBox(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_42));
                 }
-            });
 
-            this.bFilterButton_Save.Enabled = true;
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(nameof(PastePacketData), ex.Message);
+            }
+            finally
+            {
+                this.bFilterButton_Save.Enabled = true;
+            }
         }
 
         #endregion
@@ -1318,33 +1324,40 @@ namespace WPELibrary
                     string sSearch_New = sbSearch.ToString().TrimEnd(',');
                     string sModify_New = sbModify.ToString().TrimEnd(',');
 
-                    Socket_Cache.Filter.UpdateFilter(
-                        sfiSelect,
-                        sFName_New,
-                        bAppointHeader_New,
-                        sHeaderContent_New,
-                        bAppointSocket_New,
-                        dSocketContent_New,
-                        bAppointLength_New,
-                        sLengthContent_New,
-                        bAppointPort_New,
-                        dPortContent_New,
-                        FilterMode_New,
-                        FilterAction_New,
-                        bIsExecute_New,
-                        FilterExecuteType_New,
-                        SID_New,
-                        RID_New,
-                        FilterFunction_New,
-                        FilterStartFrom_New,
-                        bIsProgressionContinuous_New,
-                        dProgressionStep_New,
-                        bIsProgressionCarry_New,
-                        dProgressionCarryNumber_New,
-                        sProgression_New,
-                        iProgressionCount_New,
-                        sSearch_New,
-                        sModify_New);
+                    if (!Socket_Cache.FilterList.TryApplyListChangeAndSave(() =>
+                        Socket_Cache.Filter.UpdateFilter(
+                            sfiSelect,
+                            sFName_New,
+                            bAppointHeader_New,
+                            sHeaderContent_New,
+                            bAppointSocket_New,
+                            dSocketContent_New,
+                            bAppointLength_New,
+                            sLengthContent_New,
+                            bAppointPort_New,
+                            dPortContent_New,
+                            FilterMode_New,
+                            FilterAction_New,
+                            bIsExecute_New,
+                            FilterExecuteType_New,
+                            SID_New,
+                            RID_New,
+                            FilterFunction_New,
+                            FilterStartFrom_New,
+                            bIsProgressionContinuous_New,
+                            dProgressionStep_New,
+                            bIsProgressionCarry_New,
+                            dProgressionCarryNumber_New,
+                            sProgression_New,
+                            iProgressionCount_New,
+                            sSearch_New,
+                            sModify_New)))
+                    {
+                        Socket_Operation.ShowMessageBox(
+                            Properties.Resources.ResourceManager.GetString("UI_PresetSaveFailed") ??
+                            "预设保存失败，已恢复原状态。");
+                        return;
+                    }
 
                     this.Close();
                 }                

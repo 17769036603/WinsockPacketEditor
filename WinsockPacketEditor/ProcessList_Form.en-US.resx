@@ -150,6 +150,12 @@
   <data name="pbLoading.AccessibleName" xml:space="preserve">
     <value>Loading processes</value>
   </data>
+  <data name="Process_EmptyState" xml:space="preserve">
+    <value>No injectable emulator engine found. Start an emulator and refresh.</value>
+  </data>
+  <data name="Process_EmptySearch" xml:space="preserve">
+    <value>No emulator process matches the search.</value>
+  </data>
   <assembly alias="System.Drawing" name="System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a" />
   <data name="$this.Icon" type="System.Drawing.Icon, System.Drawing" mimetype="application/x-microsoft.net.object.bytearray.base64">
     <value>
@@ -6325,5 +6331,11 @@
   </data>
   <data name="$this.Text" xml:space="preserve">
     <value>Process List</value>
+  </data>
+  <data name="cArchitecture.HeaderText" xml:space="preserve">
+    <value>Arch</value>
+  </data>
+  <data name="cCompatibility.HeaderText" xml:space="preserve">
+    <value>Status</value>
   </data>
 </root>
