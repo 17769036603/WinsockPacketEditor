@@ -3,6 +3,7 @@
 更新时间：2026-08-09
 
 ## 已完成
+- 移除已弃用的“坐机速度”机器人预设；加载旧数据库时会清理同名记录。
 
 - 增加 ONNX OCR provider，支持 DBNet/CRNN 类模型文件发现、推理输出解析、CTC 贪心解码和外部模型状态提示。
 - 增加 Python Worker OCR：C# 前端通过 JSONL 发送 PNG，Worker 使用 RapidOCR + ONNX Runtime，失败或低置信度时安全回退到 C# ONNX/Tesseract。

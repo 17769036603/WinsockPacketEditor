@@ -11049,11 +11049,20 @@ namespace WPELibrary.Lib
                         Socket_Cache.RobotList.lstFolders.Insert(0, "常用");
                     }
 
+                    bool removedObsoleteMountSpeedPreset = false;
                     foreach (DataRow dataRow in dtRobot.Rows)
                     {
                         Guid RID = Guid.Parse(dataRow["GUID"].ToString());
                         bool IsEnable = Convert.ToBoolean(dataRow["IsEnable"]);
                         string RName = dataRow["Name"].ToString();
+                        if (string.Equals(
+                            (RName ?? string.Empty).Trim(),
+                            "坐机速度",
+                            StringComparison.Ordinal))
+                        {
+                            removedObsoleteMountSpeedPreset = true;
+                            continue;
+                        }
                         string RFolder = dataRow.Table.Columns.Contains("Folder")
                             ? dataRow["Folder"].ToString()
                             : "常用";
@@ -11155,6 +11164,13 @@ namespace WPELibrary.Lib
                         }
 
                         LoadVisionAssistantSteps(RID, robot);
+                    }
+                    if (removedObsoleteMountSpeedPreset &&
+                        !Socket_Cache.RobotList.SaveRobotList_ToDB())
+                    {
+                        Socket_Operation.DoLog(
+                            nameof(LoadRobotList_FromDB),
+                            "已移除废弃的坐机速度预设，但数据库保存失败。");
                     }
                     foreach (Socket_RobotInfo robot in Socket_Cache.RobotList.lstRobot)
                     {
