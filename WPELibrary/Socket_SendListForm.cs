@@ -220,6 +220,12 @@ namespace WPELibrary
                     {
                         if (!this.ss.Worker.IsBusy)
                         {
+                            bool bSystemSocket = this.cbSystemSocket.Checked;
+                            if (bSystemSocket && !this.TryApplyCurrentRoutes())
+                            {
+                                return;
+                            }
+
                             this.bExecute.Enabled = false;
                             this.bStop.Enabled = true;
                             this.tlpParameter.Enabled = false;
@@ -229,11 +235,26 @@ namespace WPELibrary
                                 this.dgvSendCollection.ContextMenuStrip.Enabled = false;
                             }
 
-                            bool bSystemSocket = this.cbSystemSocket.Checked;
                             int iLoopCNT = ((int)this.nudLoop_CNT.Value);
                             int iLoopINT = ((int)this.nudLoop_INT.Value);
 
-                            ss.StartSend(this.SendName, bSystemSocket, iLoopCNT, iLoopINT, this.SendCollection);
+                            if (bSystemSocket)
+                            {
+                                ss.StartSendWithPacketSockets(
+                                    this.SendName,
+                                    iLoopCNT,
+                                    iLoopINT,
+                                    this.SendCollection);
+                            }
+                            else
+                            {
+                                ss.StartSend(
+                                    this.SendName,
+                                    false,
+                                    iLoopCNT,
+                                    iLoopINT,
+                                    this.SendCollection);
+                            }
                         }
                     }
                 }
@@ -314,25 +335,64 @@ namespace WPELibrary
 
         private bool CheckSendInfo()
         {
-            bool bReturn = true;
-
             try
             {
-                if (this.cbSystemSocket.Checked)
-                {
-                    if (Socket_Cache.System.SystemSocket <= 0)
-                    {
-                        Socket_Operation.ShowMessageBox(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_49));
-                        return false;
-                    }                   
-                }
+                return this.SendCollection != null && this.SendCollection.Count > 0;
             }
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
 
-            return bReturn;
+            return false;
+        }
+
+        private bool TryApplyCurrentRoutes()
+        {
+            Socket_Cache.SocketList.CurrentSocketRoutesResolution resolution =
+                Socket_Cache.SocketList.ResolveCurrentRoutes(this.SendCollection);
+            for (int index = 0; index < resolution.Items.Count; index++)
+            {
+                Socket_Cache.SocketList.LogCurrentRouteResolution(
+                    this.SSI == null ? Guid.Empty : this.SSI.SID,
+                    index + 1,
+                    this.SendCollection[index],
+                    resolution.Items[index]);
+            }
+            if (!resolution.Succeeded)
+            {
+                string messageKey = resolution.ErrorCode == "runtime_route_ambiguous"
+                    ? "UI_CurrentSocketAmbiguous"
+                    : "UI_CurrentSocketRequired";
+                string message = UiText(messageKey);
+                if (!string.IsNullOrWhiteSpace(resolution.ErrorMessage))
+                {
+                    message += Environment.NewLine + resolution.ErrorMessage;
+                }
+                MessageBox.Show(
+                    this,
+                    message,
+                    UiText("UI_Send"),
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return false;
+            }
+
+            for (int index = 0; index < this.SendCollection.Count; index++)
+            {
+                Socket_Cache.SocketList.CurrentSocketRoute route =
+                    resolution.Items[index].Route;
+                this.SendCollection[index].PacketSocket = route.Socket;
+                this.SendCollection[index].PacketFrom = route.PacketFrom;
+                this.SendCollection[index].PacketTo = route.PacketTo;
+            }
+
+            return true;
+        }
+
+        private static string UiText(string key)
+        {
+            return Properties.Resources.ResourceManager.GetString(key) ?? key;
         }
 
         #endregion

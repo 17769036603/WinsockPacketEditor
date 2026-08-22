@@ -4,6 +4,12 @@
 
 本项目的视觉自动化只负责读取目标窗口客户区截图、识别状态并执行已有的鼠标动作。它不依赖上传的 Android APK 私有代码、私有模型或运行时资源，也不负责抓包、注入或发送网络数据。
 
+## 只读进程内存读取基础层
+
+`WPELibrary.Lib.Memory.ReadOnlyProcessIdentity` 和 `ReadOnlyProcessMemoryReader` 提供通用的只读进程内存读取能力。读取器只接受调用方提供的显式地址，使用 `PROCESS_VM_READ` 与 `PROCESS_QUERY_LIMITED_INFORMATION` 打开目标进程，并通过进程 ID、启动时间、名称和可获得的路径进行身份复核，避免 PID 复用后继续读取错误进程。
+
+该层只暴露字节、整数和指针读取、进程身份复核及资源释放；不包含写内存、内存分配、远程线程、模块/签名扫描或封包发送接口。游戏对象布局、版本校验和业务状态读取必须在确认运行时证据后另行实现，不能把静态字段候选直接当作偏移使用。
+
 ## 移动端预设同步后端
 
 移动端的开发拆分、状态机、协议字段、错误处理和验收矩阵维护在 [`mobile/IMPLEMENTATION_PLAN.md`](mobile/IMPLEMENTATION_PLAN.md)；本文件只保留稳定的系统边界和后端事实。
@@ -29,15 +35,15 @@
 
 版本摘要由三类完整预设快照的规范化内容计算 SHA-256；因此修改名称、序号、分组、顺序、发送封包/参数、递进参数或助手指令都会触发摘要变化。响应传输的是版本化的 allowlist DTO，不直接下发桌面端 XML；移动端没有本地快照时，首次连接会自动获取完整快照；已有缓存后重新连接只验证连接并刷新运行状态，不会自动替换本地快照。只有悬浮面板的“更新预设”会检查摘要并在变化时重新获取完整快照。移动端不写入预设，只能只读查看同步参数、选择已同步预设并请求电脑端执行或停止。
 
-当前源码的 `MobilePresetSnapshot` 已返回三类完整只读 DTO；移动端使用稳定分组 ID、应用私有 `SnapshotStore`、`expectedRevision`/`requestId`、哈希/大小校验和原子快照提交。`SyncCoordinator` 负责免密自动连接、缓存回放、运行状态未知态和 Activity/悬浮服务生命周期；移动端仍不提供预设写回。真实 HTTPS 证书和目标业务动作联调仍需在目标环境中验收。
+当前源码的 `MobilePresetSnapshot` 已返回三类完整只读 DTO；移动端使用稳定分组 ID、应用私有 `SnapshotStore`、`expectedRevision`/`requestId`、哈希/大小校验和原子快照提交。`SyncCoordinator` 负责保存凭据的自动连接、缓存回放、运行状态未知态和 Activity/悬浮服务生命周期；移动端仍不提供预设写回。真实 HTTPS 证书和目标业务动作联调仍需在目标环境中验收。
 
 电脑端当前普通发送语义是：`LoopCNT` 统计完整遍历封包集合的轮数，`LoopCNT=0` 表示连续；`LoopINT` 在每个封包发送后等待。移动端显示和同步协议必须保持这一语义，不能把它误写成整轮间隔。
 
 预设快照同步与运行状态同步分离：完整快照不做后台自动拉取，运行状态则在 Activity 可见或悬浮服务运行期间独立轮询，以便悬浮面板保持按钮操作反馈而不改变用户当前选择的预设。
 
-`/MobileSync/*` 按用户确认的局域网边界完全匿名，不读取 Basic Auth，也不要求代理账号；其他 Web API 路由仍使用远程管理管理员账号。移动端客户端强制 HTTPS、禁止明文 HTTP 和自动降级重定向。远程服务启动/停止是幂等的，HTTPS 监听或证书配置失败时服务保持关闭并写入明确日志。
+`/MobileSync/*` 仅允许回环、私有网、链路本地和 ULA 地址，并要求独立的低权限代理账号 Basic Auth；管理员账号不能用于该路由，其他 Web API 路由仍使用远程管理管理员账号。移动端客户端强制 HTTPS、禁止明文 HTTP 和自动降级重定向。远程服务启动/停止是幂等的，HTTPS 监听或证书配置失败时服务保持关闭并写入明确日志。
 
-移动端不再包含账号或密码输入、存储和请求头。应用使用保存的 HTTPS endpoint；首次没有 endpoint 时使用 `https://192.168.0.100:89/`。Activity、粘性悬浮服务或开机广播重建时会直接连接。主配置内容根节点永久为 `GONE`，Activity 使用透明窗口并立即退到后台，只留下悬浮控制；首次缺少悬浮窗权限时只打开 Android 系统授权页。
+移动端在首次配置或认证失败时显示 endpoint、移动端账号和密码输入；密码使用 Android Keystore 的 AES/GCM 加密后保存，网络请求使用 Basic Auth。应用使用保存的 HTTPS endpoint；首次没有 endpoint 时使用 `https://192.168.0.100:89/`。Activity、粘性悬浮服务或开机广播重建时会在凭据完整时自动连接。主配置内容根节点在凭据完整时隐藏，Activity 使用透明窗口并立即退到后台，只留下悬浮控制；首次缺少悬浮窗权限时只打开 Android 系统授权页。
 
 移动端 snapshot 下载先依据 manifest 的 `payloadBytes` 加有限协议元数据空间限制响应体，再按规范化 UTF-8 正文做 SHA-256 和字节数校验；助手 `visionProfile` 即使为空也作为显式 `null` 保留，递进组合参数必须同时落在原始封包范围内。悬浮面板使用受限高度窗口，分组列表在面板内部滚动，避免浮层占满整个模拟器屏幕。
 
@@ -46,6 +52,12 @@
 真实验收辅助程序采用 fail-closed 规则：只有目标进程可响应、模块枚举成功且实际发现 `WPELibrary.dll` 时才报告注入已证明；缺少任一条件均返回非零并标记 `target-injection-not-proven=true`。静态构建、UI 审计和模拟器启动不能替代这条真实目标验收。
 
 递进启动预检通过结构化错误码区分预设无效、运行时忙、封包窗体未就绪和目标套接字不可用；移动端据此显示对应的预设、忙碌或连接错误，不把执行前置条件伪装成预设错误。
+
+## 发送预设的实时连接路由
+
+普通预设、批量发送、快捷键、移动端发送和字节递进都在发送启动前从当前捕获快照逐封包解析 `Socket`、源地址和目标地址。`Socket_Cache.SocketList.ResolveCurrentRoute(s)` 优先匹配封包类型与预设原目标；原目标已经变化时，只在同类型/方向候选唯一时切换到当前地址，多候选返回 `runtime_route_ambiguous` 并拒绝整组启动，没有候选返回 `runtime_not_connected`。候选使用 `getsockname/getpeername` 校验句柄仍可用，并按 `Socket + PacketFrom + PacketTo` 去重、按捕获时间保留最新记录；不会主动创建 TCP 连接。
+
+`Socket_Send` 的实时入口让每个发送封包携带自己的 Socket、源地址和目标地址，不能由一个全局实时 Socket 覆盖整组封包。所有封包先完成路由预检，任一封包失败则不启动发送线程。实时地址只写入发送任务和界面临时状态，不写回发送预设数据库/XML；重新注入后由 `BeginCaptureSession` 过滤旧捕获记录，要求新会话至少捕获对应封包。路由日志只记录预设 ID、封包序号、原/当前地址、候选数和状态原因，不记录封包正文。
 
 ## 识别链路
 
@@ -273,3 +285,142 @@ request bodies, 16 MiB response bodies, and 64 active clients. Active clients ar
 tracked and closed during disposal, while `MobileSync` remains limited to local
 network addresses and an 8 MiB canonical snapshot. The ordinary Web API routes
 remain behind administrator authentication.
+
+## Treasure-map runtime bridge
+
+The C6 Android reader publishes a read-only schema-2 JSONL stream through the
+ADB-forwarded `127.0.0.1:28765` endpoint. `TreasureC6StreamProtocol` validates
+the protocol/version, `actionAuthorized=false`, process/container identity,
+contiguous sequence, complete-snapshot boundary, and current-membership event
+semantics. Transport or protocol loss clears the consumable snapshot; it never
+falls back to a historical JSON state file.
+
+`TreasureMapPresetRunner` is an explicit state machine. It supports a frozen
+current-snapshot mode and a continuous mode, binds each member to a C6 session /
+process / container identity plus a coordinate version, and processes members in
+ascending `packageNum` order. The production robot entry sends a `0x5828` Jump,
+observes receive-side arrival evidence when available, then sends the validated
+legacy `0x783A` Use frame without blocking on a missing arrival frame. An
+explicit V3 instruction may choose its own evidence policy. In continuous mode it
+waits for C6 consumption confirmation and does not issue a mid-route compensating
+Jump; an actual consumption timeout starts the existing target retry path. The
+Jump/Use path keeps its first Use-only retry, while the AutoDig path keeps the
+initial Jump and retries only the AutoDig frame so a timeout cannot repeatedly
+fly the same coordinate.
+The Use frame rebinds only the C6 inventory position and prefers the
+type/num/param fields from the current session, current capture list, or saved
+ordinary send preset. When no current Use template exists, the production entry
+uses the saved current-route `0xB0F4` AutoDig preset byte-for-byte (including the
+known 22-byte legacy form); the closed 24-byte AutoDig frame remains the final
+compatibility fallback.
+
+The default mode is continuous. A newly created treasure-map instruction
+therefore keeps listening after the current batch; after a target completes it
+immediately checks for another uncompleted member and only blocks on the next
+C6 event when no new member is available. An explicitly encoded
+`CurrentSnapshot` instruction remains one-shot and freezes the first complete
+snapshot. Continuous mode has no periodic second-cycle timer.
+
+The send boundary classifies results as `NotDispatched`, `Dispatched`, or
+`Ambiguous`; only the first category can use bounded retry. In the production
+Jump/Use path, the first consumption timeout retries Use only, and only a later
+retry performs a full Jump/Use pair; an ambiguous result stops the run without
+repeating the unknown action. The captured Socket handle is not stored in the
+prepared frame; the one-shot send boundary resolves the current Socket again and
+requires the runtime-only `TREASURE-LIVE-SEND` authorization. Robot execution
+shares the outer pause gate and cancellation token, while the desktop mode
+selector stores a versioned static instruction payload. The fixed delay is a
+pacing interval only; it is not treated as a role-position confirmation.
+Synthetic tests still do not imply a live game send.
+
+Version-3 treasure instructions may opt into a cooperative controller policy
+and explicit arrival-evidence enforcement. The default policy remains
+`Exclusive` plus `Shadow`: one runner owns the in-process action boundary, and
+missing arrival frames are diagnostic only. `Enforced` consumes receive-side
+arrival evidence from the thread-safe observation FIFO and fails closed before
+AutoDig/Use when no post-Jump frame matches the frozen scene and coordinates.
+Invalid persisted instruction text is rejected at execution time rather than
+silently converted into a sendable continuous instruction.
+
+In continuous mode, consumption confirmation polls the current C6 snapshot every
+25 ms with a 2500 ms default upper bound. A target that disappears or changes
+version exits immediately. The production Jump/Use path first retries Use only
+after a timeout, then uses the existing cooldown before any full Jump/Use
+compensation; the explicit AutoDig compatibility path retains its own
+Jump+AutoDig retry semantics. This prevents delayed inventory updates from being
+mistaken for a failed action and retried with an unnecessary second Jump.
+
+The runner also emits deduplicated `recognition` diagnostics for empty
+snapshots, unrecognized targets, detected targets, and waiting for a new
+target; repeated empty snapshots are limited to one heartbeat every five
+seconds. Jump/Use or AutoDig result codes and success flags precede packet text
+in the human-readable log, and recognition entries do not change send counters
+or the runner's last-error state.
+
+`TreasureMapRunLogStore` mirrors every structured runner entry to bounded
+JSONL at `%LOCALAPPDATA%\XNAS\WPE\treasure-map\logs\treasure-map.jsonl`.
+The active file is readable while the assistant is running, is limited to
+5 MiB with five numbered archives, and is flushed on every entry so process
+exit does not discard the run timeline. Records contain the run ID, timestamp,
+logical step/packet kind, result code, retry, success flag, process ID, per-run
+`attemptId`, and safe slot/scene/coordinate fields; send/timeout records retain
+the prepared target coordinates even if the live snapshot has already advanced.
+Raw packet bytes, C6 payloads, and member identities are excluded. Persistence
+failures are reported once to the existing in-memory system log and never stop
+the runner.
+
+The production preset path wraps the TCP client in
+`TreasureC6BufferedInventoryStream`. A long-lived reader task validates every
+C6 message in order and updates the latest snapshot while the runner is sending
+or pacing; the runner-facing wake-up retains only the newest notification, so
+stale periodic snapshots cannot accumulate. Reader waits longer than 500 ms are
+reported as `c6_wait_ms` recognition diagnostics. When the controller starts or
+replaces the resident reader it requests the supported 10 ms poll interval and
+restarts a matching reader that is still using the older interval.
+
+The resident JSON bridge remains available for compatibility and offline
+regression. It is not the source used by the production C6 preset path, and no
+live game send is implied by build or synthetic test evidence.
+
+The Android reader treats `packageNum=0` as an empty slot rather than a formal
+treasure-map member. The slot remains watched by the fast cache, while a later
+non-zero assignment is emitted as a normal add transition instead of an
+unproven package replacement that would force a full refresh.
+
+LuaJIT container Node/Mask relocation is an internal layout change, not a new
+inventory identity, when the validated `BagMgr` and `m_ItemDict` addresses are
+unchanged. The reader rebinds that layout through the cached, class-validated
+owner rather than rescanning all memory. Formal member identity comes from the
+container key after it matches the item's `m_Id`; an object pointer is only a
+read location. Reuse of one non-zero `packageNum` by a new validated member is
+serialized as `removed` followed by `added`, which keeps every intermediate
+host snapshot package-unique.
+
+`TreasureC6ServiceController` prepares the external read-only reader on demand
+when execution reaches a treasure-map instruction. The main assistant entry can
+therefore start with the same established game route used by ordinary send
+presets; C6 is not a global startup gate. The controller discovers `adb.exe`
+and an online emulator, prefers the current foreground Android application,
+falls back to configured/known package names, resolves the running game PID,
+reuses or launches the resident reader, and recreates
+`tcp:28765 -> localabstract:piaomiao.treasure.stream`. This keeps package-name
+changes from being tied to one hardcoded identifier while rejecting Android
+system/launcher packages. The controller does not send game packets and leaves
+the reader/forward available for subsequent runs. A per-assistant
+`TreasureLiveSendAuthorized` flag stores the explicit first-run live-send
+confirmation; the execution parameter remains separate and is only enabled when
+that persisted flag is true. If C6 preparation fails, ordinary robot steps are
+not blocked, while the treasure-map step fails closed without sending an
+unknown target.
+
+## 召唤兽技能书助手预设
+
+现有助手列表新增内置预设 `召唤兽技能`，默认禁用，沿用 `RobotInstruction` 的 SQLite/XML 数据结构和 `RobotList.SaveRobotList_ToDB()` 原子保存路径。数据库加载时，如果该名称不存在则创建；如果已有同名预设且已有用户指令，不覆盖用户内容；空指令的同名预设才补齐内置步骤。
+
+该预设使用 `InstructionType.SummonedPetSkillBook`，由 `SummonedPetSkillBookPresetPlan` 生成 16 行可持久化、可读的步骤内容。助手网格沿用现有格式化入口，显示为“序号 + 状态 + 中文说明”，顺序固定为：
+
+`IDLE → VERIFY_CURRENT_PET → LOAD_PET_STATE → CHECK_MATERIALS → OPEN_SLOT_SUBMIT → OPEN_SLOT_WAIT → OPEN_SLOT_VERIFY → BOOK_CHECK → STUDY_SUBMIT → STUDY_WAIT → SKILL_DIFF → LOCK_SUBMIT → LOCK_WAIT → LOCK_VERIFY → NEXT_BOOK → COMPLETE`
+
+保存前的指令校验要求这 16 行全部使用该类型、顺序连续、内容能通过版本化编解码，并拒绝与普通机器人指令混排或损坏步骤。这样每一本书前后的宠物确认、资源检查、开格等待/确认、技能书检查/提交/刷新、技能差异识别、锁定提交/确认和下一本/完成日志步骤都会明确出现在预设中。
+
+当前运行入口只验证步骤内容，随后 fail-closed 地暂停并提示“只读召唤兽数据适配器和正常 UI/业务事件适配器尚未接入”，不会执行游戏操作。后续实现只能接入已经确认的只读数据来源和正常 UI 事件、业务接口或测试适配器；`ReadOnlyProcessMemoryReader` 只提供显式地址的只读读取，不提供写内存、扫描、远程线程或封包发送能力。该预设路径不使用 OCR 或截图，也不包含未经确认的游戏对象偏移。

@@ -788,6 +788,8 @@
             resources.ApplyResources(this.tpInstruction_Mouse, "tpInstruction_Mouse");
             this.tpInstruction_Mouse.Name = "tpInstruction_Mouse";
             // 
+            // gbMouseWheel
+            // 
             // tlpInstruction_Mouse
             // 
             resources.ApplyResources(this.tlpInstruction_Mouse, "tlpInstruction_Mouse");

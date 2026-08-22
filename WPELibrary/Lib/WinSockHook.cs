@@ -181,6 +181,43 @@ namespace WPELibrary.Lib
             return bytesToCopy;
         }
 
+        private static unsafe int CopyFilteredReceiveBufferToWsabufs(
+            byte[] filteredBuffer,
+            Socket_Cache.SocketPacket.WSABUF* buffers,
+            int[] receivedBufferLengths)
+        {
+            if (filteredBuffer == null || buffers == null ||
+                receivedBufferLengths == null || receivedBufferLengths.Length == 0)
+            {
+                return 0;
+            }
+
+            int totalReceived = 0;
+            for (int i = 0; i < receivedBufferLengths.Length; i++)
+            {
+                totalReceived += Math.Max(0, receivedBufferLengths[i]);
+            }
+
+            int bytesToWrite = Math.Min(filteredBuffer.Length, totalReceived);
+            int sourceOffset = 0;
+            for (int i = 0; i < receivedBufferLengths.Length && sourceOffset < bytesToWrite; i++)
+            {
+                int copyLength = Math.Min(
+                    Math.Max(0, receivedBufferLengths[i]),
+                    bytesToWrite - sourceOffset);
+                if (copyLength <= 0)
+                {
+                    continue;
+                }
+
+                Span<byte> destination = new Span<byte>((byte*)buffers[i].buf, copyLength);
+                filteredBuffer.AsSpan(sourceOffset, copyLength).CopyTo(destination);
+                sourceOffset += copyLength;
+            }
+
+            return sourceOffset;
+        }
+
         #endregion
 
         #region//开始拦截
@@ -449,6 +486,11 @@ namespace WPELibrary.Lib
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                if (res == 0)
+                {
+                    WS2_32.WSASetLastError(WsaErrorInterrupted);
+                    res = -1;
+                }
             }
 
             return res;
@@ -510,6 +552,10 @@ namespace WPELibrary.Lib
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                if (res == 0)
+                {
+                    res = ReturnReceiveInterceptError();
+                }
             }
 
             return res;
@@ -566,6 +612,11 @@ namespace WPELibrary.Lib
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                if (res == 0)
+                {
+                    WS2_32.WSASetLastError(WsaErrorInterrupted);
+                    res = -1;
+                }
             }
 
             return res;
@@ -625,6 +676,10 @@ namespace WPELibrary.Lib
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                if (res == 0)
+                {
+                    res = ReturnReceiveInterceptError();
+                }
             }
 
             return res;
@@ -848,6 +903,10 @@ namespace WPELibrary.Lib
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                if (res == SocketError.SocketError)
+                {
+                    WS2_32.WSASetLastError(WsaErrorInterrupted);
+                }
             }
 
             return res;
@@ -985,19 +1044,10 @@ namespace WPELibrary.Lib
                             int bytesToWrite = 0;
                             if (filterAction != Socket_Cache.Filter.FilterAction.Intercept && bNewBuffer != null)
                             {
-                                remainingBytes = Math.Min(bNewBuffer.Length, BytesRecvd);
-                                bytesToWrite = remainingBytes;
-
-                                for (int i = 0; i < bufferCount && remainingBytes > 0; i++)
-                                {
-                                    int copyLength = Math.Min(pWSABuffers[i].len, remainingBytes);
-                                    if (copyLength > 0)
-                                    {
-                                        Span<byte> destSpan = new Span<byte>((byte*)pWSABuffers[i].buf, copyLength);
-                                        bNewBuffer.AsSpan(BytesRecvd - remainingBytes, copyLength).CopyTo(destSpan);
-                                        remainingBytes -= copyLength;
-                                    }
-                                }
+                                bytesToWrite = CopyFilteredReceiveBufferToWsabufs(
+                                    bNewBuffer,
+                                    pWSABuffers,
+                                    bufferBytes);
                             }
                             else if (filterAction == Socket_Cache.Filter.FilterAction.Intercept)
                             {
@@ -1028,6 +1078,10 @@ namespace WPELibrary.Lib
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                if (res == SocketError.SocketError)
+                {
+                    WS2_32.WSASetLastError(WsaErrorInterrupted);
+                }
             }
 
             return res;
@@ -1255,6 +1309,10 @@ namespace WPELibrary.Lib
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                if (res == SocketError.SocketError)
+                {
+                    WS2_32.WSASetLastError(WsaErrorInterrupted);
+                }
             }
 
             return res;
@@ -1398,19 +1456,10 @@ namespace WPELibrary.Lib
                             int bytesToWrite = 0;
                             if (filterAction != Socket_Cache.Filter.FilterAction.Intercept && bNewBuffer != null)
                             {
-                                remainingBytes = Math.Min(bNewBuffer.Length, BytesRecvd);
-                                bytesToWrite = remainingBytes;
-
-                                for (int i = 0; i < bufferCount && remainingBytes > 0; i++)
-                                {
-                                    int copyLength = Math.Min(pWSABuffers[i].len, remainingBytes);
-                                    if (copyLength > 0)
-                                    {
-                                        Span<byte> destSpan = new Span<byte>((byte*)pWSABuffers[i].buf, copyLength);
-                                        bNewBuffer.AsSpan(BytesRecvd - remainingBytes, copyLength).CopyTo(destSpan);
-                                        remainingBytes -= copyLength;
-                                    }
-                                }
+                                bytesToWrite = CopyFilteredReceiveBufferToWsabufs(
+                                    bNewBuffer,
+                                    pWSABuffers,
+                                    bufferBytes);
                             }
                             else if (filterAction == Socket_Cache.Filter.FilterAction.Intercept)
                             {
@@ -1441,6 +1490,10 @@ namespace WPELibrary.Lib
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                if (res == SocketError.SocketError)
+                {
+                    WS2_32.WSASetLastError(WsaErrorInterrupted);
+                }
             }
 
             return res;

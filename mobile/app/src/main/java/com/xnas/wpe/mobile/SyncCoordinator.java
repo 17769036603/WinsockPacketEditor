@@ -106,6 +106,10 @@ public final class SyncCoordinator {
     }
 
     public void configure(String endpoint, String profileName) {
+        configure(endpoint, profileName, syncStore.getPassword());
+    }
+
+    public void configure(String endpoint, String profileName, String password) {
         synchronized (sessionLock) {
             sessionGeneration.incrementAndGet();
             // The old executor work is allowed to finish, but it no longer owns
@@ -122,7 +126,7 @@ public final class SyncCoordinator {
         publishActionPending(false);
         WpeSyncClient newClient;
         try {
-            newClient = new WpeSyncClient(endpoint);
+            newClient = new WpeSyncClient(endpoint, profileName, password);
         } catch (IllegalArgumentException ex) {
             synchronized (sessionLock) {
                 client = null;
@@ -136,6 +140,7 @@ public final class SyncCoordinator {
         }
         synchronized (sessionLock) {
             client = newClient;
+            syncStore.saveConnection(endpoint, profileName, password);
             profile = syncStore.activateProfile(endpoint, profileName);
             snapshot = null;
             runtime = SyncModels.RuntimeBundle.parse(null);
@@ -158,18 +163,25 @@ public final class SyncCoordinator {
         if (endpoint.isEmpty()) {
             endpoint = DEFAULT_ENDPOINT;
         }
-        // Keep the former username only as a local cache namespace during an
-        // in-place upgrade. It is never sent to the desktop or used for auth.
-        configure(endpoint, syncStore.getUsername());
+        String username = syncStore.getUsername();
+        String password = syncStore.getPassword();
+        if (username.isEmpty() || password.isEmpty()) {
+            return false;
+        }
+        configure(endpoint, username, password);
         return true;
     }
 
     public boolean hasSavedConnection() {
-        return client != null && !profile.profileKey.isEmpty();
+        return client != null && !profile.profileKey.isEmpty() && syncStore.hasCredentials();
     }
 
     public void connectFromSavedFields(String endpoint) {
-        configure(endpoint, syncStore.getUsername());
+        configure(endpoint, syncStore.getUsername(), syncStore.getPassword());
+    }
+
+    public void connectFromSavedFields(String endpoint, String username, String password) {
+        configure(endpoint, username, password);
     }
 
     public void manualUpdate() {

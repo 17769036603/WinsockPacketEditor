@@ -68,6 +68,7 @@ namespace WPELibrary
         private Socket_SendInfo savedSendPreset;
         private Socket_PacketInfo savedSendPresetPacket;
         private Socket_ByteSweepPresetInfo savedByteSweepPreset;
+        private Socket_Cache.SocketList.CurrentSocketRoute resolvedCurrentRoute;
         private string baseWindowTitle;
         private ToolStripStatusLabel tlCurrentPacketIdentity;
         private ToolStripStatusLabel tlDynamicVariablePreview;
@@ -1375,7 +1376,9 @@ namespace WPELibrary
                     this.savedSendPreset != null ||
                     this.savedByteSweepPreset != null;
                 int displaySocket = usesCurrentSessionSocket
-                    ? Socket_Cache.SocketList.ResolveCurrentSocket(new[] { this.SPI })
+                    ? this.TryResolveCurrentRoute(false)
+                        ? this.resolvedCurrentRoute.Socket
+                        : 0
                     : this.SPI.PacketSocket;
                 this.nudSendSocket_Socket.Value = Math.Min(
                     this.nudSendSocket_Socket.Maximum,
@@ -1643,6 +1646,14 @@ namespace WPELibrary
         {
             try
             {
+                bool usesCurrentSessionRoute =
+                    this.savedSendPreset != null ||
+                    this.savedByteSweepPreset != null;
+                if (usesCurrentSessionRoute && !this.TryResolveCurrentRoute(true))
+                {
+                    return false;
+                }
+
                 int iSocket = this.GetEffectiveSendSocket();
 
                 if (iSocket <= 0)
@@ -2017,17 +2028,24 @@ namespace WPELibrary
                 this.TryGetByteSweepSelection(out sweepStart, out sweepLength);
             }
 
+            bool usesCurrentSessionRoute = this.resolvedCurrentRoute != null;
             return new SendWorkItem
             {
-                Socket = this.GetEffectiveSendSocket(),
+                Socket = usesCurrentSessionRoute
+                    ? this.resolvedCurrentRoute.Socket
+                    : this.GetEffectiveSendSocket(),
                 Interval = byteSweep
                     ? (int)this.nudByteSweepInterval.Value
                     : (int)this.nudSendType_Interval.Value,
                 Times = byteSweep
                     ? (int)this.nudByteSweepLoopCount.Value
                     : (int)this.nudSendType_Times.Value,
-                IPFrom = this.txtIPFrom.Text.Trim(),
-                IPTo = this.txtIPTo.Text.Trim(),
+                IPFrom = usesCurrentSessionRoute
+                    ? this.resolvedCurrentRoute.PacketFrom
+                    : this.txtIPFrom.Text.Trim(),
+                IPTo = usesCurrentSessionRoute
+                    ? this.resolvedCurrentRoute.PacketTo
+                    : this.txtIPTo.Text.Trim(),
                 Buffer = this.preparedVariableBuffer == null
                     ? Socket_ByteAnnotationEngine.GetBytes(dbp)
                     : (byte[])this.preparedVariableBuffer.Clone(),
@@ -2111,10 +2129,59 @@ namespace WPELibrary
 
         private int GetEffectiveSendSocket()
         {
-            return this.savedSendPreset == null &&
-                this.savedByteSweepPreset == null
-                ? (int)this.nudSendSocket_Socket.Value
-                : Socket_Cache.SocketList.ResolveCurrentSocket(new[] { this.SPI });
+            if ((this.savedSendPreset != null || this.savedByteSweepPreset != null) &&
+                this.resolvedCurrentRoute == null)
+            {
+                this.TryResolveCurrentRoute(false);
+            }
+
+            return this.resolvedCurrentRoute != null
+                ? this.resolvedCurrentRoute.Socket
+                : (int)this.nudSendSocket_Socket.Value;
+        }
+
+        private bool TryResolveCurrentRoute(bool showMessage)
+        {
+            if (this.savedSendPreset == null && this.savedByteSweepPreset == null)
+            {
+                this.resolvedCurrentRoute = null;
+                return true;
+            }
+
+            Socket_Cache.SocketList.CurrentSocketRouteResolution resolution =
+                Socket_Cache.SocketList.ResolveCurrentRoute(this.SPI);
+            Guid presetId = this.savedSendPreset != null
+                ? this.savedSendPreset.SID
+                : this.savedByteSweepPreset == null
+                    ? Guid.Empty
+                    : this.savedByteSweepPreset.BID;
+            Socket_Cache.SocketList.LogCurrentRouteResolution(
+                presetId,
+                1,
+                this.SPI,
+                resolution);
+            if (!resolution.Succeeded)
+            {
+                this.resolvedCurrentRoute = null;
+                if (showMessage)
+                {
+                    string messageKey = resolution.ErrorCode == "runtime_route_ambiguous"
+                        ? "UI_CurrentSocketAmbiguous"
+                        : "UI_CurrentSocketRequired";
+                    string message = UiText(messageKey);
+                    if (!string.IsNullOrWhiteSpace(resolution.ErrorMessage))
+                    {
+                        message += Environment.NewLine + resolution.ErrorMessage;
+                    }
+                    Socket_Operation.ShowMessageBox(message);
+                }
+                return false;
+            }
+
+            this.resolvedCurrentRoute = resolution.Route;
+            this.txtIPFrom.Text = resolution.Route.PacketFrom;
+            this.txtIPTo.Text = resolution.Route.PacketTo;
+            return true;
         }
 
         private void bgwSendPacket_DoWork(object sender, System.ComponentModel.DoWorkEventArgs e)

@@ -413,6 +413,7 @@
   <data name="UI_SendPresetSaved" xml:space="preserve"><value>发送预设已保存：{0} / {1}</value></data>
   <data name="UI_SendPresetUpdated" xml:space="preserve"><value>发送预设已更新：{0} / {1}</value></data>
   <data name="UI_CurrentSocketRequired" xml:space="preserve"><value>没有找到与此预设匹配的当前游戏连接。请先捕获一条相同目标地址和类型的封包，或手动设置系统 Socket。</value></data>
+  <data name="UI_CurrentSocketAmbiguous" xml:space="preserve"><value>当前封包对应多个候选连接，无法安全发送。请关闭其他连接或重新捕获目标封包。</value></data>
   <data name="UI_ContinuousSend" xml:space="preserve"><value>连续</value></data>
   <data name="SendPreset_Title" xml:space="preserve"><value>保存到发送预设</value></data>
   <data name="SendPreset_SavePacketTitle" xml:space="preserve"><value>保存封包预设</value></data>
@@ -445,7 +446,13 @@
   <data name="UI_CharlesSessionFilter" xml:space="preserve"><value>Charles 会话文件（*.chlsx）|*.chlsx</value></data>
   <data name="UI_FilterFileFilter" xml:space="preserve"><value>FILT 过滤器文件（*.filt）|*.filt</value></data>
   <data name="UI_PacketDetails" xml:space="preserve"><value>封包详情</value></data>
+  <data name="UI_ShowOnly4D5AHeader" xml:space="preserve"><value>仅显示4D5A包头</value></data>
   <data name="UI_Stop" xml:space="preserve"><value>停止</value></data>
+  <data name="UI_TreasureLiveSendConfirmTitle" xml:space="preserve"><value>藏宝图发送确认</value></data>
+  <data name="UI_TreasureLiveSendConfirm" xml:space="preserve"><value>此助手包含藏宝图流程，启动后会发送 Jump 和自动挖宝封包。确认后会保存真实发送授权，之后不再重复提示。是否继续？</value></data>
+  <data name="UI_AssistantStartFailed" xml:space="preserve"><value>助手启动失败，请检查流程是否有效。</value></data>
+  <data name="UI_TreasureC6Unavailable" xml:space="preserve"><value>藏宝图助手已停止：C6 读取服务（127.0.0.1:28765）未连接或已断开。</value></data>
+  <data name="UI_TreasureRunFailed" xml:space="preserve"><value>藏宝图助手已停止：{0}</value></data>
   <data name="UI_SendCount" xml:space="preserve"><value>发送次数</value></data>
   <data name="UI_IntervalMs" xml:space="preserve"><value>间隔(ms)</value></data>
   <data name="UI_Range" xml:space="preserve"><value>范围</value></data>
@@ -598,6 +605,8 @@
   <data name="ByteSweep_LogLive" xml:space="preserve"><value>实时状态</value></data>
   <data name="ByteSweep_LogStarting" xml:space="preserve"><value>启动中</value></data>
   <data name="ByteSweep_LogRunning" xml:space="preserve"><value>运行中</value></data>
+  <data name="UI_AssistantStartingTip" xml:space="preserve"><value>启动中，请稍候</value></data>
+  <data name="UI_AssistantRunningTip" xml:space="preserve"><value>运行中，点击停止</value></data>
   <data name="ByteSweep_LogStopping" xml:space="preserve"><value>停止中</value></data>
   <data name="ByteSweep_LogCompleted" xml:space="preserve"><value>已完成</value></data>
   <data name="ByteSweep_LogCancelled" xml:space="preserve"><value>已停止</value></data>

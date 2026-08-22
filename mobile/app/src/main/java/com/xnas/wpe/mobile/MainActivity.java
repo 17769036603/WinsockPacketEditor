@@ -49,6 +49,8 @@ public final class MainActivity extends android.app.Activity implements SyncCoor
     };
 
     private EditText endpointInput;
+    private EditText usernameInput;
+    private EditText passwordInput;
     private TextView connectionStatus;
     private TextView syncStatus;
     private Button overlayButton;
@@ -152,7 +154,7 @@ public final class MainActivity extends android.app.Activity implements SyncCoor
         destroyed = false;
         coordinator = SyncCoordinator.obtain(this, this);
         buildUi();
-        hideSetupPage();
+        updateSetupPageVisibility();
         registerOverlayReceiver();
         coordinator.loadSavedConnection();
         // Snapshot/runtime replay is posted by the coordinator. Process
@@ -170,7 +172,7 @@ public final class MainActivity extends android.app.Activity implements SyncCoor
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        hideSetupPage();
+        updateSetupPageVisibility();
         maybeAutoStartOverlay();
     }
 
@@ -178,7 +180,7 @@ public final class MainActivity extends android.app.Activity implements SyncCoor
     protected void onStart() {
         super.onStart();
         activityStarted = true;
-        hideSetupPage();
+        updateSetupPageVisibility();
         updateOverlayButtonState();
         scheduleRuntimePolling();
         maybeAutoStartOverlay();
@@ -187,7 +189,7 @@ public final class MainActivity extends android.app.Activity implements SyncCoor
     @Override
     protected void onResume() {
         super.onResume();
-        hideSetupPage();
+        updateSetupPageVisibility();
         if (awaitingOverlayPermission) {
             awaitingOverlayPermission = false;
             if (Settings.canDrawOverlays(this)) {
@@ -257,6 +259,14 @@ public final class MainActivity extends android.app.Activity implements SyncCoor
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         endpointInput.setText(coordinator == null ? SyncCoordinator.DEFAULT_ENDPOINT : coordinatorEndpoint());
         connectionCard.addView(endpointInput, marginParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0, 0, 6));
+
+        SyncStore savedStore = new SyncStore(this);
+        usernameInput = editText("移动端账号", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+        usernameInput.setText(savedStore.getUsername());
+        connectionCard.addView(usernameInput, marginParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0, 0, 6));
+        passwordInput = editText("移动端密码", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        passwordInput.setText(savedStore.getPassword());
+        connectionCard.addView(passwordInput, marginParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0, 0, 6));
 
         LinearLayout connectionActions = new LinearLayout(this);
         connectionActions.setOrientation(LinearLayout.HORIZONTAL);
@@ -334,11 +344,18 @@ public final class MainActivity extends android.app.Activity implements SyncCoor
 
     private void connectAndSync() {
         String endpoint = endpointInput.getText().toString().trim();
+        String username = usernameInput.getText().toString().trim();
+        String password = passwordInput.getText().toString();
         if (endpoint.isEmpty()) {
             setConnectionError("请填写电脑端地址");
             return;
         }
-        coordinator.connectFromSavedFields(endpoint);
+        if (username.isEmpty() || password.isEmpty()) {
+            setConnectionError("请填写移动端账号和密码");
+            updateSetupPageVisibility();
+            return;
+        }
+        coordinator.connectFromSavedFields(endpoint, username, password);
         automaticStartup = true;
         maybeAutoStartOverlay();
     }
@@ -459,10 +476,17 @@ public final class MainActivity extends android.app.Activity implements SyncCoor
         return Settings.canDrawOverlays(this);
     }
 
-    private void hideSetupPage() {
-        setupPageHidden = true;
+    private void updateSetupPageVisibility() {
+        setupPageHidden = new SyncStore(this).hasCredentials();
         if (setupContent != null) {
-            setupContent.setVisibility(View.GONE);
+            setupContent.setVisibility(setupPageHidden ? View.GONE : View.VISIBLE);
+        }
+    }
+
+    private void showSetupPage() {
+        setupPageHidden = false;
+        if (setupContent != null) {
+            setupContent.setVisibility(View.VISIBLE);
         }
     }
 
@@ -506,6 +530,9 @@ public final class MainActivity extends android.app.Activity implements SyncCoor
     @Override
     public void onStateChanged(SyncModels.SyncState state, String message) {
         boolean error = state == SyncModels.SyncState.ERROR;
+        if (error) {
+            showSetupPage();
+        }
         setSyncStatus(message, error);
         connectionStatus.setText(state == SyncModels.SyncState.ERROR ? "连接/同步异常"
                 : String.format(Locale.ROOT, "状态：%s", state.name()));

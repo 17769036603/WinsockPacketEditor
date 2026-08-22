@@ -1372,6 +1372,7 @@ Assert-True ($unmatchedSocket -eq 0) "Automatic Socket matching must not guess w
 $originalCapturedPackets = @(
     [WPELibrary.Lib.Socket_Cache+SocketList]::lstRecPacket)
 $originalResolvedSocket = [WPELibrary.Lib.Socket_Cache+System]::SystemSocket
+$sweepSockets = @()
 try {
     [WPELibrary.Lib.Socket_Cache+SocketList]::lstRecPacket.Clear()
     foreach ($capturedPacket in $capturedPackets) {
@@ -1416,38 +1417,56 @@ try {
     $sweepA.BID = [Guid]::NewGuid()
     $sweepA.BName = "sweep A"
     $sweepA.BFolder = "group"
-    $sweepA.PacketType = $firstTemplate.PacketType
+    $sweepA.PacketType =
+        [WPELibrary.Lib.Socket_Cache+SocketPacket+PacketType]::WS2_SendTo
     $sweepA.PacketTo = $firstTemplate.PacketTo
     $sweepB = [WPELibrary.Lib.Socket_ByteSweepPresetInfo]::new()
     $sweepB.BID = [Guid]::NewGuid()
     $sweepB.BName = "sweep B"
     $sweepB.BFolder = "group"
-    $sweepB.PacketType = $secondTemplate.PacketType
+    $sweepB.PacketType = $sweepA.PacketType
     $sweepB.PacketTo = $secondTemplate.PacketTo
+    foreach ($sweepTarget in @($sweepA.PacketTo, $sweepB.PacketTo)) {
+        $sweepSocket = [System.Net.Sockets.Socket]::new(
+            [System.Net.Sockets.AddressFamily]::InterNetwork,
+            [System.Net.Sockets.SocketType]::Dgram,
+            [System.Net.Sockets.ProtocolType]::Udp)
+        $sweepSocket.Bind([System.Net.IPEndPoint]::new(
+            [System.Net.IPAddress]::Loopback,
+            0))
+        $sweepSockets += $sweepSocket
+        $sweepPacketInfo = [WPELibrary.Lib.Socket_PacketInfo]::new()
+        $sweepPacketInfo.PacketSocket = $sweepSocket.Handle.ToInt32()
+        $sweepPacketInfo.PacketType = $sweepA.PacketType
+        $sweepPacketInfo.PacketFrom = $sweepSocket.LocalEndPoint.ToString()
+        $sweepPacketInfo.PacketTo = $sweepTarget
+        $sweepPacketInfo.PacketTime = [DateTime]::Now
+        [WPELibrary.Lib.Socket_Cache+SocketList]::lstRecPacket.Add($sweepPacketInfo)
+    }
     $sweepPresets =
         [System.Collections.Generic.List[WPELibrary.Lib.Socket_ByteSweepPresetInfo]]::new()
     $sweepPresets.Add($sweepA)
     $sweepPresets.Add($sweepB)
-    $resolveSweepSockets = [WPELibrary.Socket_Form].GetMethod(
-        "ResolveByteSweepSockets",
+    $resolveSweepRoutes = [WPELibrary.Socket_Form].GetMethod(
+        "ResolveByteSweepRoutes",
         [System.Reflection.BindingFlags]::Static -bor
         [System.Reflection.BindingFlags]::NonPublic)
-    $resolveSweepArguments = [object[]]@($sweepPresets, $null)
-    $resolvedSweepSockets = $resolveSweepSockets.Invoke(
+    $resolveSweepArguments = [object[]]@($sweepPresets, $null, $null)
+    $resolvedSweepRoutes = $resolveSweepRoutes.Invoke(
         $null,
         $resolveSweepArguments)
     Assert-True (
-        $resolvedSweepSockets[$sweepA.BID] -eq 1204
-    ) "A byte-sweep batch must preserve the first preset's exact Socket."
+        $resolvedSweepRoutes[$sweepA.BID].Socket -eq $sweepSockets[0].Handle.ToInt32()
+    ) "A byte-sweep batch must preserve the first preset's exact route."
     Assert-True (
-        $resolvedSweepSockets[$sweepB.BID] -eq 1202
-    ) "A byte-sweep batch must resolve a separate Socket for each preset."
+        $resolvedSweepRoutes[$sweepB.BID].Socket -eq $sweepSockets[1].Handle.ToInt32()
+    ) "A byte-sweep batch must resolve a separate route for each preset."
     Assert-True (
         $null -eq $resolveSweepArguments[1]
     ) "A fully resolved byte-sweep batch must not report an unresolved preset."
 
     $sweepPacket = [WPELibrary.Lib.Socket_PacketInfo]::new()
-    $sweepPacket.PacketType = $firstTemplate.PacketType
+    $sweepPacket.PacketType = $sweepA.PacketType
     $sweepPacket.PacketTo = $firstTemplate.PacketTo
     $sweepPacket.PacketBuffer = [byte[]](0x01)
     $sweepEditForm = [WPELibrary.Socket_SendForm]::new(
@@ -1459,7 +1478,7 @@ try {
             [System.Reflection.BindingFlags]::Instance -bor
             [System.Reflection.BindingFlags]::NonPublic)
         Assert-True (
-            $effectiveSweepSocket.Invoke($sweepEditForm, $null) -eq 1204
+            $effectiveSweepSocket.Invoke($sweepEditForm, $null) -eq $sweepSockets[0].Handle.ToInt32()
         ) "Editing an existing byte-sweep preset must use the same exact current-session Socket matcher."
     }
     finally {
@@ -1467,6 +1486,9 @@ try {
     }
 }
 finally {
+    foreach ($sweepSocket in $sweepSockets) {
+        $sweepSocket.Dispose()
+    }
     [WPELibrary.Lib.Socket_Cache+SocketList]::lstRecPacket.Clear()
     foreach ($capturedPacket in $originalCapturedPackets) {
         [WPELibrary.Lib.Socket_Cache+SocketList]::lstRecPacket.Add(
@@ -1524,8 +1546,8 @@ try {
                 [System.Reflection.BindingFlags]::Instance -bor
                 [System.Reflection.BindingFlags]::NonPublic)
             Assert-True (
-                $effectiveSocketMethod.Invoke($namedSendForm, $null) -eq 4567
-            ) "An existing packet preset must resolve the current session system Socket instead of its stored handle."
+                $effectiveSocketMethod.Invoke($namedSendForm, $null) -eq 0
+            ) "An existing packet preset without a current route must not fall back to the mutable system Socket."
         }
         finally {
             [WPELibrary.Lib.Socket_Cache+System]::SystemSocket = $originalSystemSocket
@@ -1597,25 +1619,25 @@ Assert-True ($sendFormSource.Contains("this.PostSendCounterUpdate();")) "Every o
 Assert-True ($sendFormSource.Contains("Interlocked.CompareExchange(ref this.sendCounterUpdateScheduled, 1, 0)")) "Live counter refreshes must be coalesced to avoid flooding the UI queue."
 Assert-True ($sendFormSource.Contains("private void UpdateSendCounterLabels()")) "Live and final send progress must share one label update path."
 Assert-True ($cacheSource.Contains("Socket_ByteAnnotationEngine.Clone(value.ByteAnnotations)")) "Sweep updates must retain edited byte annotations."
-Assert-True ($sendFormSource.Contains("Socket_Cache.SocketList.ResolveCurrentSocket(new[] { this.SPI });")) "Saved packet editors must resolve a matching current-session Socket."
+Assert-True ($sendFormSource.Contains("Socket_Cache.SocketList.ResolveCurrentRoute(this.SPI)")) "Saved packet editors must resolve a matching current-session route."
 Assert-True ($sendFormSource.Contains("this.InitSendParameters();")) "Reopened packet presets must restore their saved send mode and interval."
 Assert-True ($sendFormSource.Contains("this.rbSendType_Continuously.Checked")) "Preset saving must preserve continuous-send mode instead of rewriting it as one send."
 Assert-True ($sendWorkerSource.Contains("while (this.LoopCNT == 0 || loopIndex < this.LoopCNT)")) "A zero loop count must execute continuously until stopped."
 Assert-True ($mainForm.Contains('e.Value = UiText("UI_ContinuousSend");')) "The packet list must label continuous presets accurately."
 Assert-True ([regex]::IsMatch(
     $cacheSource,
-    'ssReturn\.StartSend\(\s*sendName,\s*(?:useSystemSocket,\s*)?resolvedSocket,')) "Existing send presets must pass an immutable resolved Socket into the worker."
+    'ssReturn\.StartSendWithPacketSockets\(\s*sendName,')) "Existing send presets must pass per-packet routes into the worker."
 Assert-True ($sendWorkerSource.Contains("this.resolvedSystemSocket = Math.Max(0, ResolvedSystemSocket);")) "A send worker must snapshot its resolved Socket before it starts."
 Assert-True ($sendWorkerSource.Contains("Socket = this.resolvedSystemSocket;")) "A running send worker must keep using its own Socket snapshot."
 Assert-True (-not $sendWorkerSource.Contains("Socket = Socket_Cache.System.SystemSocket;")) "A running send worker must not reread the mutable global Socket."
 Assert-True ($cacheSource.Contains("public static int FindLatestMatchingSocket(")) "Preset sends need a shared exact type-and-destination Socket matcher."
-Assert-True ($cacheSource.Contains("Socket_Cache.SocketList.ResolveCurrentSocket(sendCollection)")) "Hotkey and direct preset sends must refresh the current Socket before sending."
+Assert-True ($cacheSource.Contains("Socket_Cache.SocketList.ResolveCurrentRoutes(sendCollection)")) "Hotkey and direct preset sends must refresh every packet route before sending."
 Assert-True ($cacheSource.Contains("_ = DoSendAsync(SID);")) "Hotkey sends must start asynchronously without blocking the UI dispatcher."
 Assert-True ($cacheSource.Contains("public static int ManualSystemSocket")) "Automatic matching must keep an explicit manual fallback separate from resolved state."
 Assert-True ($cacheSource.Contains("internal static int ResolveSystemSocket(int matchedSocket)")) "Manual fallback selection and resolved-state updates must remain atomic."
 Assert-True ($mainForm.Contains("private bool EnsureCurrentSystemSocket(IEnumerable<Socket_SendInfo> sendInfos)")) "Single and batch preset sends must auto-match before rejecting a missing current system Socket."
 Assert-True ($mainForm.Contains("items.All(item =>")) "A normal send batch must validate every preset instead of accepting one match for the whole batch."
-Assert-True ($sweepMainSource.Contains("presetSockets[preset.BID]")) "Byte-sweep batches must use the Socket resolved for each preset."
+Assert-True ($sweepMainSource.Contains("presetRoutes[preset.BID]")) "Byte-sweep batches must use the route resolved for each preset."
 Assert-True ($mainForm.Contains('UiText("UI_MoveGroupUp")')) "Packet-group context menu must expose move up."
 Assert-True ($mainForm.Contains('UiText("UI_MoveGroupDown")')) "Packet-group context menu must expose move down."
 Assert-True ($mainForm.Contains("private void MoveSelectedSendFolder(int offset)")) "Packet-group move actions must share one bounded reorder path."

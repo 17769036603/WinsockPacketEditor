@@ -14,6 +14,9 @@ namespace WPELibrary.Lib.WebAPI
 {
     public class Socket_Web
     {
+        private const long MaxOwinRequestBodyBytes = 4L * 1024L * 1024L;
+        private const long MaxOwinResponseBodyBytes = 16L * 1024L * 1024L;
+
         private static bool IsLocalNetworkAddress(string value)
         {
             if (!IPAddress.TryParse(value, out IPAddress address))
@@ -98,6 +101,42 @@ namespace WPELibrary.Lib.WebAPI
         {
             try
             {
+                app.Use(async (context, next) =>
+                {
+                    string contentLengthText = context.Request.Headers["Content-Length"];
+                    long contentLength;
+                    if (long.TryParse(contentLengthText, out contentLength) &&
+                        contentLength > MaxOwinRequestBodyBytes)
+                    {
+                        context.Response.StatusCode = (int)HttpStatusCode.RequestEntityTooLarge;
+                        await context.Response.WriteAsync("Request body is too large.");
+                        return;
+                    }
+
+                    Stream originalResponseBody = context.Response.Body;
+                    using (MemoryStream responseBody = new MemoryStream())
+                    {
+                        context.Response.Body = responseBody;
+                        try
+                        {
+                            await next.Invoke();
+                            if (responseBody.Length > MaxOwinResponseBodyBytes)
+                            {
+                                responseBody.SetLength(0);
+                                context.Response.StatusCode = (int)HttpStatusCode.RequestEntityTooLarge;
+                                await context.Response.WriteAsync("Response body is too large.");
+                            }
+
+                            responseBody.Position = 0;
+                            await responseBody.CopyToAsync(originalResponseBody);
+                        }
+                        finally
+                        {
+                            context.Response.Body = originalResponseBody;
+                        }
+                    }
+                });
+
                 #region//HTTP Basic Authentication
 
                 app.Use(async (context, next) =>
@@ -113,15 +152,25 @@ namespace WPELibrary.Lib.WebAPI
                             "/MobileSync/",
                             StringComparison.OrdinalIgnoreCase);
 
-                    // The Android companion is intentionally passwordless on the
-                    // local network. Enforce that network boundary here; all
-                    // non-MobileSync routes remain behind administrator auth.
+                    // MobileSync is limited to the local network and uses a
+                    // dedicated low-privilege proxy account. All non-MobileSync
+                    // routes remain behind administrator authentication.
                     if (isMobileSync)
                     {
                         if (!IsLocalNetworkAddress(context.Request.RemoteIpAddress))
                         {
                             context.Response.StatusCode = (int)HttpStatusCode.Forbidden;
                             await context.Response.WriteAsync("MobileSync is available only from the local network.");
+                            return;
+                        }
+
+                        if (!TryGetBasicCredentials(authHeader, out string mobileUsername, out string mobilePassword) ||
+                            !Socket_Cache.ProxyAccount.IsValidMobile(mobileUsername, mobilePassword))
+                        {
+                            context.Response.StatusCode = (int)HttpStatusCode.Unauthorized;
+                            context.Response.Headers.Add(
+                                "WWW-Authenticate",
+                                new[] { "Basic realm=\"WPE MobileSync\"" });
                             return;
                         }
 

@@ -2210,7 +2210,10 @@ namespace Be.Windows.Forms
 			else if (da.GetDataPresent(typeof(string)))
 			{
 				string sBuffer = (string)da.GetData(typeof(string));
-				buffer = System.Text.Encoding.ASCII.GetBytes(sBuffer);
+				byte[] hexBuffer;
+				buffer = TryConvertClipboardHexToBytes(sBuffer, out hexBuffer)
+					? hexBuffer
+					: System.Text.Encoding.ASCII.GetBytes(sBuffer);
 			}
 			else
 			{
@@ -3756,6 +3759,48 @@ namespace Be.Windows.Forms
 			}
 
 			return byteArray;
+		}
+
+		/// <summary>
+		/// Detects the byte-oriented hex text commonly copied from packet tools.
+		/// Ordinary text remains an ASCII paste, while text such as "4D 5A" is
+		/// converted to bytes so the leading character '4' is not pasted as 0x34.
+		/// </summary>
+		bool TryConvertClipboardHexToBytes(string text, out byte[] buffer)
+		{
+			buffer = null;
+			if (string.IsNullOrWhiteSpace(text))
+				return false;
+
+			string trimmed = text.Trim();
+			string[] tokens = trimmed.Split(
+				new[] { ' ', '\t', '\r', '\n' },
+				StringSplitOptions.RemoveEmptyEntries);
+			if (tokens.Length == 0)
+				return false;
+
+			if (tokens.Length == 1 && tokens[0].Length > 2)
+			{
+				string compact = tokens[0];
+				if ((compact.Length % 2) != 0)
+					return false;
+
+				tokens = new string[compact.Length / 2];
+				for (int i = 0; i < tokens.Length; i++)
+				{
+					tokens[i] = compact.Substring(i * 2, 2);
+				}
+			}
+
+			byte[] parsed = new byte[tokens.Length];
+			for (int i = 0; i < tokens.Length; i++)
+			{
+				if (tokens[i].Length != 2 || !ConvertHexToByte(tokens[i], out parsed[i]))
+					return false;
+			}
+
+			buffer = parsed;
+			return true;
 		}
 
 		bool ConvertHexToByte(string hex, out byte b)

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>PetSkillBookRunnerHarness</RootNamespace>
+    <AssemblyName>PetSkillBookRunnerHarness</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+    <Prefer32Bit>false</Prefer32Bit>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <DefineConstants>TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\WPELibrary\Lib\Memory\ReadOnlyProcessMemoryReader.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\PetSkillBook\PetSkillBookModels.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\PetSkillBook\IPetSkillBookAdapter.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\PetSkillBook\SummonedPetSkillBookPreset.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\PetSkillBook\SummonedPetSkillBookRunner.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\PetSkillBook\TestAdapters.cs" />
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

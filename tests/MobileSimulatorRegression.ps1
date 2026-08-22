@@ -30,7 +30,7 @@ function Assert-NotContains {
 $quote = [string][char]34
 
 $plan = Read-SourceFile "mobile\IMPLEMENTATION_PLAN.md"
-Assert-Contains $plan "v1.6" "The passwordless mobile implementation plan must be present."
+Assert-Contains $plan "v1.6" "The mobile implementation plan must be present."
 
 $models = Read-SourceFile "mobile\app\src\main\java\com\xnas\wpe\mobile\SyncModels.java"
 foreach ($needle in @(
@@ -64,7 +64,7 @@ foreach ($needle in @("getFD().sync()", "renameTo(backup)", "renameTo(target)", 
 }
 
 $store = Read-SourceFile "mobile\app\src\main\java\com\xnas\wpe\mobile\SyncStore.java"
-foreach ($needle in @("wpe_mobile_sync_v2", "snapshotVersion", "selectedProgression", "return readProfile(key, true)", "LEGACY_CREDENTIAL_PREFS", "deleteSharedPreferences", ".edit().clear().commit()")) {
+foreach ($needle in @("wpe_mobile_sync_v2", "snapshotVersion", "selectedProgression", "return readProfile(key, true)", "LEGACY_CREDENTIAL_PREFS", "deleteSharedPreferences", ".edit().clear().commit()", "PASSWORD", "getPassword", "hasCredentials", "AndroidKeyStore", "AES/GCM/NoPadding", "GCMParameterSpec")) {
     Assert-Contains $store $needle "SyncStore guard is missing: $needle"
 }
 $activateProfileMethod = [regex]::Match($store, '(?s)public ProfileState activateProfile\(.*?\n    \}')
@@ -77,8 +77,7 @@ Assert-Contains $activateProfileMethod.Value "putString(ACTIVE_PROFILE" `
     "Profile activation must persist the active profile in the same editor transaction."
 Assert-NotContains $activateProfileMethod.Value "saveConnection(" `
     "Profile activation must not split connection metadata across two async writes."
-Assert-NotContains $store "CredentialStore" "The current store must not persist credentials."
-Assert-NotContains $store "getPassword" "The current store must not expose persisted passwords."
+Assert-Contains $store "getOrCreateKey" "Credential encryption must use an Android Keystore key."
 $snapshotPreferenceNeedle = "putString(prefix + " + $quote + "snapshot" + $quote
 Assert-NotContains $store $snapshotPreferenceNeedle "The full snapshot must not be stored in preferences."
 $credentialStorePath = Join-Path $RepositoryRoot "mobile\app\src\main\java\com\xnas\wpe\mobile\CredentialStore.java"
@@ -106,10 +105,10 @@ Assert-Contains $coordinator $actionPostNeedle `
     "Action submission must re-check the session before posting."
 Assert-Contains $coordinator "OverlayService.resetProfileState();" `
     "Coordinator shutdown must clear stale overlay state."
-Assert-NotContains $coordinator "syncStore.getPassword" "Profile changes must not restore a password."
-Assert-Contains $coordinator "DEFAULT_ENDPOINT" "Passwordless startup must have a default desktop endpoint."
-Assert-Contains $coordinator "configure(endpoint, syncStore.getUsername())" `
-    "A recreated process must reconnect automatically without credentials."
+Assert-Contains $coordinator "syncStore.getPassword" "Saved mobile credentials must be restored for reconnect."
+Assert-Contains $coordinator "DEFAULT_ENDPOINT" "Startup must retain a safe default desktop endpoint."
+Assert-Contains $coordinator "configure(endpoint, syncStore.getUsername(), syncStore.getPassword())" `
+    "A recreated process must reconnect with the saved mobile credentials."
 Assert-NotContains $coordinator "effectivePassword" "The coordinator must not retain a mobile password."
 Assert-NotContains $coordinator "currentClient.postJsonObject(path, body)" "Start must retry with the same requestId."
 
@@ -118,10 +117,10 @@ Assert-Contains $client ($quote + "https://" + $quote) "The mobile transport mus
 foreach ($needle in @("setInstanceFollowRedirects(false)", "MAX_RESPONSE_BYTES", "postJsonObject", "postJsonObjectWithRetry", "ByteArrayOutputStream", "businessCode", "businessMessage", "getJson(String path, int maxResponseBytes)", "runtime_revision_mismatch", "runtime_faulted", "relative.indexOf('?')", "relative.indexOf('#')", "relative.indexOf('%')")) {
     Assert-Contains $client $needle "Transport guard is missing: $needle"
 }
-Assert-NotContains $client 'setRequestProperty("Authorization"' `
-    "The passwordless mobile transport must not send an Authorization header."
-Assert-NotContains $client "android.util.Base64" `
-    "The passwordless mobile transport must not retain Basic Auth encoding."
+Assert-Contains $client 'setRequestProperty("Authorization"' `
+    "The mobile transport must send Basic Auth for the dedicated mobile account."
+Assert-Contains $client "android.util.Base64" `
+    "The mobile transport must encode Basic Auth credentials."
 
 $overlay = Read-SourceFile "mobile\app\src\main\java\com\xnas\wpe\mobile\OverlayService.java"
 foreach ($needle in @(
@@ -171,7 +170,7 @@ Assert-NotContains $overlay "detailsView" "The separate details panel must stay 
 Assert-NotContains $overlay "WpeSyncClient" "The overlay must not create a second network client."
 
 $main = Read-SourceFile "mobile\app\src\main\java\com\xnas\wpe\mobile\MainActivity.java"
-foreach ($needle in @("SyncCoordinator", "ACTION_SELECT_PRESET", "maybeAutoStartOverlay", "moveTaskToBack(true)", "hideSetupPage()", "setupPageHidden = true", "View.GONE", "protected void onNewIntent", "alignSelectionToRuntime", "status.state != SyncModels.RuntimeState.STOPPING", "resumeSelectionMatches", "automaticStartup = true", "OverlayService.isRunning()", "overlayUiReady", "deferredOverlayCommands", "drainOverlayCommands()", "handleOverlayCommand(intent)", "while (deferredOverlayCommands.size() >= 8)", "if (values != null)")) {
+foreach ($needle in @("SyncCoordinator", "ACTION_SELECT_PRESET", "maybeAutoStartOverlay", "moveTaskToBack(true)", "updateSetupPageVisibility()", "showSetupPage()", "setupPageHidden = true", "usernameInput", "passwordInput", "View.GONE", "protected void onNewIntent", "alignSelectionToRuntime", "status.state != SyncModels.RuntimeState.STOPPING", "resumeSelectionMatches", "automaticStartup = true", "OverlayService.isRunning()", "overlayUiReady", "deferredOverlayCommands", "drainOverlayCommands()", "handleOverlayCommand(intent)", "while (deferredOverlayCommands.size() >= 8)", "if (values != null)")) {
     Assert-Contains $main $needle "Activity guard is missing: $needle"
 }
 Assert-Contains $main "Do not claim a command until the Activity can execute it." `
@@ -188,9 +187,7 @@ Assert-Contains $main "contentEquals(syncStatus.getText())" `
     "A completed overlay start must clear the transient startup status."
 Assert-NotContains $main "new WpeSyncClient" "The Activity must not create another network client."
 Assert-NotContains $main "getWindow().getDecorView().setVisibility" "Activity visibility must be controlled by the content root."
-Assert-NotContains $main "passwordInput" "The hidden Activity must not retain a password field."
-Assert-NotContains $main "usernameInput" "The hidden Activity must not retain an account field."
-Assert-NotContains $main "showSetupPage" "No Activity path may reveal the retired setup page."
+Assert-Contains $main "connectFromSavedFields(endpoint, username, password)" "The setup page must submit mobile credentials."
 $emptyStatusNeedle = "setSyncStatus(" + $quote + $quote + ", false)"
 Assert-Contains $main $emptyStatusNeedle "Stopping the overlay must clear stale startup status."
 
@@ -207,12 +204,13 @@ $networkConfig = Read-SourceFile "mobile\app\src\main\res\xml\network_security_c
 Assert-Contains $networkConfig "@raw/wpe_mobile_local" "The local HTTPS certificate policy must be present."
 
 $web = Read-SourceFile "WPELibrary\Lib\WebAPI\Socket_Web.cs"
-Assert-Contains $web "if (isMobileSync)" "MobileSync must have an explicit passwordless route boundary."
-Assert-Contains $web "await next.Invoke();" "Passwordless MobileSync requests must reach Web API."
-Assert-NotContains $web "IsValidMobile(username, password)" "MobileSync must not validate account credentials."
+Assert-Contains $web "if (isMobileSync)" "MobileSync must have an explicit authenticated route boundary."
+Assert-Contains $web "await next.Invoke();" "Authenticated MobileSync requests must reach Web API."
+Assert-Contains $web "IsValidMobile(mobileUsername, mobilePassword)" "MobileSync must validate the dedicated low-privilege account."
+Assert-Contains $web "WWW-Authenticate" "MobileSync must advertise its Basic Auth challenge."
 Assert-Contains $web "IsValidAdmin(username, password)" "Non-mobile routes must use admin credentials."
 Assert-Contains $web "/MobileSync/" "Mobile route matching must include subroutes."
-Assert-Contains $web "IsLocalNetworkAddress" "Passwordless MobileSync must be limited to local-network clients."
+Assert-Contains $web "IsLocalNetworkAddress" "MobileSync must be limited to local-network clients."
 Assert-Contains $web "context.Request.RemoteIpAddress" "MobileSync local-network enforcement must use the actual peer address."
 Assert-NotContains $web "bytes[0] == 100" "CGNAT shared-address space must not be treated as a private LAN boundary."
 
@@ -272,28 +270,35 @@ Assert-Contains $models 'boolean pausing = firstBoolean(value, false, "pausing",
     "The Android runtime model must parse pausing explicitly."
 Assert-NotContains $controller "&& current.JobId == jobId" "Progression stop idempotence must not depend on the completed job remaining visible."
 
-Assert-Contains $main "coordinator.loadSavedConnection();" "Activity restart must reconnect without credentials."
+Assert-Contains $main "coordinator.loadSavedConnection();" "Activity restart must reconnect with saved mobile credentials."
 Assert-Contains $main "executeAction(moduleUi(activeOverlayModule), SyncCoordinator.Action.START,`n                    parseUuid(intent.getStringExtra(OverlayService.EXTRA_PRESET_ID)));" `
     "The Activity fallback path must preserve the preset id carried by START."
 Assert-Contains $main "if (action != SyncCoordinator.Action.START" `
     "The Activity must only prefer runtime preset ids for pause/stop."
-Assert-Contains $overlay "coordinator.loadSavedConnection();" "A recreated service must reconnect without exposing the Activity."
+Assert-Contains $overlay "coordinator.loadSavedConnection();" "A recreated service must reconnect with saved credentials without exposing the Activity."
 Assert-Contains $coordinator "currentRuntime.presetId == null" "Pause must stay bound to the running preset."
 Assert-Contains $coordinator "currentRuntime.state == SyncModels.RuntimeState.PAUSED" "Resume must explicitly identify the paused task."
 Assert-Contains $coordinator "currentRuntime.state != SyncModels.RuntimeState.RUNNING" "Pause must reject transition states."
 
 $byteSweep = Read-SourceFile "WPELibrary\Socket_Form.ByteSweep.cs"
-foreach ($needle in @("WaitIfPaused", "string ErrorCode", "runtime_not_connected", "SetRevision(jobId, revision)")) {
+foreach ($needle in @("WaitIfPaused", "string ErrorCode", "runtime_not_connected", "lastByteSweepRouteErrorCode", "SetRevision(jobId, revision)")) {
     Assert-Contains $byteSweep $needle "Progression guard is missing: $needle"
 }
 $cache = Read-SourceFile "WPELibrary\Lib\Socket_Cache.cs"
 $controller = Read-SourceFile "WPELibrary\Lib\WebAPI\MobileSync_Controller.cs"
-Assert-Contains $cache "int resolvedSocket = Socket_Cache.SocketList.ResolveCurrentSocket(sendCollection);" `
-    "Every mobile send preset must resolve the current matching socket instead of reusing a stale PacketSocket."
+Assert-Contains $cache '"runtime_route_ambiguous"' `
+    "Desktop route resolution must expose runtime_route_ambiguous for mobile clients."
+Assert-Contains $cache "Socket_Cache.SocketList.ResolveCurrentRoutes(sendCollection)" `
+    "Every mobile send preset must resolve current matching sockets instead of reusing stale PacketSocket values."
+Assert-Contains $cache "routeResolution.Items[index].Route" `
+    "Every mobile send packet must receive the socket and addresses resolved for the current capture session."
 Assert-Contains $controller 'errorCode = "send_failed";' `
     "A mobile send that starts but sends zero successful packets must be reported as a fault."
 Assert-Contains $controller "send.Send_Success <= 0" `
     "Mobile send runtime must inspect actual send success rather than treating worker completion as delivery."
+$client = Read-SourceFile "mobile\app\src\main\java\com\xnas\wpe\mobile\WpeSyncClient.java"
+Assert-Contains $client '"runtime_route_ambiguous"' `
+    "Mobile client must map ambiguous runtime routes to an explicit user message."
 
 $apk = Join-Path $RepositoryRoot "mobile\app\build\outputs\apk\debug\app-debug.apk"
 if (-not (Test-Path -LiteralPath $apk) -or (Get-Item -LiteralPath $apk).Length -le 0) {

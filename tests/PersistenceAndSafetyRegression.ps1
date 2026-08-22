@@ -45,6 +45,8 @@ $dynamicUi = Read-SourceFile "WPELibrary\DynamicVariableUi.cs"
 
 Assert-Contains $cache "public static bool ExecuteAtomicSave" `
     "database list saves must keep an isolated atomic-save boundary"
+Assert-Contains $cache 'BackupDatabase(destination, "main", "main", -1, null, 1000)' `
+    "database saves must support SQLite backup commit when the live file is open"
 Assert-Contains $cache "SystemListLoadCompleted" `
     "shutdown must know whether startup list loading completed"
 Assert-Contains $cache "SystemListLoadFailed" `

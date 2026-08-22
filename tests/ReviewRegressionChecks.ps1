@@ -500,9 +500,11 @@ Assert-Contains $mobileController "Socket_Cache.RobotList.lstRobot" `
 Assert-Contains $mobileController "string canonical = Canonicalize(payload)" `
     "Preset content used for revision hashing must remain local and deterministic."
 Assert-Contains $web 'if (isMobileSync)' `
-    "MobileSync must have an explicit passwordless route boundary."
-Assert-NotContains $web 'IsValidMobile(username, password)' `
-    "MobileSync must not depend on proxy-account credentials."
+    "MobileSync must have an explicit authenticated route boundary."
+Assert-Contains $web 'IsValidMobile(mobileUsername, mobilePassword)' `
+    "MobileSync must depend on the dedicated low-privilege proxy account."
+Assert-Contains $web 'WWW-Authenticate' `
+    "MobileSync must advertise a Basic Auth challenge."
 Assert-Contains $web 'IsValidAdmin(username, password)' `
     "Non-mobile Web API routes must remain protected by administrator credentials."
 Assert-Contains $cache 'Socket_Cache.ProxyAccount.LoadProxyAccountList_FromDB();' `

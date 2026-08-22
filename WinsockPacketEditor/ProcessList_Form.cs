@@ -17,8 +17,9 @@ namespace WinsockPacketEditor
         private readonly string showAllProcessesText;
         private string processEmptyStateText;
         private string processEmptySearchText;
-        private static readonly string[] EmulatorMainProcessNames =
+        internal static readonly string[] EmulatorMainProcessNames =
         {
+            "0dcloudCore",
             "Ld9BoxHeadless",
             "LdVBoxHeadless",
             "NoxVMHandle",
@@ -292,7 +293,10 @@ namespace WinsockPacketEditor
                     try
                     {
                         DataRow row = displayTable.NewRow();
-                        row["ICO"] = new Icon(SystemIcons.Application, 256, 256).ToBitmap();
+                        using (Icon fallback = new Icon(SystemIcons.Application, 256, 256))
+                        {
+                            row["ICO"] = fallback.ToBitmap();
+                        }
                         row["PName"] = process.ProcessName;
                         row["PID"] = process.Id;
                         row["PPath"] = Socket_Operation.GetProcessPath(process);
@@ -322,6 +326,11 @@ namespace WinsockPacketEditor
         internal static bool IsSupportedInjectionProcess(string processName)
         {
             return IsEmulatorMainProcess(processName);
+        }
+
+        internal static string[] GetSupportedInjectionProcessNames()
+        {
+            return (string[])EmulatorMainProcessNames.Clone();
         }
 
         private void BindProcessSearch(DataTable processTable)

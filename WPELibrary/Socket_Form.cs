@@ -14,6 +14,7 @@ using System.Windows.Forms;
 using System.Xml.Linq;
 using WPELibrary.Lib;
 using WPELibrary.Lib.NativeMethods;
+using WPELibrary.Lib.Vision;
 using WPELibrary.TextComparison;
 
 namespace WPELibrary
@@ -50,6 +51,7 @@ namespace WPELibrary
         private ToolStripMenuItem cmsSendFolderMoveUp;
         private ToolStripMenuItem cmsSendFolderMoveDown;
         private ToolStripMenuItem cmsSocketListPacketDetails;
+        private ToolStripMenuItem cmsSocketListShowOnlyHeader;
         private ToolStripMenuItem cmsHexBox_DynamicVariable;
         private ToolStripMenuItem cmsHexBox_AddDynamicField;
         private ToolStripMenuItem cmsHexBox_EditDynamicVariable;
@@ -87,6 +89,8 @@ namespace WPELibrary
         private string selectedRobotFolder = "常用";
         private Socket_Robot activeAssistantRobot;
         private Guid activeAssistantRobotId = Guid.Empty;
+        private Guid assistantStartingRobotId = Guid.Empty;
+        private bool assistantStartPending;
         private readonly Dictionary<Guid, Button> assistantButtons = new Dictionary<Guid, Button>();
         private int requestedClientWidth = -1;
 
@@ -128,7 +132,8 @@ namespace WPELibrary
             }
             catch (Exception ex)
             {
-                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.ToString());
+                throw;
             }
         }
 
@@ -987,7 +992,7 @@ namespace WPELibrary
             this.tlpAssistantButtons.ResumeLayout(true);
         }
 
-        private void AssistantButton_Click(object sender, EventArgs e)
+        private async void AssistantButton_Click(object sender, EventArgs e)
         {
             Button button = sender as Button;
             Socket_RobotInfo robot = button == null ? null : button.Tag as Socket_RobotInfo;
@@ -1004,15 +1009,109 @@ namespace WPELibrary
                 return;
             }
 
-            Socket_Robot running = Socket_Cache.Robot.DoRobot(robot.RID, null);
-            if (running == null)
+            if (this.assistantStartPending)
             {
                 return;
             }
-            this.activeAssistantRobot = running;
-            this.activeAssistantRobotId = robot.RID;
-            running.Worker.RunWorkerCompleted += this.AssistantRobot_RunWorkerCompleted;
+
+            if (!HasTreasureMapInstruction(robot) &&
+                Socket_Cache.Robot.EnsureBuiltInTreasureMapPreset(robot))
+            {
+                if (!Socket_Cache.RobotList.SaveRobotList_ToDB())
+                {
+                    Socket_Operation.ShowMessageBox(UiText("UI_AssistantSaveFailed"));
+                    return;
+                }
+            }
+
+            bool hasTreasureMapInstruction = HasTreasureMapInstruction(robot);
+            if (hasTreasureMapInstruction && !robot.TreasureLiveSendAuthorized)
+            {
+                DialogResult confirmation = MessageBox.Show(
+                    this,
+                    UiText("UI_TreasureLiveSendConfirm"),
+                    UiText("UI_TreasureLiveSendConfirmTitle"),
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2);
+                if (confirmation != DialogResult.Yes)
+                {
+                    return;
+                }
+
+                // 首次确认即保存到该助手，后续启动不再重复弹窗；用户仍可在
+                // 助手编辑窗口取消“保存设置”来撤销授权。
+                robot.TreasureLiveSendAuthorized = true;
+                if (!Socket_Cache.RobotList.SaveRobotList_ToDB())
+                {
+                    robot.TreasureLiveSendAuthorized = false;
+                    Socket_Operation.ShowMessageBox(UiText("UI_AssistantSaveFailed"));
+                    return;
+                }
+            }
+
+            Dictionary<string, object> parameters = hasTreasureMapInstruction
+                ? new Dictionary<string, object>
+                {
+                    { "TreasureLiveSendEnabled", robot.TreasureLiveSendAuthorized }
+                }
+                : null;
+
+            this.assistantStartPending = true;
+            this.assistantStartingRobotId = robot.RID;
             this.UpdateAssistantButtonState();
+            try
+            {
+                // 普通机器人按现有游戏连接启动；藏宝图指令执行到自身时再懒加载 C6。
+                Socket_Robot running = await Socket_Cache.Robot.DoRobotAsync(robot.RID, parameters);
+                if (running == null)
+                {
+                    Socket_Operation.ShowMessageBox(UiText("UI_AssistantStartFailed"));
+                    return;
+                }
+
+                this.activeAssistantRobot = running;
+                this.activeAssistantRobotId = robot.RID;
+                running.Worker.RunWorkerCompleted += this.AssistantRobot_RunWorkerCompleted;
+                if (!running.Worker.IsBusy)
+                {
+                    this.AssistantRobot_RunWorkerCompleted(running.Worker, null);
+                }
+                this.UpdateAssistantButtonState();
+            }
+            finally
+            {
+                this.assistantStartPending = false;
+                this.assistantStartingRobotId = Guid.Empty;
+                this.UpdateAssistantButtonState();
+            }
+        }
+
+        private static bool HasTreasureMapInstruction(Socket_RobotInfo robot)
+        {
+            if (robot == null || robot.RInstruction == null ||
+                !robot.RInstruction.Columns.Contains("Type"))
+            {
+                return false;
+            }
+
+            foreach (System.Data.DataRow row in robot.RInstruction.Rows)
+            {
+                try
+                {
+                    if (Convert.ToInt32(row["Type"]) ==
+                        (int)Socket_Cache.Robot.InstructionType.TreasureMap)
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // The normal robot validator reports malformed instruction rows.
+                }
+            }
+
+            return false;
         }
 
         private void AssistantButton_DoubleClick(object sender, EventArgs e)
@@ -1025,7 +1124,7 @@ namespace WPELibrary
             ToolStripItem item = sender as ToolStripItem;
             Button button = item == null ? sender as Button : this.cmsAssistantButton.SourceControl as Button;
             Socket_RobotInfo robot = button == null ? null : button.Tag as Socket_RobotInfo;
-            if (robot != null && this.activeAssistantRobot == null)
+            if (robot != null && this.activeAssistantRobot == null && !this.assistantStartPending)
             {
                 Socket_Operation.ShowRobotForm_Dialog(robot);
                 this.RefreshAssistantFolders();
@@ -1076,11 +1175,44 @@ namespace WPELibrary
 
         private void AssistantRobot_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
+            if (this.InvokeRequired)
+            {
+                if (!this.IsDisposed && this.IsHandleCreated)
+                {
+                    this.BeginInvoke(new Action<object, RunWorkerCompletedEventArgs>(
+                        this.AssistantRobot_RunWorkerCompleted),
+                        sender,
+                        e);
+                }
+                return;
+            }
+
             if (this.activeAssistantRobot != null && ReferenceEquals(sender, this.activeAssistantRobot.Worker))
             {
+                Socket_Robot completedRobot = this.activeAssistantRobot;
                 this.activeAssistantRobot = null;
                 this.activeAssistantRobotId = Guid.Empty;
                 this.UpdateAssistantButtonState();
+
+                Socket_Robot.TreasureMapRunState treasureState =
+                    completedRobot.GetTreasureMapRunState();
+                if (treasureState != null &&
+                    (treasureState.CurrentState == TreasureMapState.Failed ||
+                     treasureState.CurrentState == TreasureMapState.ControllerConflict))
+                {
+                    if (treasureState.LastError.StartsWith("c6_", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(treasureState.LastError, "connect_failed", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(treasureState.LastError, "connect_timeout", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(treasureState.LastError, "not_connected", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Socket_Operation.ShowMessageBox(UiText("UI_TreasureC6Unavailable"));
+                    }
+                    else if (!string.IsNullOrWhiteSpace(treasureState.LastError))
+                    {
+                        Socket_Operation.ShowMessageBox(
+                            string.Format(UiText("UI_TreasureRunFailed"), treasureState.LastError));
+                    }
+                }
             }
         }
 
@@ -1090,25 +1222,51 @@ namespace WPELibrary
             foreach (KeyValuePair<Guid, Button> pair in this.assistantButtons)
             {
                 bool active = pair.Key == this.activeAssistantRobotId && assistantRunning;
-                bool enabled = !assistantRunning || active;
+                bool starting = pair.Key == this.assistantStartingRobotId && this.assistantStartPending;
+                bool enabled = !this.assistantStartPending && (!assistantRunning || active);
+                Socket_RobotInfo robot = pair.Value.Tag as Socket_RobotInfo;
+                string robotName = robot == null ? string.Empty : robot.RName;
+                string stateText = starting
+                    ? UiText("ByteSweep_LogStarting")
+                    : active ? UiText("ByteSweep_LogRunning") : robotName;
                 pair.Value.Visible = !assistantRunning || active;
                 pair.Value.Enabled = enabled;
                 pair.Value.BackColor = active
                     ? Color.FromArgb(255, 223, 124)
+                    : starting
+                        ? Color.FromArgb(226, 237, 255)
                     : enabled ? Color.FromArgb(245, 248, 255) : Color.FromArgb(239, 241, 245);
                 pair.Value.ForeColor = active
                     ? Color.FromArgb(104, 73, 12)
+                    : starting
+                        ? Color.FromArgb(31, 78, 121)
                     : enabled ? Color.FromArgb(32, 43, 61) : Color.FromArgb(142, 149, 160);
                 pair.Value.FlatAppearance.BorderColor = active
                     ? Color.FromArgb(208, 143, 30)
+                    : starting
+                        ? Color.FromArgb(88, 145, 206)
                     : enabled ? Color.FromArgb(147, 177, 222) : Color.FromArgb(210, 215, 224);
                 pair.Value.FlatAppearance.MouseOverBackColor = active
                     ? Color.FromArgb(255, 232, 163)
+                    : starting
+                        ? Color.FromArgb(211, 229, 251)
                     : Color.FromArgb(226, 237, 255);
                 pair.Value.FlatAppearance.MouseDownBackColor = active
                     ? Color.FromArgb(245, 210, 102)
+                    : starting
+                        ? Color.FromArgb(195, 218, 246)
                     : Color.FromArgb(207, 225, 251);
-                pair.Value.Text = active ? UiText("UI_Stop") : (pair.Value.Tag as Socket_RobotInfo).RName;
+                pair.Value.Text = stateText;
+                pair.Value.AccessibleDescription = starting || active
+                    ? string.Format("{0}：{1}", robotName, stateText)
+                    : robotName;
+                this.tt.SetToolTip(
+                    pair.Value,
+                    starting
+                        ? string.Format("{0}：{1}", robotName, UiText("UI_AssistantStartingTip"))
+                        : active
+                            ? string.Format("{0}：{1}", robotName, UiText("UI_AssistantRunningTip"))
+                            : robotName);
             }
             this.UpdateRobotToolbarState();
         }
@@ -1449,6 +1607,17 @@ namespace WPELibrary
 
             int sendIndex = this.cmsSocketList.Items.IndexOf(this.cmsSocketList_Send);
             this.cmsSocketList.Items.Insert(sendIndex + 1, this.cmsSocketListPacketDetails);
+
+            this.cmsSocketListShowOnlyHeader = new ToolStripMenuItem
+            {
+                Name = "cmsSocketList_ShowOnlyHeader",
+                Text = UiText("UI_ShowOnly4D5AHeader"),
+                Image = Properties.Resources.addto,
+                ImageScaling = ToolStripItemImageScaling.None
+            };
+
+            int filterIndex = this.cmsSocketList.Items.IndexOf(this.cmsSocketList_FilterList);
+            this.cmsSocketList.Items.Insert(filterIndex + 1, this.cmsSocketListShowOnlyHeader);
         }
 
         #endregion
@@ -2535,12 +2704,28 @@ namespace WPELibrary
                 this.niWPE.Visible = false;
 
                 Socket_Operation.StopRemoteMGT(this.RunMode);
-                Socket_Cache.System.SaveSystemList_ToDB();
-                Socket_Cache.System.SaveRunConfig_ToDB(this.RunMode);
             }
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+
+            try
+            {
+                Socket_Cache.System.SaveSystemList_ToDB();
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(nameof(Socket_Cache.System.SaveSystemList_ToDB), ex.Message);
+            }
+
+            try
+            {
+                Socket_Cache.System.SaveRunConfig_ToDB(this.RunMode);
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(nameof(Socket_Cache.System.SaveRunConfig_ToDB), ex.Message);
             }
         }
 
@@ -2877,6 +3062,31 @@ namespace WPELibrary
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
+        }
+
+        private void ApplyGameHeaderDisplayFilter()
+        {
+            // This target workflow only displays the game's MZ-framed packets.
+            // The rule is applied at capture start and affects display filtering
+            // only; it does not modify or block the target process traffic.
+            Socket_Cache.SocketPacket.CheckNotShow = false;
+            Socket_Cache.SocketPacket.CheckSocket = false;
+            Socket_Cache.SocketPacket.CheckIP = false;
+            Socket_Cache.SocketPacket.CheckPort = false;
+            Socket_Cache.SocketPacket.CheckHead = true;
+            Socket_Cache.SocketPacket.CheckData = false;
+            Socket_Cache.SocketPacket.CheckSize = false;
+            Socket_Cache.SocketPacket.CheckHead_Value = "4D5A";
+
+            this.rbFilter_Show.Checked = true;
+            this.rbFilter_NotShow.Checked = false;
+            this.cbCheckSocket.Checked = false;
+            this.cbCheckIP.Checked = false;
+            this.cbCheckPort.Checked = false;
+            this.cbCheckHead.Checked = true;
+            this.cbCheckData.Checked = false;
+            this.cbCheckSize.Checked = false;
+            this.txtCheckHead.Text = "4D5A";
         }
 
         #endregion        
@@ -3518,8 +3728,13 @@ namespace WPELibrary
             {
                 this.SetHookUiState("UI_HookStatusStarting", false, true);
 
+                this.ApplyGameHeaderDisplayFilter();
+                this.CleanUp_SocketList();
+                this.CleanUp_HexBox();
                 this.SaveConfigs_Parameter();
                 Socket_Cache.FilterList.InitFilterList_Count();
+                WPELibrary.Lib.Vision.TreasurePacketRuntime.BeginSession();
+                Socket_Cache.SocketList.BeginCaptureSession();
 
                 HookStartResult hookResult = ws.StartHook();
                 if (!hookResult.Success)
@@ -3641,6 +3856,7 @@ namespace WPELibrary
                 this.SetHookUiState("UI_HookStatusStopping", false, true);
 
                 ws.StopHook();
+                WPELibrary.Lib.Vision.TreasurePacketRuntime.EndSession();
 
                 this.SetHookUiState("UI_HookStatusReady", false, false);
 
@@ -5332,6 +5548,10 @@ namespace WPELibrary
         private void cmsSocketList_Opening(object sender, System.ComponentModel.CancelEventArgs e)
         {
             this.BuildGroupedSendListMenu(this.cmsSocketList_SendList, this.cmsSocketList_SendTarget_Click);
+            if (this.cmsSocketListShowOnlyHeader != null)
+            {
+                this.cmsSocketListShowOnlyHeader.Enabled = Socket_Cache.SocketList.spiSelect != null;
+            }
         }
 
         private void cmsSocketList_SendTarget_Click(object sender, EventArgs e)
@@ -5416,6 +5636,18 @@ namespace WPELibrary
                         case "cmsSocketList_FilterList":
 
                             Socket_Cache.Filter.AddFilter_ByPacketInfo(Socket_Cache.SocketList.spiSelect, null);
+
+                            break;
+
+                        case "cmsSocketList_ShowOnlyHeader":
+
+                            this.ApplyGameHeaderDisplayFilter();
+                            this.SaveConfigs_Parameter();
+                            this.CleanUp_SocketList();
+                            this.CleanUp_HexBox();
+                            Socket_Operation.DoLog(
+                                MethodBase.GetCurrentMethod().Name,
+                                "仅显示包头 4D5A 的封包");
 
                             break;
 
@@ -5878,8 +6110,11 @@ namespace WPELibrary
         {
             Socket_Cache.Filter.AddFilter_New();
 
-            this.dgvFilterList.ClearSelection();
-            this.dgvFilterList.CurrentCell = this.dgvFilterList.Rows[this.dgvFilterList.Rows.Count - 1].Cells[0];
+            if (this.dgvFilterList.Rows.Count > 0)
+            {
+                this.dgvFilterList.ClearSelection();
+                this.dgvFilterList.CurrentCell = this.dgvFilterList.Rows[this.dgvFilterList.Rows.Count - 1].Cells[0];
+            }
         }
 
         private void tsFilterList_CleanUp_Click(object sender, EventArgs e)
@@ -6083,22 +6318,61 @@ namespace WPELibrary
             List<Socket_SendInfo> items = sendInfos == null
                 ? new List<Socket_SendInfo>()
                 : sendInfos.Where(item => item != null).ToList();
-            bool allResolved = items.Count > 0 && items.All(item =>
-                item.SCollection != null &&
-                item.SCollection.Count > 0 &&
-                Socket_Cache.SocketList.ResolveCurrentSocket(item.SCollection) > 0);
-            if (allResolved)
+            if (items.Count == 0)
             {
-                return true;
+                MessageBox.Show(
+                    this,
+                    UiText("UI_CurrentSocketRequired"),
+                    UiText("UI_StartSending"),
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return false;
             }
 
-            MessageBox.Show(
-                this,
-                UiText("UI_CurrentSocketRequired"),
-                UiText("UI_StartSending"),
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-            return false;
+            foreach (Socket_SendInfo item in items)
+            {
+                if (item.SCollection == null || item.SCollection.Count == 0)
+                {
+                    MessageBox.Show(
+                        this,
+                        UiText("UI_CurrentSocketRequired"),
+                        UiText("UI_StartSending"),
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                    return false;
+                }
+
+                Socket_Cache.SocketList.CurrentSocketRoutesResolution resolution =
+                    Socket_Cache.SocketList.ResolveCurrentRoutes(item.SCollection);
+                for (int index = 0; index < resolution.Items.Count; index++)
+                {
+                    Socket_Cache.SocketList.LogCurrentRouteResolution(
+                        item.SID,
+                        index + 1,
+                        item.SCollection[index],
+                        resolution.Items[index]);
+                }
+                if (!resolution.Succeeded)
+                {
+                    string messageKey = resolution.ErrorCode == "runtime_route_ambiguous"
+                        ? "UI_CurrentSocketAmbiguous"
+                        : "UI_CurrentSocketRequired";
+                    string message = UiText(messageKey);
+                    if (!string.IsNullOrWhiteSpace(resolution.ErrorMessage))
+                    {
+                        message += Environment.NewLine + resolution.ErrorMessage;
+                    }
+                    MessageBox.Show(
+                        this,
+                        message,
+                        UiText("UI_StartSending"),
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private void tsSendList_Stop_Click(object sender, EventArgs e)

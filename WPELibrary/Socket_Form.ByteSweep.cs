@@ -82,6 +82,7 @@ namespace WPELibrary
         private long byteSweepOriginalSelectionLength;
         private long byteSweepLiveSelectionStart = -1;
         private long byteSweepLiveSelectionLength = 1;
+        private string lastByteSweepRouteErrorCode = string.Empty;
 
         private void InitByteSweepPresetUI()
         {
@@ -1181,38 +1182,56 @@ namespace WPELibrary
             this.StopByteSweep();
         }
 
-        private static Dictionary<Guid, int> ResolveByteSweepSockets(
+        private static Dictionary<Guid, Socket_Cache.SocketList.CurrentSocketRoute> ResolveByteSweepRoutes(
             IEnumerable<Socket_ByteSweepPresetInfo> presets,
-            out Socket_ByteSweepPresetInfo unresolvedPreset)
+            out Socket_ByteSweepPresetInfo unresolvedPreset,
+            out Socket_Cache.SocketList.CurrentSocketRouteResolution unresolvedResolution)
         {
-            Dictionary<Guid, int> resolvedSockets = new Dictionary<Guid, int>();
+            List<Socket_ByteSweepPresetInfo> items = presets == null
+                ? new List<Socket_ByteSweepPresetInfo>()
+                : presets.Where(item => item != null).ToList();
+            Dictionary<Guid, Socket_Cache.SocketList.CurrentSocketRoute> resolvedRoutes =
+                new Dictionary<Guid, Socket_Cache.SocketList.CurrentSocketRoute>();
             unresolvedPreset = null;
+            unresolvedResolution = null;
 
-            foreach (Socket_ByteSweepPresetInfo preset in presets)
-            {
-                Socket_PacketInfo packetTemplate = new Socket_PacketInfo
+            List<Socket_PacketInfo> templates = items
+                .Select(preset => new Socket_PacketInfo
                 {
                     PacketType = preset.PacketType,
                     PacketFrom = preset.PacketFrom,
                     PacketTo = preset.PacketTo
-                };
-                int resolvedSocket = Socket_Cache.SocketList.ResolveCurrentSocket(
-                    new[] { packetTemplate });
-                if (resolvedSocket <= 0)
+                })
+                .ToList();
+            Socket_Cache.SocketList.CurrentSocketRoutesResolution resolution =
+                Socket_Cache.SocketList.ResolveCurrentRoutes(templates);
+
+            for (int index = 0; index < items.Count; index++)
+            {
+                Socket_ByteSweepPresetInfo preset = items[index];
+                Socket_Cache.SocketList.CurrentSocketRouteResolution itemResolution =
+                    resolution.Items[index];
+                Socket_Cache.SocketList.LogCurrentRouteResolution(
+                    preset.BID,
+                    1,
+                    templates[index],
+                    itemResolution);
+                if (!itemResolution.Succeeded)
                 {
                     unresolvedPreset = preset;
+                    unresolvedResolution = itemResolution;
                     return null;
                 }
 
-                resolvedSockets[preset.BID] = resolvedSocket;
+                resolvedRoutes[preset.BID] = itemResolution.Route;
             }
 
-            return resolvedSockets;
+            return resolvedRoutes;
         }
 
         private async Task<Socket_ByteSweepResult> ExecuteByteSweepPresetAsync(
             Socket_ByteSweepPresetInfo preset,
-            int socket,
+            Socket_Cache.SocketList.CurrentSocketRoute route,
             CancellationToken cancellationToken)
         {
             Socket_ByteSweepResult aggregate = new Socket_ByteSweepResult();
@@ -1230,10 +1249,10 @@ namespace WPELibrary
                             preset.BCombinationSecondLength,
                             preset.BCombinationSecondInterval,
                             buffer => Socket_Operation.SendPacket(
-                                socket,
+                                route.Socket,
                                 preset.PacketType,
-                                preset.PacketFrom,
-                                preset.PacketTo,
+                                route.PacketFrom,
+                                route.PacketTo,
                                 buffer),
                             cancellationToken,
                             progress => this.PostByteSweepPresetProgress(
@@ -1244,10 +1263,10 @@ namespace WPELibrary
                             preset.BLength,
                             preset.BInterval,
                             buffer => Socket_Operation.SendPacket(
-                                socket,
+                                route.Socket,
                                 preset.PacketType,
-                                preset.PacketFrom,
-                                preset.PacketTo,
+                                route.PacketFrom,
+                                route.PacketTo,
                                 buffer),
                             cancellationToken,
                             progress => this.PostByteSweepPresetProgress(
@@ -1317,6 +1336,7 @@ namespace WPELibrary
 
             this.byteSweepParallelMode = this.tsByteSweepParallel != null &&
                 this.tsByteSweepParallel.Checked;
+            this.lastByteSweepRouteErrorCode = string.Empty;
 
             Socket_ByteSweepPresetInfo invalid = presets.FirstOrDefault(item => !item.IsValid);
             if (invalid != null)
@@ -1326,12 +1346,21 @@ namespace WPELibrary
             }
 
             Socket_ByteSweepPresetInfo unresolvedPreset;
-            Dictionary<Guid, int> presetSockets = ResolveByteSweepSockets(
+            Socket_Cache.SocketList.CurrentSocketRouteResolution unresolvedResolution;
+            Dictionary<Guid, Socket_Cache.SocketList.CurrentSocketRoute> presetRoutes =
+                ResolveByteSweepRoutes(
                 presets,
-                out unresolvedPreset);
-            if (presetSockets == null)
+                out unresolvedPreset,
+                out unresolvedResolution);
+            if (presetRoutes == null)
             {
-                error = UiText("UI_CurrentSocketRequired");
+                this.lastByteSweepRouteErrorCode = unresolvedResolution == null
+                    ? "runtime_not_connected"
+                    : unresolvedResolution.ErrorCode;
+                error = unresolvedResolution == null ||
+                    string.IsNullOrWhiteSpace(unresolvedResolution.ErrorMessage)
+                    ? UiText("UI_CurrentSocketRequired")
+                    : unresolvedResolution.ErrorMessage;
                 return false;
             }
 
@@ -1377,13 +1406,13 @@ namespace WPELibrary
             // revision and reject an otherwise valid action as stale.
             Socket_ByteSweepRuntime.Current.SetRevision(jobId, revision);
             Socket_ByteSweepRuntime.Current.MarkRunning(jobId);
-            execution = this.RunByteSweepPresetsAsync(presets, presetSockets, jobId);
+            execution = this.RunByteSweepPresetsAsync(presets, presetRoutes, jobId);
             return true;
         }
 
         private async Task RunByteSweepPresetsAsync(
             List<Socket_ByteSweepPresetInfo> presets,
-            Dictionary<Guid, int> presetSockets,
+            Dictionary<Guid, Socket_Cache.SocketList.CurrentSocketRoute> presetRoutes,
             Guid jobId)
         {
             Exception runtimeError = null;
@@ -1395,7 +1424,7 @@ namespace WPELibrary
                     Task<Socket_ByteSweepResult>[] tasks = presets
                         .Select(preset => this.ExecuteByteSweepPresetAsync(
                             preset,
-                            presetSockets[preset.BID],
+                            presetRoutes[preset.BID],
                             this.byteSweepCts.Token))
                         .ToArray();
                     Socket_ByteSweepResult[] results = await Task.WhenAll(tasks);
@@ -1411,7 +1440,8 @@ namespace WPELibrary
                     for (int presetIndex = 0; presetIndex < presets.Count; presetIndex++)
                     {
                         Socket_ByteSweepPresetInfo preset = presets[presetIndex];
-                        int socket = presetSockets[preset.BID];
+                        Socket_Cache.SocketList.CurrentSocketRoute route =
+                            presetRoutes[preset.BID];
                         if (this.byteSweepCts.IsCancellationRequested)
                         {
                             break;
@@ -1422,7 +1452,7 @@ namespace WPELibrary
 
                         Socket_ByteSweepResult result = await this.ExecuteByteSweepPresetAsync(
                             preset,
-                            socket,
+                            route,
                             this.byteSweepCts.Token);
                         this.byteSweepTotalSend += result.TotalSend;
                         this.byteSweepSuccess += result.Success;
@@ -1652,7 +1682,9 @@ namespace WPELibrary
                 out error,
                 revision))
             {
-                string errorCode = string.Equals(
+                string errorCode = !string.IsNullOrWhiteSpace(this.lastByteSweepRouteErrorCode)
+                    ? this.lastByteSweepRouteErrorCode
+                    : string.Equals(
                     error,
                     UiText("ByteSweep_RuntimeBusy"),
                     StringComparison.Ordinal)

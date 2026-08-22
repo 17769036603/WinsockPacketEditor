@@ -20,6 +20,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml.Linq;
 using Be.Windows.Forms;
+using WPELibrary.Lib.PetSkillBook;
 using WPELibrary.Lib.Vision;
 
 namespace WPELibrary.Lib
@@ -386,15 +387,31 @@ namespace WPELibrary.Lib
 
             #region//保存注入进程名称到数据库
 
-            public static void SaveSystemConfig_LastInjection_ToDB()
+            public static bool SaveSystemConfig_LastInjection_ToDB()
             {
                 try
                 {
-                    Socket_Cache.DataBase.UpdateTable_SystemConfig_LastInjection();
+                    bool saved = Socket_Cache.DataBase.ExecuteAtomicSave(
+                        () =>
+                        {
+                            if (!Socket_Cache.DataBase.UpdateTable_SystemConfig_LastInjection())
+                            {
+                                throw new InvalidOperationException("上次注入进程配置写入失败。");
+                            }
+                        },
+                        nameof(SaveSystemConfig_LastInjection_ToDB));
+                    if (!saved)
+                    {
+                        Socket_Operation.DoLog(
+                            nameof(SaveSystemConfig_LastInjection_ToDB),
+                            "上次注入进程配置保存失败，原数据库已保留。");
+                    }
+                    return saved;
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    return false;
                 }
             }
 
@@ -6602,6 +6619,129 @@ namespace WPELibrary.Lib
             public static FindOptions FindOptions = new FindOptions();
             public static Socket_PacketInfo spiSelect;
             public static BindingList<Socket_PacketInfo> lstRecPacket = new BindingList<Socket_PacketInfo>();
+            private static DateTime captureSessionStartedAt = DateTime.MinValue;
+
+            public enum CurrentSocketRouteStatus
+            {
+                Matched,
+                NotConnected,
+                Ambiguous
+            }
+
+            public sealed class CurrentSocketRoute
+            {
+                public int Socket { get; internal set; }
+                public Socket_Cache.SocketPacket.PacketType PacketType { get; internal set; }
+                public string PacketFrom { get; internal set; }
+                public string PacketTo { get; internal set; }
+                public DateTime CapturedAt { get; internal set; }
+            }
+
+            public sealed class CurrentSocketRouteResolution
+            {
+                public CurrentSocketRouteStatus Status { get; internal set; }
+                public CurrentSocketRoute Route { get; internal set; }
+                public List<CurrentSocketRoute> Candidates { get; internal set; } =
+                    new List<CurrentSocketRoute>();
+                public string ErrorMessage { get; internal set; }
+
+                public bool Succeeded
+                {
+                    get { return this.Status == CurrentSocketRouteStatus.Matched && this.Route != null; }
+                }
+
+                public string ErrorCode
+                {
+                    get
+                    {
+                        return this.Status == CurrentSocketRouteStatus.Ambiguous
+                            ? "runtime_route_ambiguous"
+                            : this.Status == CurrentSocketRouteStatus.NotConnected
+                                ? "runtime_not_connected"
+                                : string.Empty;
+                    }
+                }
+            }
+
+            public sealed class CurrentSocketRoutesResolution
+            {
+                public List<CurrentSocketRouteResolution> Items { get; internal set; } =
+                    new List<CurrentSocketRouteResolution>();
+                public int FailureIndex { get; internal set; } = -1;
+
+                public bool Succeeded
+                {
+                    get
+                    {
+                        return this.FailureIndex < 0 &&
+                            this.Items.Count > 0 &&
+                            this.Items.All(item => item != null && item.Succeeded);
+                    }
+                }
+
+                public CurrentSocketRouteResolution Failure
+                {
+                    get
+                    {
+                        return this.FailureIndex >= 0 && this.FailureIndex < this.Items.Count
+                            ? this.Items[this.FailureIndex]
+                            : null;
+                    }
+                }
+
+                public string ErrorCode
+                {
+                    get { return this.Failure == null ? string.Empty : this.Failure.ErrorCode; }
+                }
+
+                public string ErrorMessage
+                {
+                    get { return this.Failure == null ? string.Empty : this.Failure.ErrorMessage; }
+                }
+            }
+
+            public static void LogCurrentRouteResolution(
+                Guid presetId,
+                int packetIndex,
+                Socket_PacketInfo packetTemplate,
+                CurrentSocketRouteResolution resolution)
+            {
+                if (packetTemplate == null || resolution == null)
+                {
+                    return;
+                }
+
+                CurrentSocketRoute route = resolution.Route;
+                string currentFrom = route == null ? string.Empty : route.PacketFrom;
+                string currentTo = route == null ? string.Empty : route.PacketTo;
+                string reason = string.IsNullOrWhiteSpace(resolution.ErrorMessage)
+                    ? resolution.Status.ToString()
+                    : resolution.ErrorMessage;
+                Socket_Operation.DoLog(
+                    nameof(LogCurrentRouteResolution),
+                    string.Format(
+                        CultureInfo.CurrentCulture,
+                        "预设ID={0};封包序号={1};原源地址={2};原目标地址={3};当前源地址={4};当前目标地址={5};候选数量={6};状态={7};原因={8}",
+                        presetId == Guid.Empty ? "unknown" : presetId.ToString("D"),
+                        packetIndex,
+                        packetTemplate.PacketFrom ?? string.Empty,
+                        packetTemplate.PacketTo ?? string.Empty,
+                        currentFrom ?? string.Empty,
+                        currentTo ?? string.Empty,
+                        resolution.Candidates == null ? 0 : resolution.Candidates.Count,
+                        resolution.Status,
+                        reason));
+            }
+
+            public static DateTime CaptureSessionStartedAt
+            {
+                get { return captureSessionStartedAt; }
+            }
+
+            public static void BeginCaptureSession()
+            {
+                captureSessionStartedAt = DateTime.Now;
+            }
 
             public static int FindLatestMatchingSocket(
                 IEnumerable<Socket_PacketInfo> capturedPackets,
@@ -6681,6 +6821,209 @@ namespace WPELibrary.Lib
 
                 return Socket_Cache.System.ResolveSystemSocket(matchedSocket);
             }
+
+            public static CurrentSocketRouteResolution ResolveCurrentRoute(
+                Socket_PacketInfo packetTemplate)
+            {
+                List<Socket_PacketInfo> capturedPackets = CaptureCurrentPackets();
+                return ResolveCurrentRoute(packetTemplate, capturedPackets);
+            }
+
+            public static CurrentSocketRoutesResolution ResolveCurrentRoutes(
+                IEnumerable<Socket_PacketInfo> packetTemplates)
+            {
+                List<Socket_PacketInfo> templates = packetTemplates == null
+                    ? new List<Socket_PacketInfo>()
+                    : packetTemplates.ToList();
+                List<Socket_PacketInfo> capturedPackets = CaptureCurrentPackets();
+                CurrentSocketRoutesResolution result = new CurrentSocketRoutesResolution();
+
+                for (int index = 0; index < templates.Count; index++)
+                {
+                    CurrentSocketRouteResolution resolution = ResolveCurrentRoute(
+                        templates[index],
+                        capturedPackets);
+                    result.Items.Add(resolution);
+                    if (!resolution.Succeeded && result.FailureIndex < 0)
+                    {
+                        result.FailureIndex = index;
+                    }
+                }
+
+                return result;
+            }
+
+            private static CurrentSocketRouteResolution ResolveCurrentRoute(
+                Socket_PacketInfo packetTemplate,
+                IEnumerable<Socket_PacketInfo> capturedPackets)
+            {
+                CurrentSocketRouteResolution result = new CurrentSocketRouteResolution();
+                if (packetTemplate == null)
+                {
+                    result.Status = CurrentSocketRouteStatus.NotConnected;
+                    result.ErrorMessage = "当前发送封包为空，无法解析对应连接。";
+                    return result;
+                }
+
+                List<CurrentSocketRoute> candidates = (capturedPackets ?? Enumerable.Empty<Socket_PacketInfo>())
+                    .Where(item => item != null &&
+                        item.PacketSocket > 0 &&
+                        item.PacketType == packetTemplate.PacketType &&
+                        (captureSessionStartedAt == DateTime.MinValue ||
+                         item.PacketTime >= captureSessionStartedAt))
+                    .Select(CreateCurrentSocketRoute)
+                    .Where(item => item != null)
+                    .GroupBy(item => new
+                    {
+                        item.Socket,
+                        item.PacketType,
+                        From = (item.PacketFrom ?? string.Empty).Trim().ToUpperInvariant(),
+                        To = (item.PacketTo ?? string.Empty).Trim().ToUpperInvariant()
+                    })
+                    .Select(group => group
+                        .OrderByDescending(item => item.CapturedAt)
+                        .First())
+                    .ToList();
+
+                string templateTo = (packetTemplate.PacketTo ?? string.Empty).Trim();
+                List<CurrentSocketRoute> exactCandidates = string.IsNullOrWhiteSpace(templateTo)
+                    ? new List<CurrentSocketRoute>()
+                    : candidates
+                        .Where(item => string.Equals(
+                            templateTo,
+                            (item.PacketTo ?? string.Empty).Trim(),
+                            StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                if (exactCandidates.Count > 0)
+                {
+                    candidates = exactCandidates;
+                }
+
+                result.Candidates = candidates;
+                if (candidates.Count == 0)
+                {
+                    result.Status = CurrentSocketRouteStatus.NotConnected;
+                    result.ErrorMessage = string.Format(
+                        CultureInfo.CurrentCulture,
+                        "未找到封包类型 {0} 对应的当前连接。",
+                        packetTemplate.PacketType);
+                    return result;
+                }
+
+                if (candidates.Count > 1)
+                {
+                    result.Status = CurrentSocketRouteStatus.Ambiguous;
+                    result.ErrorMessage = string.Format(
+                        CultureInfo.CurrentCulture,
+                        "封包类型 {0} 存在 {1} 个候选连接，无法安全判断目标。",
+                        packetTemplate.PacketType,
+                        candidates.Count);
+                    return result;
+                }
+
+                result.Status = CurrentSocketRouteStatus.Matched;
+                result.Route = candidates[0];
+                return result;
+            }
+
+            private static List<Socket_PacketInfo> CaptureCurrentPackets()
+            {
+                List<Socket_PacketInfo> capturedPackets = new List<Socket_PacketInfo>();
+                Action capture = () =>
+                {
+                    capturedPackets = lstRecPacket
+                        .Where(item => item != null)
+                        .ToList();
+                };
+
+                try
+                {
+                    if (Socket_Cache.System.InvokeAction != null)
+                    {
+                        Socket_Cache.System.InvokeAction(capture);
+                    }
+                    else
+                    {
+                        capture();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(CaptureCurrentPackets), ex.Message);
+                }
+
+                return capturedPackets;
+            }
+
+            private static CurrentSocketRoute CreateCurrentSocketRoute(Socket_PacketInfo captured)
+            {
+                CurrentSocketRoute route = new CurrentSocketRoute
+                {
+                    Socket = captured.PacketSocket,
+                    PacketType = captured.PacketType,
+                    PacketFrom = captured.PacketFrom ?? string.Empty,
+                    PacketTo = captured.PacketTo ?? string.Empty,
+                    CapturedAt = captured.PacketTime
+                };
+
+                string currentFrom = Socket_Operation.GetIP_BySocket(
+                    captured.PacketSocket,
+                    Socket_Cache.SocketPacket.IPType.From);
+                if (!IsUsableSocketAddress(currentFrom))
+                {
+                    return null;
+                }
+
+                if (!string.IsNullOrWhiteSpace(currentFrom))
+                {
+                    route.PacketFrom = currentFrom;
+                }
+
+                if (IsConnectedPacketType(captured.PacketType))
+                {
+                    string currentTo = Socket_Operation.GetIP_BySocket(
+                        captured.PacketSocket,
+                        Socket_Cache.SocketPacket.IPType.To);
+                    if (!IsUsableSocketAddress(currentTo))
+                    {
+                        return null;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(currentTo))
+                    {
+                        route.PacketTo = currentTo;
+                    }
+                }
+
+                return route;
+            }
+
+            private static bool IsUsableSocketAddress(string address)
+            {
+                return !string.IsNullOrWhiteSpace(address) &&
+                    !string.Equals(
+                        address.Trim(),
+                        "0.0.0.0:0",
+                        StringComparison.OrdinalIgnoreCase);
+            }
+
+            private static bool IsConnectedPacketType(
+                Socket_Cache.SocketPacket.PacketType packetType)
+            {
+                switch (packetType)
+                {
+                    case Socket_Cache.SocketPacket.PacketType.WS1_Send:
+                    case Socket_Cache.SocketPacket.PacketType.WS2_Send:
+                    case Socket_Cache.SocketPacket.PacketType.WS1_Recv:
+                    case Socket_Cache.SocketPacket.PacketType.WS2_Recv:
+                    case Socket_Cache.SocketPacket.PacketType.WSASend:
+                    case Socket_Cache.SocketPacket.PacketType.WSARecv:
+                    case Socket_Cache.SocketPacket.PacketType.WSARecvEx:
+                        return true;
+                    default:
+                        return false;
+                }
+            }
        
             #region//封包入列表
 
@@ -6696,6 +7039,11 @@ namespace WPELibrary.Lib
                             SocketQueue.qSocket_PacketInfo.TryDequeue(out Socket_PacketInfo spi))
                         {
                             processed++;
+                            // Keep the treasure preset independent from the
+                            // bounded UI display list and its auto-clear.
+                            // Only the runtime's validated 0x5828/0x783A
+                            // packets are retained by this observer.
+                            TreasurePacketRuntime.ObserveCapturedPacket(spi);
                             bool bIsShow = Socket_Operation.IsShowSocketPacket_ByFilter(spi);
                             if (bIsShow)
                             {
@@ -6874,7 +7222,7 @@ namespace WPELibrary.Lib
 
                 try
                 {
-                    foreach (Socket_FilterInfo sfi in Socket_Cache.FilterList.lstFilter)
+                    foreach (Socket_FilterInfo sfi in Socket_Cache.FilterList.SnapshotForExecution())
                     {
                         if (sfi.ExecutionCount > 0)
                         {
@@ -8786,7 +9134,79 @@ namespace WPELibrary.Lib
         public static class FilterList
         {  
             public static string AESKey = string.Empty;
-            public static BindingList<Socket_FilterInfo> lstFilter = new BindingList<Socket_FilterInfo>();            
+            public static BindingList<Socket_FilterInfo> lstFilter = new BindingList<Socket_FilterInfo>();
+            private static readonly object FilterListSync = new object();
+            private static readonly ConcurrentDictionary<Guid, FilterRuntimeState> FilterRuntimeStates =
+                new ConcurrentDictionary<Guid, FilterRuntimeState>();
+
+            internal sealed class FilterRuntimeState
+            {
+                internal readonly object Sync = new object();
+                internal int ExecutionCount;
+                internal int ProgressionCount;
+                internal bool IsProgressionDone;
+
+                internal FilterRuntimeState(Socket_FilterInfo filter)
+                {
+                    this.ExecutionCount = filter == null ? 0 : filter.ExecutionCount;
+                    this.ProgressionCount = filter == null ? 0 : filter.ProgressionCount;
+                    this.IsProgressionDone = filter != null && filter.IsProgressionDone;
+                }
+            }
+
+            internal static List<Socket_FilterInfo> SnapshotForExecution()
+            {
+                lock (FilterListSync)
+                {
+                    List<Socket_FilterInfo> snapshot = new List<Socket_FilterInfo>();
+                    foreach (Socket_FilterInfo item in lstFilter)
+                    {
+                        if (item == null)
+                        {
+                            continue;
+                        }
+
+                        Socket_FilterInfo copy = item.Clone();
+                        FilterRuntimeState runtimeState = GetRuntimeState(item);
+                        lock (runtimeState.Sync)
+                        {
+                            copy.ExecutionCount = runtimeState.ExecutionCount;
+                            copy.ProgressionCount = runtimeState.ProgressionCount;
+                            copy.IsProgressionDone = runtimeState.IsProgressionDone;
+                        }
+                        snapshot.Add(copy);
+                    }
+                    return snapshot;
+                }
+            }
+
+            internal static List<Socket_FilterInfo> SnapshotForPersistence()
+            {
+                lock (FilterListSync)
+                {
+                    return lstFilter
+                        .Where(item => item != null)
+                        .Select(item => item.Clone())
+                        .ToList();
+                }
+            }
+
+            internal static FilterRuntimeState GetRuntimeState(Socket_FilterInfo filter)
+            {
+                if (filter == null)
+                {
+                    return new FilterRuntimeState(null);
+                }
+
+                return FilterRuntimeStates.GetOrAdd(
+                    filter.FID,
+                    id => new FilterRuntimeState(filter));
+            }
+
+            private static void ResetRuntimeStates()
+            {
+                FilterRuntimeStates.Clear();
+            }
 
             #region//滤镜入列表
 
@@ -8798,12 +9218,18 @@ namespace WPELibrary.Lib
                     {
                         Socket_Cache.System.InvokeAction(() =>
                         {
-                            Socket_Cache.FilterList.lstFilter.Add(sfi);
+                            lock (FilterListSync)
+                            {
+                                Socket_Cache.FilterList.lstFilter.Add(sfi);
+                            }
                         });
                     }
                     else
                     {
-                        Socket_Cache.FilterList.lstFilter.Add(sfi);
+                        lock (FilterListSync)
+                        {
+                            Socket_Cache.FilterList.lstFilter.Add(sfi);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -8819,15 +9245,45 @@ namespace WPELibrary.Lib
                     return false;
                 }
 
-                List<Socket_FilterInfo> originalFilters = lstFilter.ToList();
-                List<Socket_FilterInfo> originalValues = originalFilters
-                    .Select(item => item == null ? null : item.Clone())
-                    .ToList();
+                List<Socket_FilterInfo> originalFilters;
+                List<Socket_FilterInfo> originalValues;
+
+                lock (FilterListSync)
+                {
+                    originalFilters = lstFilter.ToList();
+                    originalValues = originalFilters
+                        .Select(item => item == null ? null : item.Clone())
+                        .ToList();
+                }
 
                 try
                 {
-                    mutation();
-                    if (SaveFilterList_ToDB())
+                    bool saved;
+                    // Some filter creation paths originate on the capture
+                    // worker and synchronously marshal the BindingList change
+                    // to the UI thread. Dispatch before taking the lock so the
+                    // worker never waits for a UI callback while owning it.
+                    Action executeMutation = () =>
+                    {
+                        lock (FilterListSync)
+                        {
+                            mutation();
+                        }
+                    };
+                    if (Socket_Cache.System.InvokeAction != null)
+                    {
+                        Socket_Cache.System.InvokeAction(executeMutation);
+                    }
+                    else
+                    {
+                        executeMutation();
+                    }
+
+                    lock (FilterListSync)
+                    {
+                        saved = SaveFilterList_ToDB();
+                    }
+                    if (saved)
                     {
                         return true;
                     }
@@ -8839,26 +9295,30 @@ namespace WPELibrary.Lib
                         ex.Message);
                 }
 
-                for (int index = 0; index < originalFilters.Count; index++)
+                lock (FilterListSync)
                 {
-                    if (originalFilters[index] != null && originalValues[index] != null)
+                    for (int index = 0; index < originalFilters.Count; index++)
                     {
-                        originalFilters[index].CopyFrom(originalValues[index]);
+                        if (originalFilters[index] != null && originalValues[index] != null)
+                        {
+                            originalFilters[index].CopyFrom(originalValues[index]);
+                        }
                     }
-                }
-                lstFilter.RaiseListChangedEvents = false;
-                try
-                {
-                    lstFilter.Clear();
-                    foreach (Socket_FilterInfo filter in originalFilters)
+
+                    lstFilter.RaiseListChangedEvents = false;
+                    try
                     {
-                        lstFilter.Add(filter);
+                        lstFilter.Clear();
+                        foreach (Socket_FilterInfo filter in originalFilters)
+                        {
+                            lstFilter.Add(filter);
+                        }
                     }
-                }
-                finally
-                {
-                    lstFilter.RaiseListChangedEvents = true;
-                    lstFilter.ResetBindings();
+                    finally
+                    {
+                        lstFilter.RaiseListChangedEvents = true;
+                        lstFilter.ResetBindings();
+                    }
                 }
                 return false;
             }
@@ -8871,10 +9331,15 @@ namespace WPELibrary.Lib
             {
                 try
                 {
-                    foreach (Socket_FilterInfo sfi in lstFilter)
+                    lock (FilterListSync)
                     {
-                        sfi.ExecutionCount = 0;
-                        sfi.ProgressionCount = 0;
+                        ResetRuntimeStates();
+                        foreach (Socket_FilterInfo sfi in lstFilter)
+                        {
+                            sfi.ExecutionCount = 0;
+                            sfi.ProgressionCount = 0;
+                            sfi.IsProgressionDone = false;
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -8912,7 +9377,11 @@ namespace WPELibrary.Lib
             {
                 try
                 {
-                    lstFilter.Clear();
+                    lock (FilterListSync)
+                    {
+                        lstFilter.Clear();
+                        ResetRuntimeStates();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -9060,7 +9529,8 @@ namespace WPELibrary.Lib
 
                 try
                 {
-                    var filters = Socket_Cache.FilterList.lstFilter;
+                    List<Socket_FilterInfo> filters =
+                        Socket_Cache.FilterList.SnapshotForExecution();
                     for (int i = 0; i < filters.Count; i++)
                     {
                         var sfi = filters[i];
@@ -9088,10 +9558,20 @@ namespace WPELibrary.Lib
                             continue;
                         }
                         
-                        byte[] tempBuffer = null;
-
-                        switch (sfi.FAction)
+                        Socket_Cache.FilterList.FilterRuntimeState runtimeState =
+                            Socket_Cache.FilterList.GetRuntimeState(sfi);
+                        lock (runtimeState.Sync)
                         {
+                            sfi.ExecutionCount = runtimeState.ExecutionCount;
+                            sfi.ProgressionCount = runtimeState.ProgressionCount;
+                            sfi.IsProgressionDone = runtimeState.IsProgressionDone;
+
+                            try
+                            {
+                                byte[] tempBuffer = null;
+
+                                switch (sfi.FAction)
+                                {
                             case Filter.FilterAction.Replace:
 
                                 sfi.IsProgressionDone = false;
@@ -9143,10 +9623,10 @@ namespace WPELibrary.Lib
                                 bBreak = true;
 
                                 break;
-                        }
+                                }
 
-                        if (bDoFilter)
-                        {
+                                if (bDoFilter)
+                                {
                             faReturn = sfi.FAction;
                             sfi.ExecutionCount++;
                             Interlocked.Increment(ref Socket_Cache.Filter.FilterExecute_CNT);
@@ -9241,16 +9721,24 @@ namespace WPELibrary.Lib
                             {
                                 bBreak = true;
                             }
-                        }
+                                }
 
-                        if (bBreak)
-                        {
-                            if (bNewBuffer == null)
-                            {
-                                bNewBuffer = bufferSpan.ToArray();
+                                if (bBreak)
+                                {
+                                    if (bNewBuffer == null)
+                                    {
+                                        bNewBuffer = bufferSpan.ToArray();
+                                    }
+
+                                    return faReturn;
+                                }
                             }
-
-                            return faReturn;
+                            finally
+                            {
+                                runtimeState.ExecutionCount = sfi.ExecutionCount;
+                                runtimeState.ProgressionCount = sfi.ProgressionCount;
+                                runtimeState.IsProgressionDone = sfi.IsProgressionDone;
+                            }
                         }
                     }
                 }
@@ -9280,7 +9768,7 @@ namespace WPELibrary.Lib
                         {
                             Socket_Cache.DataBase.DeleteTable_Filter();
 
-                            foreach (Socket_FilterInfo sfi in Socket_Cache.FilterList.lstFilter)
+                            foreach (Socket_FilterInfo sfi in Socket_Cache.FilterList.SnapshotForPersistence())
                             {
                                 Socket_Cache.DataBase.InsertTable_Filter(sfi);
                             }
@@ -9847,6 +10335,8 @@ namespace WPELibrary.Lib
         public static class Robot
         {
             public const string VisionInstructionContentPrefix = "VisionStep|";
+            public const string TreasureMapPresetName = "自动藏宝图";
+            public const string SummonedPetSkillBookPresetName = "召唤兽技能";
 
             #region//结构定义
 
@@ -9886,6 +10376,8 @@ namespace WPELibrary.Lib
                 SendSocketList = 6,
                 SetSystemSocket = 7,
                 VisionWait = 8,
+                TreasureMap = 9,
+                SummonedPetSkillBook = 10,
             }
 
             #endregion
@@ -9907,6 +10399,78 @@ namespace WPELibrary.Lib
                 }
 
                 return dtInstructions;
+            }
+
+            public static DataTable CreateTreasureMapPresetInstructions()
+            {
+                DataTable instructions = Socket_Cache.Robot.InitInstructions();
+                DataRow row = instructions.NewRow();
+                row["Type"] = Socket_Cache.Robot.InstructionType.TreasureMap;
+                row["Content"] = TreasureMapInstructionCodec.Encode(
+                    TreasureMapExecutionMode.Continuous);
+                instructions.Rows.Add(row);
+                return instructions;
+            }
+
+            public static DataTable CreateSummonedPetSkillBookPresetInstructions()
+            {
+                DataTable instructions = Socket_Cache.Robot.InitInstructions();
+                foreach (SummonedPetSkillBookPresetStep step in
+                    SummonedPetSkillBookPresetPlan.GetSteps())
+                {
+                    DataRow row = instructions.NewRow();
+                    row["Type"] = Socket_Cache.Robot.InstructionType.SummonedPetSkillBook;
+                    row["Content"] = SummonedPetSkillBookPresetPlan.EncodeStep(step);
+                    instructions.Rows.Add(row);
+                }
+                return instructions;
+            }
+
+            public static bool EnsureBuiltInTreasureMapPreset(Socket_RobotInfo robot)
+            {
+                if (robot == null ||
+                    !string.Equals(
+                        (robot.RName ?? string.Empty).Trim(),
+                        TreasureMapPresetName,
+                        StringComparison.Ordinal) ||
+                    robot.RInstruction == null ||
+                    robot.RInstruction.Rows.Count != 0)
+                {
+                    return false;
+                }
+
+                robot.RInstruction = CreateTreasureMapPresetInstructions();
+                return true;
+            }
+
+            public static bool EnsureBuiltInSummonedPetSkillBookPreset()
+            {
+                Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot
+                    .FirstOrDefault(item => item != null &&
+                        string.Equals(
+                            (item.RName ?? string.Empty).Trim(),
+                            SummonedPetSkillBookPresetName,
+                            StringComparison.Ordinal));
+                if (robot != null)
+                {
+                    if (robot.RInstruction == null || robot.RInstruction.Rows.Count == 0)
+                    {
+                        robot.RInstruction = CreateSummonedPetSkillBookPresetInstructions();
+                        return true;
+                    }
+                    return false;
+                }
+
+                Guid presetId = Guid.NewGuid();
+                AddRobot(
+                    false,
+                    presetId,
+                    SummonedPetSkillBookPresetName,
+                    CreateSummonedPetSkillBookPresetInstructions(),
+                    "常用",
+                    false);
+                return Socket_Cache.RobotList.lstRobot.Any(item =>
+                    item != null && item.RID == presetId);
             }
 
             #endregion
@@ -9937,11 +10501,27 @@ namespace WPELibrary.Lib
 
             public static void AddRobot(bool IsEnable, Guid RID, string RName, DataTable RInstructions, string RFolder)
             {
+                AddRobot(IsEnable, RID, RName, RInstructions, RFolder, false);
+            }
+
+            public static void AddRobot(
+                bool IsEnable,
+                Guid RID,
+                string RName,
+                DataTable RInstructions,
+                string RFolder,
+                bool treasureLiveSendAuthorized)
+            {
                 try
                 {
                     if (RID != Guid.Empty && !string.IsNullOrEmpty(RName))
                     {
-                        Socket_RobotInfo sri = new Socket_RobotInfo(IsEnable, RID, RName, RInstructions);
+                        Socket_RobotInfo sri = new Socket_RobotInfo(
+                            IsEnable,
+                            RID,
+                            RName,
+                            RInstructions,
+                            treasureLiveSendAuthorized);
                         sri.RFolder = RFolder;
                         Socket_Cache.RobotList.RobotToList(sri);
                     }
@@ -9985,7 +10565,13 @@ namespace WPELibrary.Lib
                     string RName_Copy = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_62), sri.RName);
                     DataTable RInstruction_Copy = sri.RInstruction.Copy();
 
-                    Socket_Cache.Robot.AddRobot(IsEnable, RID_New, RName_Copy, RInstruction_Copy, sri.RFolder);
+                    Socket_Cache.Robot.AddRobot(
+                        IsEnable,
+                        RID_New,
+                        RName_Copy,
+                        RInstruction_Copy,
+                        sri.RFolder,
+                        sri.TreasureLiveSendAuthorized);
                     Socket_RobotInfo copiedRobot = Socket_Cache.RobotList.lstRobot
                         .FirstOrDefault(item => item.RID == RID_New);
                     if (copiedRobot != null && sri.VisionProfile != null)
@@ -10081,6 +10667,15 @@ namespace WPELibrary.Lib
                         case Socket_Cache.Robot.InstructionType.VisionWait:
                             sReturn = MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_239);
                             break;
+
+                        case Socket_Cache.Robot.InstructionType.TreasureMap:
+                            sReturn = "藏宝图流程";
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.SummonedPetSkillBook:
+                            sReturn = "召唤兽技能步骤";
+                            break;
+
                     }
                 }
                 catch (Exception ex)
@@ -10138,6 +10733,15 @@ namespace WPELibrary.Lib
                         case Socket_Cache.Robot.InstructionType.VisionWait:
                             cReturn = Color.MediumPurple;
                             break;
+
+                        case Socket_Cache.Robot.InstructionType.TreasureMap:
+                            cReturn = Color.DarkGoldenrod;
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.SummonedPetSkillBook:
+                            cReturn = Color.CornflowerBlue;
+                            break;
+
                     }
                 }
                 catch (Exception ex)
@@ -10332,6 +10936,23 @@ namespace WPELibrary.Lib
                                     ? MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_239)
                                     : visionName);
                             break;
+
+                        case Socket_Cache.Robot.InstructionType.TreasureMap:
+                            sReturn = "读取 C6 坐标 → 跳转 → 使用藏宝图";
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.SummonedPetSkillBook:
+                            SummonedPetSkillBookPresetStep step;
+                            if (SummonedPetSkillBookPresetPlan.TryDecodeStep(sContent, out step))
+                            {
+                                sReturn = step.DisplayText;
+                            }
+                            else
+                            {
+                                sReturn = "召唤兽技能：无效步骤内容（已拒绝执行）";
+                            }
+                            break;
+
                     }
                 }
                 catch (Exception ex)
@@ -10415,7 +11036,9 @@ namespace WPELibrary.Lib
                 {
                     if (dtRInstruction != null && dtRInstruction.Rows.Count > 0)
                     {
-                        List<int> listSendSendList = new List<int>();                 
+                        List<int> listSendSendList = new List<int>();
+                        List<int> listTreasureMap = new List<int>();
+                        List<int> listSummonedPetSkillBook = new List<int>();
 
                         for (int i = 0; i < dtRInstruction.Rows.Count; i++)
                         {
@@ -10433,6 +11056,14 @@ namespace WPELibrary.Lib
                                 case Socket_Cache.Robot.InstructionType.SendSendList:
                                     listSendSendList.Add(i);
                                     break;                      
+
+                                case Socket_Cache.Robot.InstructionType.TreasureMap:
+                                    listTreasureMap.Add(i);
+                                    break;
+
+                                case Socket_Cache.Robot.InstructionType.SummonedPetSkillBook:
+                                    listSummonedPetSkillBook.Add(i);
+                                    break;
 
                             }                      
                         }
@@ -10473,6 +11104,51 @@ namespace WPELibrary.Lib
                         }                      
 
                         #endregion
+
+                        if (listTreasureMap.Count > 1)
+                        {
+                            return listTreasureMap[1];
+                        }
+
+                        foreach (int treasureIndex in listTreasureMap)
+                        {
+                            WPELibrary.Lib.Vision.TreasureMapInstructionDefinition treasureDefinition;
+                            if (!WPELibrary.Lib.Vision.TreasureMapInstructionCodec.TryDecode(
+                                dtRInstruction.Rows[treasureIndex]["Content"].ToString(),
+                                out treasureDefinition))
+                            {
+                                return treasureIndex;
+                            }
+
+                            if (treasureDefinition.Mode ==
+                                WPELibrary.Lib.Vision.TreasureMapExecutionMode.Continuous &&
+                                treasureIndex != dtRInstruction.Rows.Count - 1)
+                            {
+                                return treasureIndex;
+                            }
+                        }
+
+                        if (listSummonedPetSkillBook.Count > 0)
+                        {
+                            if (listSummonedPetSkillBook.Count != dtRInstruction.Rows.Count)
+                            {
+                                return listSummonedPetSkillBook[0];
+                            }
+
+                            for (int stepIndex = 0; stepIndex < listSummonedPetSkillBook.Count; stepIndex++)
+                            {
+                                int rowIndex = listSummonedPetSkillBook[stepIndex];
+                                SummonedPetSkillBookPresetStep step;
+                                if (rowIndex != stepIndex ||
+                                    !SummonedPetSkillBookPresetPlan.TryDecodeStep(
+                                        dtRInstruction.Rows[rowIndex]["Content"].ToString(),
+                                        out step) ||
+                                    step.Index != stepIndex + 1)
+                                {
+                                    return rowIndex;
+                                }
+                            }
+                        }
 
                         #region//检测循环指令
 
@@ -10554,14 +11230,14 @@ namespace WPELibrary.Lib
                 return Task.Run(() => DoRobotAsync(RID, parameters)).GetAwaiter().GetResult();
             }
 
-            private static void DoRobot_ByIndex(int RobotListIndex)
+            private static async void DoRobot_ByIndex(int RobotListIndex)
             {
                 try
                 {
                     if (RobotListIndex > -1 && RobotListIndex < Socket_Cache.RobotList.lstRobot.Count)
                     {
                         Guid RID = Socket_Cache.RobotList.lstRobot[RobotListIndex].RID;                        
-                        Task.Run(() => DoRobotAsync(RID, null)).GetAwaiter().GetResult();
+                        await DoRobotAsync(RID, null);
                     }
                 }
                 catch (Exception ex)
@@ -10570,7 +11246,7 @@ namespace WPELibrary.Lib
                 }
             }
 
-            private static async Task<Socket_Robot> DoRobotAsync(Guid RID, Dictionary<string, object> parameters)
+            public static async Task<Socket_Robot> DoRobotAsync(Guid RID, Dictionary<string, object> parameters)
             {
                 Socket_Robot srReturn = null;
 
@@ -11049,6 +11725,8 @@ namespace WPELibrary.Lib
                         Socket_Cache.RobotList.lstFolders.Insert(0, "常用");
                     }
 
+                    bool repairedTreasureMapPreset = false;
+                    bool createdSummonedPetSkillBookPreset = false;
                     bool removedObsoleteMountSpeedPreset = false;
                     foreach (DataRow dataRow in dtRobot.Rows)
                     {
@@ -11066,6 +11744,9 @@ namespace WPELibrary.Lib
                         string RFolder = dataRow.Table.Columns.Contains("Folder")
                             ? dataRow["Folder"].ToString()
                             : "常用";
+                        bool treasureLiveSendAuthorized = dataRow.Table.Columns.Contains("TreasureLiveSendAuthorized") &&
+                            dataRow["TreasureLiveSendAuthorized"] != DBNull.Value &&
+                            Convert.ToBoolean(dataRow["TreasureLiveSendAuthorized"]);
 
 
                         DataTable RInstruction = Socket_Cache.Robot.InitInstructions();
@@ -11084,7 +11765,13 @@ namespace WPELibrary.Lib
                             RInstruction.Rows.Add(dr);
                         }
 
-                        Socket_Cache.Robot.AddRobot(IsEnable, RID, RName, RInstruction, RFolder);
+                        Socket_Cache.Robot.AddRobot(
+                            IsEnable,
+                            RID,
+                            RName,
+                            RInstruction,
+                            RFolder,
+                            treasureLiveSendAuthorized);
 
                         Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot
                             .FirstOrDefault(item => item.RID == RID);
@@ -11164,20 +11851,57 @@ namespace WPELibrary.Lib
                         }
 
                         LoadVisionAssistantSteps(RID, robot);
+
+                        // 读取召唤兽技能书预设 JSON
+                        if (robot != null)
+                        {
+                            DataTable dtPreset = Socket_Cache.DataBase.SelectTable_RobotSummonedPetPreset(RID);
+                            if (dtPreset != null && dtPreset.Rows.Count > 0)
+                            {
+                                string presetJson = dtPreset.Rows[0]["PresetJson"].ToString();
+                                if (!string.IsNullOrWhiteSpace(presetJson))
+                                {
+                                    SummonedPetSkillBookPreset loadedPreset;
+                                    string presetError;
+                                    if (SummonedPetSkillBookPresetSerializer.TryDeserialize(
+                                        presetJson, out loadedPreset, out presetError))
+                                    {
+                                        robot.SummonedPetSkillBookPreset = loadedPreset;
+                                    }
+                                    else
+                                    {
+                                        Socket_Operation.DoLog(
+                                            nameof(LoadRobotList_FromDB),
+                                            "召唤兽技能书预设加载失败: " + presetError);
+                                    }
+                                }
+                            }
+                        }
+
+                        if (Socket_Cache.Robot.EnsureBuiltInTreasureMapPreset(robot))
+                        {
+                            repairedTreasureMapPreset = true;
+                        }
                     }
-                    if (removedObsoleteMountSpeedPreset &&
-                        !Socket_Cache.RobotList.SaveRobotList_ToDB())
-                    {
-                        Socket_Operation.DoLog(
-                            nameof(LoadRobotList_FromDB),
-                            "已移除废弃的坐机速度预设，但数据库保存失败。");
-                    }
+
+                    createdSummonedPetSkillBookPreset =
+                        Socket_Cache.Robot.EnsureBuiltInSummonedPetSkillBookPreset();
+
                     foreach (Socket_RobotInfo robot in Socket_Cache.RobotList.lstRobot)
                     {
                         if (!Socket_Cache.RobotList.lstFolders.Contains(robot.RFolder))
                         {
                             Socket_Cache.RobotList.lstFolders.Add(robot.RFolder);
                         }
+                    }
+                    if ((repairedTreasureMapPreset ||
+                         createdSummonedPetSkillBookPreset ||
+                         removedObsoleteMountSpeedPreset) &&
+                        !Socket_Cache.RobotList.SaveRobotList_ToDB())
+                    {
+                        Socket_Operation.DoLog(
+                            nameof(LoadRobotList_FromDB),
+                            "内置机器人预设已在内存修复，但数据库保存失败。");
                     }
                 }
                 catch (Exception ex)
@@ -11467,7 +12191,8 @@ namespace WPELibrary.Lib
                             new XElement("IsEnable", IsEnable),
                             new XElement("ID", sRID),
                             new XElement("Name", sRName),
-                            new XElement("Folder", sri.RFolder)
+                            new XElement("Folder", sri.RFolder),
+                            new XElement("TreasureLiveSendAuthorized", sri.TreasureLiveSendAuthorized)
                             );
 
                         if (dtRInstruction.Rows.Count > 0)
@@ -11799,6 +12524,14 @@ namespace WPELibrary.Lib
                             RFolder = xeRobot.Element("Folder").Value;
                         }
 
+                        bool treasureLiveSendAuthorized = false;
+                        if (xeRobot.Element("TreasureLiveSendAuthorized") != null)
+                        {
+                            bool.TryParse(
+                                xeRobot.Element("TreasureLiveSendAuthorized").Value,
+                                out treasureLiveSendAuthorized);
+                        }
+
                         DataTable RInstruction = Socket_Cache.Robot.InitInstructions();
                         if (xeRobot.Element("Instructions") != null)
                         {
@@ -11815,7 +12548,13 @@ namespace WPELibrary.Lib
                             }
                         }
 
-                        Socket_Cache.Robot.AddRobot(IsEnable, RID, RName, RInstruction, RFolder);
+                        Socket_Cache.Robot.AddRobot(
+                            IsEnable,
+                            RID,
+                            RName,
+                            RInstruction,
+                            RFolder,
+                            treasureLiveSendAuthorized);
                         Socket_RobotInfo importedRobot = Socket_Cache.RobotList.lstRobot
                             .FirstOrDefault(item => item.RID == RID);
                         XElement xeVision = xeRobot.Element("VisionProfile");
@@ -12760,27 +13499,50 @@ namespace WPELibrary.Lib
                         packet.VariableBindings.Clear();
                     }
 
-                    // A saved preset's PacketSocket is tied to the connection that
-                    // produced the capture.  Reuse the current matching socket for
-                    // every preset, including legacy non-system-socket presets;
-                    // otherwise a reconnect can make the worker report completed
-                    // while sending through a stale handle.
-                    int resolvedSocket = Socket_Cache.SocketList.ResolveCurrentSocket(sendCollection);
-                    if (resolvedSocket <= 0)
+                    Socket_Cache.SocketList.CurrentSocketRoutesResolution routeResolution =
+                        Socket_Cache.SocketList.ResolveCurrentRoutes(sendCollection);
+                    for (int index = 0; index < routeResolution.Items.Count; index++)
                     {
-                        Socket_Operation.DoLog(
-                            nameof(DoSendWithResultAsync),
-                            MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_49));
+                        Socket_Cache.SocketList.LogCurrentRouteResolution(
+                            SID,
+                            index + 1,
+                            sendCollection[index],
+                            routeResolution.Items[index]);
+                    }
+                    if (!routeResolution.Succeeded)
+                    {
+                        int failureIndex = routeResolution.FailureIndex < 0
+                            ? 0
+                            : routeResolution.FailureIndex;
+                        string routeError = string.IsNullOrWhiteSpace(routeResolution.ErrorMessage)
+                            ? "未找到当前预设对应的实时连接。"
+                            : routeResolution.ErrorMessage;
+                        string detail = string.Format(
+                            CultureInfo.CurrentCulture,
+                            "发送预设第 {0} 个封包无法解析当前连接：{1}",
+                            failureIndex + 1,
+                            routeError);
+                        Socket_Operation.DoLog(nameof(DoSendWithResultAsync), detail);
                         return SendStartResult.Failed(
-                            "未找到与当前预设匹配的目标套接字。请先让目标程序产生对应封包，并确认电脑端已捕获。",
-                            "runtime_not_connected");
+                            detail,
+                            string.IsNullOrWhiteSpace(routeResolution.ErrorCode)
+                                ? "runtime_not_connected"
+                                : routeResolution.ErrorCode);
+                    }
+
+                    for (int index = 0; index < sendCollection.Count; index++)
+                    {
+                        Socket_Cache.SocketList.CurrentSocketRoute route =
+                            routeResolution.Items[index].Route;
+                        sendCollection[index].PacketSocket = route.Socket;
+                        sendCollection[index].PacketFrom = route.PacketFrom;
+                        sendCollection[index].PacketTo = route.PacketTo;
                     }
 
                     ssReturn = new Socket_Send();
                     bool started = false;
-                    await Task.Run(() => started = ssReturn.StartSend(
+                    await Task.Run(() => started = ssReturn.StartSendWithPacketSockets(
                         sendName,
-                        resolvedSocket,
                         loopCount,
                         loopInterval,
                         sendCollection));
@@ -14616,6 +15378,8 @@ namespace WPELibrary.Lib
             private static string dbName = "小黑封包助手.db";
             private static string connectionString = string.Format("Data Source={0}\\{1};Version=3;", dbPath, dbName);
             private static readonly object AtomicSaveSync = new object();
+            private static readonly Mutex AtomicSaveProcessMutex =
+                new Mutex(false, "Local\\WPELibrary-SqliteAtomicSave");
             private static readonly ManualResetEventSlim AtomicSaveGate =
                 new ManualResetEventSlim(true);
             private static readonly AsyncLocal<bool> AtomicSaveOwner =
@@ -14644,6 +15408,19 @@ namespace WPELibrary.Lib
                 return string.Format("Data Source={0};Version=3;", databaseFile);
             }
 
+            private static void CommitDatabaseWithSqliteBackup(
+                string temporaryFile,
+                string destinationConnectionString)
+            {
+                using (SQLiteConnection source = new SQLiteConnection(GetConnectionString(temporaryFile)))
+                using (SQLiteConnection destination = new SQLiteConnection(destinationConnectionString))
+                {
+                    source.Open();
+                    destination.Open();
+                    source.BackupDatabase(destination, "main", "main", -1, null, 1000);
+                }
+            }
+
             public static bool ExecuteAtomicSave(Action saveAction, string operationName)
             {
                 if (saveAction == null)
@@ -14663,45 +15440,92 @@ namespace WPELibrary.Lib
                     dbName + ".saving-" + Guid.NewGuid().ToString("N") + ".db");
                 string originalConnectionString = conStr;
 
-                lock (AtomicSaveSync)
+                bool processMutexAcquired = false;
+                try
                 {
-                    AtomicSaveGate.Reset();
-                    AtomicSaveOwner.Value = true;
                     try
                     {
-                        File.Copy(databaseFile, temporaryFile, true);
-                        conStr = GetConnectionString(temporaryFile);
-                        atomicSaveInProgress = true;
-                        saveAction();
-                        atomicSaveInProgress = false;
-                        conStr = originalConnectionString;
-
-                        // Replace only after every delete/insert has succeeded;
-                        // a failed save therefore leaves the live database intact.
-                        File.Replace(temporaryFile, databaseFile, null);
-                        return true;
+                        processMutexAcquired = AtomicSaveProcessMutex.WaitOne(
+                            TimeSpan.FromSeconds(30));
                     }
-                    catch (Exception ex)
+                    catch (AbandonedMutexException)
                     {
-                        Socket_Operation.DoLog(operationName, ex.Message);
+                        processMutexAcquired = true;
+                    }
+
+                    if (!processMutexAcquired)
+                    {
+                        Socket_Operation.DoLog(operationName, "等待其他进程保存数据库超时，已取消本次保存。");
                         return false;
                     }
-                    finally
+
+                    lock (AtomicSaveSync)
                     {
-                        atomicSaveInProgress = false;
-                        conStr = originalConnectionString;
-                        AtomicSaveOwner.Value = false;
-                        AtomicSaveGate.Set();
-                        if (File.Exists(temporaryFile))
+                        AtomicSaveGate.Reset();
+                        AtomicSaveOwner.Value = true;
+                        try
                         {
+                            File.Copy(databaseFile, temporaryFile, true);
+                            conStr = GetConnectionString(temporaryFile);
+                            atomicSaveInProgress = true;
+                            saveAction();
+                            atomicSaveInProgress = false;
+                            conStr = originalConnectionString;
+
+                            // Replace only after every delete/insert has succeeded;
+                            // a failed save therefore leaves the live database intact.
+                            // An injected process may still have the live SQLite file
+                            // open, in which case Windows refuses File.Replace. Copy
+                            // the validated temporary database through SQLite instead;
+                            // this preserves the live file and honors SQLite locking.
                             try
                             {
-                                File.Delete(temporaryFile);
+                                File.Replace(temporaryFile, databaseFile, null);
                             }
-                            catch (Exception ex)
+                            catch (Exception replaceException)
                             {
-                                Socket_Operation.DoLog(operationName, ex.Message);
+                                Socket_Operation.DoLog(
+                                    operationName,
+                                    "直接替换数据库文件失败，改用 SQLite 备份提交：" + replaceException.Message);
+                                CommitDatabaseWithSqliteBackup(temporaryFile, originalConnectionString);
                             }
+                            return true;
+                        }
+                        catch (Exception ex)
+                        {
+                            Socket_Operation.DoLog(operationName, ex.Message);
+                            return false;
+                        }
+                        finally
+                        {
+                            atomicSaveInProgress = false;
+                            conStr = originalConnectionString;
+                            AtomicSaveOwner.Value = false;
+                            AtomicSaveGate.Set();
+                            if (File.Exists(temporaryFile))
+                            {
+                                try
+                                {
+                                    File.Delete(temporaryFile);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Socket_Operation.DoLog(operationName, ex.Message);
+                                }
+                            }
+                        }
+                    }
+                }
+                finally
+                {
+                    if (processMutexAcquired)
+                    {
+                        try
+                        {
+                            AtomicSaveProcessMutex.ReleaseMutex();
+                        }
+                        catch (ApplicationException)
+                        {
                         }
                     }
                 }
@@ -14913,7 +15737,7 @@ namespace WPELibrary.Lib
                 }
             }
 
-            public static void UpdateTable_SystemConfig_LastInjection()
+            public static bool UpdateTable_SystemConfig_LastInjection()
             {
                 try
                 {
@@ -14926,13 +15750,14 @@ namespace WPELibrary.Lib
                             cmd.Parameters.AddWithValue("@LastInjection", Socket_Cache.System.LastInjection);
 
                             conn.Open();
-                            cmd.ExecuteNonQuery();
+                            return cmd.ExecuteNonQuery() == 1;
                         }
                     }
                 }
                 catch (Exception ex)
                 {
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                    return false;
                 }
             }            
 
@@ -16207,7 +17032,8 @@ namespace WPELibrary.Lib
                         sql += "GUID TEXT NOT NULL PRIMARY KEY,";
                         sql += "IsEnable BOOLEAN DEFAULT 0,";
                         sql += "Name TEXT NOT NULL,";
-                        sql += "Folder TEXT NOT NULL DEFAULT '常用'";
+                        sql += "Folder TEXT NOT NULL DEFAULT '常用',";
+                        sql += "TreasureLiveSendAuthorized BOOLEAN DEFAULT 0";
                         sql += ");";
 
                         sql += "CREATE TABLE IF NOT EXISTS RobotInstruction (";
@@ -16222,62 +17048,67 @@ namespace WPELibrary.Lib
                         sql += "SortOrder INTEGER NOT NULL";
                         sql += ");";
 
-                        sql += "CREATE TABLE IF NOT EXISTS RobotVisionProfile (";
-                        sql += "GUID TEXT NOT NULL PRIMARY KEY,";
-                        sql += "WindowHandle INTEGER DEFAULT 0,";
-                        sql += "ProcessId INTEGER DEFAULT 0,";
-                        sql += "ProcessName TEXT,";
-                        sql += "ProcessPath TEXT,";
-                        sql += "ProcessStartTimeUtcTicks INTEGER DEFAULT 0,";
-                        sql += "WindowTitle TEXT,";
-                        sql += "RegionX INTEGER DEFAULT 0,";
-                        sql += "RegionY INTEGER DEFAULT 0,";
-                        sql += "RegionWidth INTEGER DEFAULT 0,";
-                        sql += "RegionHeight INTEGER DEFAULT 0,";
-                        sql += "RegionNormalized BOOLEAN DEFAULT 0,";
-                        sql += "RegionReferenceWidth INTEGER DEFAULT 0,";
-                        sql += "RegionReferenceHeight INTEGER DEFAULT 0,";
-                        sql += "CaptureSource INTEGER DEFAULT 0,";
-                        sql += "CaptureInterval INTEGER DEFAULT 150,";
-                        sql += "CaptureSkipUnchanged BOOLEAN DEFAULT 1,";
-                        sql += "CaptureHistoryLimit INTEGER DEFAULT 30,";
-                        sql += "CaptureSaveFailures BOOLEAN DEFAULT 0,";
-                        sql += "CaptureFailureDirectory TEXT,";
-                        sql += "CaptureRequireExactClientSize BOOLEAN DEFAULT 0,";
-                        sql += "CaptureRequiredClientWidth INTEGER DEFAULT 0,";
-                        sql += "CaptureRequiredClientHeight INTEGER DEFAULT 0,";
-                        sql += "OcrScale INTEGER DEFAULT 2,";
-                        sql += "OcrBinary BOOLEAN DEFAULT 0,";
-                        sql += "OcrThreshold INTEGER DEFAULT 160,";
-                        sql += "OcrContrast REAL DEFAULT 1,";
-                        sql += "OcrAdaptive BOOLEAN DEFAULT 0,";
-                        sql += "OcrAdaptiveWindow INTEGER DEFAULT 15,";
-                        sql += "OcrAdaptiveOffset INTEGER DEFAULT 8,";
-                        sql += "OcrInvert BOOLEAN DEFAULT 0,";
-                        sql += "OcrDenoise BOOLEAN DEFAULT 0,";
-                        sql += "OcrSharpen BOOLEAN DEFAULT 0,";
-                        sql += "OcrWhitelist TEXT,";
-                        sql += "OcrBlacklist TEXT,";
-                        sql += "OcrLanguage TEXT,";
-                        sql += "OcrExecutable TEXT,";
-                        sql += "OcrTessdataPath TEXT,";
-                        sql += "OcrTimeout INTEGER DEFAULT 5000,";
-                        sql += "OcrPsm INTEGER DEFAULT 6,";
-                        sql += "OcrEngine INTEGER DEFAULT 0,";
-                        sql += "OcrModelDirectory TEXT,";
-                        sql += "OcrDetectionThreshold REAL DEFAULT 0.3,";
-                        sql += "OcrRecognitionThreshold REAL DEFAULT 0.5,";
-                        sql += "OcrMaxImageSide INTEGER DEFAULT 960,";
-                        sql += "OcrPythonExecutable TEXT,";
-                        sql += "OcrPythonWorkerScript TEXT,";
-                        sql += "OcrPythonWorkerTimeout INTEGER DEFAULT 15000,";
-                        sql += "OcrKeyword TEXT,";
-                        sql += "OcrMatchMode INTEGER DEFAULT 0,";
-                        sql += "OcrMinimumConfidence REAL DEFAULT 0.5,";
-                        sql += "OcrMinimumNumber REAL DEFAULT 0,";
-                        sql += "OcrMaximumNumber REAL DEFAULT 0,";
-                        sql += "FOREIGN KEY (GUID) REFERENCES Robot(GUID)";
-                        sql += ");";
+sql += "CREATE TABLE IF NOT EXISTS RobotVisionProfile (";
+sql += "GUID TEXT NOT NULL PRIMARY KEY,";
+sql += "WindowHandle INTEGER DEFAULT 0,";
+sql += "ProcessId INTEGER DEFAULT 0,";
+sql += "ProcessName TEXT,";
+sql += "ProcessPath TEXT,";
+sql += "ProcessStartTimeUtcTicks INTEGER DEFAULT 0,";
+sql += "WindowTitle TEXT,";
+sql += "RegionX INTEGER DEFAULT 0,";
+sql += "RegionY INTEGER DEFAULT 0,";
+sql += "RegionWidth INTEGER DEFAULT 0,";
+sql += "RegionHeight INTEGER DEFAULT 0,";
+sql += "RegionNormalized BOOLEAN DEFAULT 0,";
+sql += "RegionReferenceWidth INTEGER DEFAULT 0,";
+sql += "RegionReferenceHeight INTEGER DEFAULT 0,";
+sql += "CaptureSource INTEGER DEFAULT 0,";
+sql += "CaptureInterval INTEGER DEFAULT 150,";
+sql += "CaptureSkipUnchanged BOOLEAN DEFAULT 1,";
+sql += "CaptureHistoryLimit INTEGER DEFAULT 30,";
+sql += "CaptureSaveFailures BOOLEAN DEFAULT 0,";
+sql += "CaptureFailureDirectory TEXT,";
+sql += "CaptureRequireExactClientSize BOOLEAN DEFAULT 0,";
+sql += "CaptureRequiredClientWidth INTEGER DEFAULT 0,";
+sql += "CaptureRequiredClientHeight INTEGER DEFAULT 0,";
+sql += "OcrScale INTEGER DEFAULT 2,";
+sql += "OcrBinary BOOLEAN DEFAULT 0,";
+sql += "OcrThreshold INTEGER DEFAULT 160,";
+sql += "OcrContrast REAL DEFAULT 1,";
+sql += "OcrAdaptive BOOLEAN DEFAULT 0,";
+sql += "OcrAdaptiveWindow INTEGER DEFAULT 15,";
+sql += "OcrAdaptiveOffset INTEGER DEFAULT 8,";
+sql += "OcrInvert BOOLEAN DEFAULT 0,";
+sql += "OcrDenoise BOOLEAN DEFAULT 0,";
+sql += "OcrSharpen BOOLEAN DEFAULT 0,";
+sql += "OcrWhitelist TEXT,";
+sql += "OcrBlacklist TEXT,";
+sql += "OcrLanguage TEXT,";
+sql += "OcrExecutable TEXT,";
+sql += "OcrTessdataPath TEXT,";
+sql += "OcrTimeout INTEGER DEFAULT 5000,";
+sql += "OcrPsm INTEGER DEFAULT 6,";
+sql += "OcrEngine INTEGER DEFAULT 0,";
+sql += "OcrModelDirectory TEXT,";
+sql += "OcrDetectionThreshold REAL DEFAULT 0.3,";
+sql += "OcrRecognitionThreshold REAL DEFAULT 0.5,";
+sql += "OcrMaxImageSide INTEGER DEFAULT 960,";
+sql += "OcrPythonExecutable TEXT,";
+sql += "OcrPythonWorkerScript TEXT,";
+sql += "OcrPythonWorkerTimeout INTEGER DEFAULT 15000,";
+sql += "OcrKeyword TEXT,";
+sql += "OcrMatchMode INTEGER DEFAULT 0,";
+sql += "OcrMinimumConfidence REAL DEFAULT 0.5,";
+sql += "OcrMinimumNumber REAL DEFAULT 0,";
+sql += "OcrMaximumNumber REAL DEFAULT 0,";
+sql += "FOREIGN KEY (GUID) REFERENCES Robot(GUID)";
+sql += ");";
+
+sql += "CREATE TABLE IF NOT EXISTS RobotSummonedPetPreset (";
+sql += "GUID TEXT NOT NULL PRIMARY KEY,";
+sql += "PresetJson TEXT";
+sql += ");";
 
                         sql += "CREATE TABLE IF NOT EXISTS RobotVisionCondition (";
                         sql += "GUID TEXT NOT NULL PRIMARY KEY,";
@@ -16342,6 +17173,21 @@ namespace WPELibrary.Lib
                             {
                                 using (SQLiteCommand alter = new SQLiteCommand(
                                     "ALTER TABLE Robot ADD COLUMN Folder TEXT NOT NULL DEFAULT '常用';", conn))
+                                {
+                                    alter.ExecuteNonQuery();
+                                }
+                            }
+                            catch (SQLiteException)
+                            {
+                                // 已存在时无需处理。
+                            }
+
+                            // 兼容旧版数据库：旧 Robot 表没有藏宝图真实发送授权列时补齐。
+                            try
+                            {
+                                using (SQLiteCommand alter = new SQLiteCommand(
+                                    "ALTER TABLE Robot ADD COLUMN TreasureLiveSendAuthorized BOOLEAN DEFAULT 0;",
+                                    conn))
                                 {
                                     alter.ExecuteNonQuery();
                                 }
@@ -16569,6 +17415,29 @@ namespace WPELibrary.Lib
                 return dtReturn;
             }
 
+            public static DataTable SelectTable_RobotSummonedPetPreset(Guid guid)
+            {
+                DataTable dtReturn = new DataTable();
+
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand(
+                        "SELECT PresetJson FROM RobotSummonedPetPreset WHERE GUID = @GUID;", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@GUID", guid.ToString().ToUpper());
+                        SQLiteDataAdapter adapter = new SQLiteDataAdapter(cmd);
+                        adapter.Fill(dtReturn);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+
+                return dtReturn;
+            }
+
             public static DataTable SelectTable_RobotVisionCondition(Guid guid)
             {
                 DataTable dtReturn = new DataTable();
@@ -16598,9 +17467,10 @@ namespace WPELibrary.Lib
                 {
                     using (SQLiteConnection conn = new SQLiteConnection(conStr))
                     {
-                        string sql = "DELETE FROM RobotInstruction;";
+                                                string sql = "DELETE FROM RobotInstruction;";
                         sql += "DELETE FROM RobotVisionCondition;";
                         sql += "DELETE FROM RobotVisionProfile;";
+                        sql += "DELETE FROM RobotSummonedPetPreset;";
                         sql += "DELETE FROM Robot;";
 
                         using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
@@ -16680,11 +17550,11 @@ namespace WPELibrary.Lib
                         string sql = "INSERT INTO Robot (";
                         sql += "GUID,";
                         sql += "IsEnable,";
-                        sql += "Name, Folder";
+                        sql += "Name, Folder, TreasureLiveSendAuthorized";
                         sql += ") VALUES (";
                         sql += "@GUID,";
                         sql += "@IsEnable,";
-                        sql += "@Name, @Folder";
+                        sql += "@Name, @Folder, @TreasureLiveSendAuthorized";
                         sql += ");";
 
                         using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
@@ -16693,6 +17563,9 @@ namespace WPELibrary.Lib
                             cmd.Parameters.AddWithValue("@IsEnable", sri.IsEnable);
                             cmd.Parameters.AddWithValue("@Name", sri.RName);
                             cmd.Parameters.AddWithValue("@Folder", sri.RFolder);
+                            cmd.Parameters.AddWithValue(
+                                "@TreasureLiveSendAuthorized",
+                                sri.TreasureLiveSendAuthorized);
                             cmd.ExecuteNonQuery();
                         }
 
@@ -16801,6 +17674,34 @@ namespace WPELibrary.Lib
                         }
 
                         InsertTable_RobotVisionConditions(conn, sri);
+
+                        // 写入召唤兽技能书预设 JSON
+                        if (sri.SummonedPetSkillBookPreset != null)
+                        {
+                            string presetJson = SummonedPetSkillBookPresetSerializer.Serialize(sri.SummonedPetSkillBookPreset);
+                            sql = "INSERT OR REPLACE INTO RobotSummonedPetPreset (";
+                            sql += "GUID, PresetJson";
+                            sql += ") VALUES (";
+                            sql += "@GUID, @PresetJson";
+                            sql += ");";
+
+                            using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
+                            {
+                                cmd.Parameters.AddWithValue("@GUID", sri.RID.ToString().ToUpper());
+                                cmd.Parameters.AddWithValue("@PresetJson", presetJson);
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+                        else
+                        {
+                            // 无预设时删除旧记录
+                            sql = "DELETE FROM RobotSummonedPetPreset WHERE GUID = @GUID;";
+                            using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
+                            {
+                                cmd.Parameters.AddWithValue("@GUID", sri.RID.ToString().ToUpper());
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
                     }
                 }
                 catch (Exception ex)

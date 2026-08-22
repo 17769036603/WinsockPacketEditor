@@ -885,29 +885,32 @@ namespace WPELibrary.Lib.Vision
 
         private void ResetProcess()
         {
-            Process current = this.workerProcess;
-            this.workerProcess = null;
-            this.workerExecutable = null;
-            this.workerScript = null;
-            if (current == null)
+            lock (this.processSync)
             {
-                return;
-            }
-            try
-            {
-                if (!current.HasExited)
+                Process current = this.workerProcess;
+                this.workerProcess = null;
+                this.workerExecutable = null;
+                this.workerScript = null;
+                if (current == null)
                 {
-                    current.Kill();
-                    current.WaitForExit(500);
+                    return;
                 }
+                try
+                {
+                    if (!current.HasExited)
+                    {
+                        current.Kill();
+                        current.WaitForExit(500);
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                }
+                catch (System.ComponentModel.Win32Exception)
+                {
+                }
+                current.Dispose();
             }
-            catch (InvalidOperationException)
-            {
-            }
-            catch (System.ComponentModel.Win32Exception)
-            {
-            }
-            current.Dispose();
         }
 
         public void Dispose()

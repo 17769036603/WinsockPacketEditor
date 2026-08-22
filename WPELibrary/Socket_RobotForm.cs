@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using WPELibrary.Lib;
 using WPELibrary.Lib.Vision;
+using WPELibrary.Lib.PetSkillBook;
 
 namespace WPELibrary
 {
@@ -30,6 +31,13 @@ namespace WPELibrary
         private Label lSelectedSendFolder;
         private Button bSelectSendPreset;
         private Button bToggleRobotInstructionPanel;
+        private GroupBox gbTreasureMapPreset;
+        private Button bAddTreasureMapPreset;
+        private CheckBox chkTreasureLiveSend;
+        private ComboBox cbbTreasureMode;
+        private Label lTreasureStatus;
+        private TreasureMapExecutionMode treasureExecutionMode = TreasureMapExecutionMode.Continuous;
+        private bool treasureModeSyncing;
         private bool robotInstructionPanelExpanded;
         private bool robotInstructionPanelManuallyCollapsed;
         private bool robotInstructionPanelManuallyExpanded;
@@ -141,6 +149,31 @@ namespace WPELibrary
         private CheckBox chkVisionFixedClientSize;
         private NumericUpDown nudVisionRequiredWidth;
         private NumericUpDown nudVisionRequiredHeight;
+
+        #region//召唤兽技能书编辑控件
+
+        private TextBox txtPresetName;
+        private ComboBox cbbPetMode;
+        private CheckBox chkOpenAllSlots;
+        private NumericUpDown nudOpenItemId;
+        private NumericUpDown nudOpenSlotSilverCost;
+        private NumericUpDown nudStudySilverCost;
+        private NumericUpDown nudTimeoutMs;
+        private CheckBox chkEnableStepLog;
+        private ListBox lstSkillBooks;
+        private Button bAddSkillBook;
+        private Button bRemoveSkillBook;
+        private Button bUpSkillBook;
+        private Button bDownSkillBook;
+        private TextBox txtSkillId;
+        private TextBox txtItemId;
+        private CheckBox chkLockAfter;
+        private Button bLoadPreset;
+        private Button bSavePreset;
+        private Button bClearPreset;
+        private Label lblPresetStatus;
+
+        #endregion
         private Label lVisionFixedClientSizeStatus;
         private Button bVisionApplyFixedSize;
         private ComboBox cbbVisionCaptureSource;
@@ -173,7 +206,9 @@ namespace WPELibrary
                 this.MinimumSize = new Size(600, 511);
                 this.InitExecutionLogLayout();
                 this.InitSendPresetPickerLayout();
+                this.InitTreasureMapLayout();
                 this.InitVisionLayout();
+                this.InitSummonedPetSkillBookLayout();
 
                 if (sri != null)
                 { 
@@ -201,15 +236,25 @@ namespace WPELibrary
 
                 this.txtRobotName.Text = sriSelect.RName;
                 this.dtRobotInstruction = sriSelect.RInstruction.Copy();
+                this.chkTreasureLiveSend.Checked = sriSelect.TreasureLiveSendAuthorized;
 
                 this.cbbKeyBoard_KeyType.SelectedIndex = 0;
                 this.cbbMouse.SelectedIndex = 0;
                 this.cbbMouseWheel_Direction.SelectedIndex = 0;
                 
-                this.InitSendPresetPicker();
-                this.InitRobot();
-                this.InitVisionProfile();
-                this.EnsureVisionInstructionRows();
+this.InitSendPresetPicker();
+                    this.InitRobot();
+                    this.InitVisionProfile();
+                    this.EnsureVisionInstructionRows();
+                    this.SyncTreasureMapModeFromInstructions();
+
+                    // 加载召唤兽技能书预设到编辑控件
+                    if (sriSelect != null && sriSelect.SummonedPetSkillBookPreset != null)
+                    {
+                        this.presetEditing = SummonedPetSkillBookPresetSerializer.DeserializeClone(
+                            sriSelect.SummonedPetSkillBookPreset);
+                    }
+                    this.LoadPresetToControls();
             }
             catch (Exception ex)
             {
@@ -294,6 +339,160 @@ namespace WPELibrary
             }
 
             this.UpdateRobotInstructionPanel();
+        }
+
+        private void InitTreasureMapLayout()
+        {
+            if (this.tlpInstruction_Socket == null || this.gbTreasureMapPreset != null)
+            {
+                return;
+            }
+
+            this.gbTreasureMapPreset = new GroupBox
+            {
+                Name = "gbTreasureMapPreset",
+                Text = "藏宝图流程",
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                Padding = new Padding(6),
+                TabStop = false
+            };
+
+            FlowLayoutPanel flow = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                WrapContents = false,
+                FlowDirection = FlowDirection.LeftToRight,
+                Padding = new Padding(0),
+                Margin = new Padding(0)
+            };
+
+            this.bAddTreasureMapPreset = new Button
+            {
+                Name = "bAddTreasureMapPreset",
+                Text = "加入藏宝图流程",
+                AutoSize = true,
+                UseVisualStyleBackColor = true,
+                AccessibleRole = AccessibleRole.PushButton,
+                Margin = new Padding(0, 3, 8, 3)
+            };
+            this.bAddTreasureMapPreset.Click += this.bAddTreasureMapPreset_Click;
+
+            this.chkTreasureLiveSend = new CheckBox
+            {
+                Name = "chkTreasureLiveSend",
+                Text = "允许藏宝图真实发送（保存设置）",
+                AutoSize = true,
+                Checked = false,
+                TabStop = true,
+                AccessibleRole = AccessibleRole.CheckButton,
+                Margin = new Padding(0, 7, 0, 3)
+            };
+
+            // 批次D：执行模式选择
+            Label lMode = new Label
+            {
+                Name = "lTreasureMode",
+                Text = "模式：",
+                AutoSize = true,
+                Margin = new Padding(8, 8, 0, 3)
+            };
+
+            ComboBox cbbMode = new ComboBox
+            {
+                Name = "cbbTreasureMode",
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                AutoSize = true,
+                Margin = new Padding(0, 5, 8, 3)
+            };
+            cbbMode.Items.AddRange(new object[]
+            {
+                "当前快照（一次）",
+                "持续监听"
+            });
+            cbbMode.SelectedIndex = 1; // 默认持续监听
+            cbbMode.SelectedIndexChanged += (s, e) =>
+            {
+                if (this.treasureModeSyncing)
+                {
+                    return;
+                }
+
+                this.treasureExecutionMode = cbbMode.SelectedIndex == 0
+                    ? TreasureMapExecutionMode.CurrentSnapshot
+                    : TreasureMapExecutionMode.Continuous;
+                this.SyncTreasureMapInstructionMode();
+            };
+            this.cbbTreasureMode = cbbMode;
+
+            // 批次D：状态显示
+            Label lStatus = new Label
+            {
+                Name = "lTreasureStatusLabel",
+                Text = "状态：",
+                AutoSize = true,
+                Margin = new Padding(8, 8, 0, 3)
+            };
+
+            Label lStatusValue = new Label
+            {
+                Name = "lTreasureStatus",
+                Text = "未运行",
+                AutoSize = true,
+                ForeColor = Color.Gray,
+                Margin = new Padding(0, 8, 8, 3)
+            };
+            this.lTreasureStatus = lStatusValue;
+
+            flow.Controls.Add(this.bAddTreasureMapPreset);
+            flow.Controls.Add(this.chkTreasureLiveSend);
+            flow.Controls.Add(lMode);
+            flow.Controls.Add(cbbMode);
+            flow.Controls.Add(lStatus);
+            flow.Controls.Add(lStatusValue);
+            this.gbTreasureMapPreset.Controls.Add(flow);
+
+            int rowIndex = this.tlpInstruction_Socket.Controls
+                .Cast<Control>()
+                .Select(control => this.tlpInstruction_Socket.GetRow(control))
+                .DefaultIfEmpty(-1)
+                .Max() + 1;
+            this.tlpInstruction_Socket.RowCount = Math.Max(
+                this.tlpInstruction_Socket.RowCount,
+                rowIndex + 1);
+            while (this.tlpInstruction_Socket.RowStyles.Count < rowIndex + 1)
+            {
+                this.tlpInstruction_Socket.RowStyles.Add(
+                    new RowStyle(SizeType.AutoSize));
+            }
+            this.tlpInstruction_Socket.RowStyles[rowIndex] =
+                new RowStyle(SizeType.Absolute, 68F);
+            this.tlpInstruction_Socket.Controls.Add(
+                this.gbTreasureMapPreset,
+                0,
+                rowIndex);
+        }
+
+        private void bAddTreasureMapPreset_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                bool alreadyAdded = this.dtRobotInstruction != null &&
+                    this.dtRobotInstruction.Rows.Cast<DataRow>().Any(row =>
+                        (Socket_Cache.Robot.InstructionType)row["Type"] ==
+                        Socket_Cache.Robot.InstructionType.TreasureMap);
+                if (!alreadyAdded)
+                {
+                    this.AddInstruction(
+                        Socket_Cache.Robot.InstructionType.TreasureMap,
+                        TreasureMapInstructionCodec.Encode(this.treasureExecutionMode));
+                }
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
         }
 
         private void bToggleRobotInstructionPanel_Click(object sender, EventArgs e)
@@ -461,6 +660,339 @@ namespace WPELibrary
         {
             return Properties.Resources.ResourceManager.GetString(key) ?? key;
         }
+
+        #region//召唤兽技能书预设编辑（离线，fail-closed）
+
+        private Lib.PetSkillBook.SummonedPetSkillBookPreset presetEditing =
+            new Lib.PetSkillBook.SummonedPetSkillBookPreset();
+
+        /// <summary>
+        /// 构建召唤兽技能书编辑选项卡。
+        /// 仅编辑本地预设 JSON，不读取游戏进程、不发送任何操作；
+        /// 执行入口保持 fail-closed（真实适配器未确认）。
+        /// </summary>
+        private void InitSummonedPetSkillBookLayout()
+        {
+            try
+            {
+                TabPage petTab = this.tcRobotInstruction.Controls
+                    .OfType<TabPage>()
+                    .FirstOrDefault(item => item.Name == "tpInstruction_SummonedPetSkillBook");
+                if (petTab == null)
+                {
+                    petTab = new TabPage("召唤兽技能");
+                    this.tcRobotInstruction.Controls.Add(petTab);
+                }
+                petTab.Text = "召唤兽技能";
+                petTab.Padding = new Padding(4);
+                petTab.UseVisualStyleBackColor = true;
+
+                TableLayoutPanel layout = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    ColumnCount = 1,
+                    RowCount = 4,
+                    AutoScroll = true,
+                    Padding = new Padding(4)
+                };
+                layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+                // 基本设置
+                GroupBox gbBasic = new GroupBox { Text = "基本设置", Dock = DockStyle.Top, AutoSize = true };
+                TableLayoutPanel tlpBasic = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Top, AutoSize = true, ColumnCount = 4, RowCount = 3
+                };
+                for (int i = 0; i < 4; i++)
+                {
+                    tlpBasic.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+                }
+
+                tlpBasic.Controls.Add(new Label { Text = "预设名称", AutoSize = true, Padding = new Padding(0, 6, 4, 0) }, 0, 0);
+                this.txtPresetName = new TextBox { Width = 160 };
+                tlpBasic.Controls.Add(this.txtPresetName, 1, 0);
+                tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Padding = new Padding(12, 6, 4, 0) }, 2, 0);
+                this.cbbPetMode = new ComboBox { Width = 100, DropDownStyle = ComboBoxStyle.DropDownList };
+                this.cbbPetMode.Items.AddRange(new object[] { "当前参战", "指定宠物" });
+                this.cbbPetMode.SelectedIndex = 0;
+                tlpBasic.Controls.Add(this.cbbPetMode, 3, 0);
+
+                this.chkOpenAllSlots = new CheckBox { Text = "自动开满技能格", AutoSize = true, Checked = true };
+                tlpBasic.Controls.Add(this.chkOpenAllSlots, 0, 1);
+                tlpBasic.Controls.Add(new Label { Text = "开格材料ID", AutoSize = true, Padding = new Padding(12, 6, 4, 0) }, 1, 1);
+                this.nudOpenItemId = new NumericUpDown { Minimum = 0, Maximum = int.MaxValue, Width = 100 };
+                tlpBasic.Controls.Add(this.nudOpenItemId, 2, 1);
+
+                tlpBasic.Controls.Add(new Label { Text = "开格银两(0=未配置)", AutoSize = true, Padding = new Padding(0, 6, 4, 0) }, 0, 2);
+                this.nudOpenSlotSilverCost = new NumericUpDown { Minimum = 0, Maximum = int.MaxValue, Width = 100 };
+                tlpBasic.Controls.Add(this.nudOpenSlotSilverCost, 1, 2);
+                tlpBasic.Controls.Add(new Label { Text = "打书银两(0=未配置)", AutoSize = true, Padding = new Padding(12, 6, 4, 0) }, 2, 2);
+                this.nudStudySilverCost = new NumericUpDown { Minimum = 0, Maximum = int.MaxValue, Width = 100 };
+                tlpBasic.Controls.Add(this.nudStudySilverCost, 3, 2);
+                gbBasic.Controls.Add(tlpBasic);
+                layout.Controls.Add(gbBasic, 0, 0);
+
+                // 运行参数
+                GroupBox gbRun = new GroupBox { Text = "运行参数", Dock = DockStyle.Top, AutoSize = true };
+                FlowLayoutPanel flpRun = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true };
+                flpRun.Controls.Add(new Label { Text = "超时(ms)", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
+                this.nudTimeoutMs = new NumericUpDown { Minimum = 1000, Maximum = 600000, Value = 8000, Width = 90 };
+                flpRun.Controls.Add(this.nudTimeoutMs);
+                this.chkEnableStepLog = new CheckBox { Text = "步骤日志", AutoSize = true, Checked = true, Padding = new Padding(8, 4, 0, 0) };
+                flpRun.Controls.Add(this.chkEnableStepLog);
+                gbRun.Controls.Add(flpRun);
+                layout.Controls.Add(gbRun, 0, 1);
+
+                // 技能书列表
+                GroupBox gbBooks = new GroupBox { Text = "技能书顺序（按顺序学习；同名不同等级按物品ID区分）", Dock = DockStyle.Fill, AutoSize = false };
+                TableLayoutPanel tlpBooks = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2 };
+                tlpBooks.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+                tlpBooks.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+                tlpBooks.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                tlpBooks.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+                this.lstSkillBooks = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
+                this.lstSkillBooks.DisplayMember = "DisplayText";
+                tlpBooks.Controls.Add(this.lstSkillBooks, 0, 0);
+
+                FlowLayoutPanel flpBookButtons = new FlowLayoutPanel
+                {
+                    FlowDirection = FlowDirection.TopDown, Dock = DockStyle.Fill, AutoSize = true
+                };
+                this.bAddSkillBook = new Button { Text = "手动添加", Width = 100 };
+                this.bRemoveSkillBook = new Button { Text = "删除选中", Width = 100 };
+                this.bUpSkillBook = new Button { Text = "上移", Width = 100 };
+                this.bDownSkillBook = new Button { Text = "下移", Width = 100 };
+                this.bAddSkillBook.Click += this.bAddSkillBook_Click;
+                this.bRemoveSkillBook.Click += (s, ev) => this.RemoveSelectedBook();
+                this.bUpSkillBook.Click += (s, ev) => this.MoveSelectedBook(-1);
+                this.bDownSkillBook.Click += (s, ev) => this.MoveSelectedBook(1);
+                flpBookButtons.Controls.AddRange(new Control[]
+                {
+                    this.bAddSkillBook, this.bRemoveSkillBook, this.bUpSkillBook, this.bDownSkillBook
+                });
+                tlpBooks.Controls.Add(flpBookButtons, 1, 0);
+
+                FlowLayoutPanel flpBookEdit = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true };
+                flpBookEdit.Controls.Add(new Label { Text = "技能ID", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
+                this.txtSkillId = new TextBox { Width = 80 };
+                flpBookEdit.Controls.Add(this.txtSkillId);
+                flpBookEdit.Controls.Add(new Label { Text = "物品ID", AutoSize = true, Padding = new Padding(8, 6, 4, 0) });
+                this.txtItemId = new TextBox { Width = 80 };
+                flpBookEdit.Controls.Add(this.txtItemId);
+                this.chkLockAfter = new CheckBox { Text = "学习后锁定", AutoSize = true, Padding = new Padding(8, 4, 0, 0) };
+                flpBookEdit.Controls.Add(this.chkLockAfter);
+                tlpBooks.Controls.Add(flpBookEdit, 0, 1);
+                gbBooks.Controls.Add(tlpBooks);
+                layout.Controls.Add(gbBooks, 0, 2);
+
+                // 保存/加载/状态
+                GroupBox gbPresetActions = new GroupBox { Text = "预设保存（本地 JSON，不连接游戏）", Dock = DockStyle.Top, AutoSize = true };
+                FlowLayoutPanel flpActions = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true };
+                this.bSavePreset = new Button { Text = "应用到助手", Width = 100 };
+                this.bLoadPreset = new Button { Text = "从助手读取", Width = 100 };
+                this.bClearPreset = new Button { Text = "清空", Width = 80 };
+                this.bSavePreset.Click += this.bSavePreset_Click;
+                this.bLoadPreset.Click += (s, ev) => this.LoadPresetFromRobot();
+                this.bClearPreset.Click += (s, ev) =>
+                {
+                    this.presetEditing = new Lib.PetSkillBook.SummonedPetSkillBookPreset();
+                    this.LoadPresetToControls();
+                };
+                flpActions.Controls.AddRange(new Control[] { this.bSavePreset, this.bLoadPreset, this.bClearPreset });
+                this.lblPresetStatus = new Label
+                {
+                    Text = "状态：未确认真实游戏数据来源；执行保持 fail-closed（测试数据）",
+                    AutoSize = true,
+                    ForeColor = Color.DarkOrange,
+                    Padding = new Padding(0, 8, 0, 0)
+                };
+                flpActions.Controls.Add(this.lblPresetStatus);
+                gbPresetActions.Controls.Add(flpActions);
+                layout.Controls.Add(gbPresetActions, 0, 3);
+
+                petTab.Controls.Add(layout);
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
+        private void LoadPresetToControls()
+        {
+            Lib.PetSkillBook.SummonedPetSkillBookPreset preset = this.presetEditing ??
+                new Lib.PetSkillBook.SummonedPetSkillBookPreset();
+
+            this.txtPresetName.Text = preset.Name;
+            this.cbbPetMode.SelectedIndex = preset.PetMode == Lib.PetSkillBook.PetMode.Specified ? 1 : 0;
+            this.chkOpenAllSlots.Checked = preset.OpenAllSlots;
+            this.nudOpenItemId.Value = preset.OpenItemId.HasValue ? preset.OpenItemId.Value : 0;
+            this.nudOpenSlotSilverCost.Value = preset.OpenSlotSilverCost;
+            this.nudStudySilverCost.Value = preset.StudySilverCost;
+            this.nudTimeoutMs.Value = Math.Max(this.nudTimeoutMs.Minimum,
+                Math.Min(this.nudTimeoutMs.Maximum, preset.TimeoutMs));
+            this.chkEnableStepLog.Checked = preset.EnableStepLog;
+
+            this.lstSkillBooks.Items.Clear();
+            foreach (Lib.PetSkillBook.SkillBookEntry book in preset.Books)
+            {
+                this.lstSkillBooks.Items.Add(new SkillBookListItem(book));
+            }
+        }
+
+        private void LoadPresetFromRobot()
+        {
+            if (this.sriSelect?.SummonedPetSkillBookPreset != null)
+            {
+                this.presetEditing = SummonedPetSkillBookPresetSerializer
+                    .DeserializeClone(this.sriSelect.SummonedPetSkillBookPreset);
+                this.LoadPresetToControls();
+            }
+        }
+
+        private void bSavePreset_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                Lib.PetSkillBook.SummonedPetSkillBookPreset preset = this.ReadPresetFromControls();
+                string error;
+                if (!preset.IsValid(out error))
+                {
+                    Socket_Operation.ShowMessageBox("预设无效：" + error);
+                    return;
+                }
+
+                this.presetEditing = preset;
+                this.sriSelect.SummonedPetSkillBookPreset = preset;
+                if (!Socket_Cache.RobotList.SaveRobotList_ToDB())
+                {
+                    this.sriSelect.SummonedPetSkillBookPreset = null;
+                    Socket_Operation.ShowMessageBox(
+                        Socket_Operation.GetUiText("UI_AssistantSaveFailed"));
+                    return;
+                }
+
+                this.lblPresetStatus.Text = "状态：预设已保存（离线数据，未连接真实游戏）";
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
+        private Lib.PetSkillBook.SummonedPetSkillBookPreset ReadPresetFromControls()
+        {
+            Lib.PetSkillBook.SummonedPetSkillBookPreset preset = new Lib.PetSkillBook.SummonedPetSkillBookPreset
+            {
+                Name = string.IsNullOrWhiteSpace(this.txtPresetName.Text)
+                    ? "召唤兽技能"
+                    : this.txtPresetName.Text.Trim(),
+                PetMode = this.cbbPetMode.SelectedIndex == 1
+                    ? Lib.PetSkillBook.PetMode.Specified
+                    : Lib.PetSkillBook.PetMode.Current,
+                OpenAllSlots = this.chkOpenAllSlots.Checked,
+                OpenItemId = this.nudOpenItemId.Value > 0
+                    ? (int?)this.nudOpenItemId.Value
+                    : null,
+                OpenSlotSilverCost = (int)this.nudOpenSlotSilverCost.Value,
+                StudySilverCost = (int)this.nudStudySilverCost.Value,
+                TimeoutMs = (int)this.nudTimeoutMs.Value,
+                EnableStepLog = this.chkEnableStepLog.Checked,
+                Books = new List<Lib.PetSkillBook.SkillBookEntry>()
+            };
+
+            foreach (object item in this.lstSkillBooks.Items)
+            {
+                SkillBookListItem entry = item as SkillBookListItem;
+                if (entry != null)
+                {
+                    preset.Books.Add(new Lib.PetSkillBook.SkillBookEntry(
+                        entry.Book.SkillId, entry.Book.ItemId, entry.Book.LockAfter));
+                }
+            }
+
+            return preset;
+        }
+
+        private void bAddSkillBook_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                int skillId;
+                int itemId;
+                if (!int.TryParse(this.txtSkillId.Text.Trim(), out skillId) || skillId <= 0)
+                {
+                    Socket_Operation.ShowMessageBox("技能 ID 无效。");
+                    return;
+                }
+                if (!int.TryParse(this.txtItemId.Text.Trim(), out itemId) || itemId <= 0)
+                {
+                    Socket_Operation.ShowMessageBox("物品 ID 无效。");
+                    return;
+                }
+
+                this.lstSkillBooks.Items.Add(new SkillBookListItem(
+                    new Lib.PetSkillBook.SkillBookEntry(skillId, itemId, this.chkLockAfter.Checked)));
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
+        private void RemoveSelectedBook()
+        {
+            int index = this.lstSkillBooks.SelectedIndex;
+            if (index >= 0)
+            {
+                this.lstSkillBooks.Items.RemoveAt(index);
+            }
+        }
+
+        private void MoveSelectedBook(int offset)
+        {
+            int index = this.lstSkillBooks.SelectedIndex;
+            int target = index + offset;
+            if (index < 0 || target < 0 || target >= this.lstSkillBooks.Items.Count)
+            {
+                return;
+            }
+
+            object item = this.lstSkillBooks.Items[index];
+            this.lstSkillBooks.Items.RemoveAt(index);
+            this.lstSkillBooks.Items.Insert(target, item);
+            this.lstSkillBooks.SelectedIndex = target;
+        }
+
+        private sealed class SkillBookListItem
+        {
+            internal readonly Lib.PetSkillBook.SkillBookEntry Book;
+
+            internal SkillBookListItem(Lib.PetSkillBook.SkillBookEntry book)
+            {
+                this.Book = book;
+            }
+
+            public string DisplayText
+            {
+                get
+                {
+                    return string.Format(
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        "技能 {0} ← 物品 {1}{2}",
+                        this.Book.SkillId,
+                        this.Book.ItemId,
+                        this.Book.LockAfter ? "（学习后锁定）" : string.Empty);
+                }
+            }
+        }
+
+        #endregion
 
         private void InitVisionLayout()
         {
@@ -5352,6 +5884,10 @@ namespace WPELibrary
                 ? new DataTable()
                 : originalRobotInstructions.Copy();
             this.sriSelect.VisionProfile = originalProfile;
+            if (this.chkTreasureLiveSend != null)
+            {
+                this.chkTreasureLiveSend.Checked = this.sriSelect.TreasureLiveSendAuthorized;
+            }
             this.txtRobotName.Text = originalName;
 
             if (this.dgvRobotInstruction != null)
@@ -5367,6 +5903,7 @@ namespace WPELibrary
             }
 
             this.InitVisionProfile();
+            this.SyncTreasureMapModeFromInstructions();
             this.UpdateRobotInstructionPanel();
         }
 
@@ -5411,6 +5948,8 @@ namespace WPELibrary
                     this.sriSelect.VisionProfile == null
                     ? null
                     : this.sriSelect.VisionProfile.Clone();
+                bool originalTreasureLiveSendAuthorized = this.sriSelect != null &&
+                    this.sriSelect.TreasureLiveSendAuthorized;
                 bool hasVisionConfiguration = this.HasVisionInstructionRows() ||
                     (this.cbbVisionWindows != null && this.cbbVisionWindows.SelectedItem != null);
                 if (hasVisionConfiguration && !this.TryApplyVisionProfile())
@@ -5424,9 +5963,16 @@ namespace WPELibrary
                 }
 
                 Socket_Cache.Robot.UpdateRobot(sriSelect, RName_New, this.dtRobotInstruction);
+                this.sriSelect.TreasureLiveSendAuthorized = this.HasTreasureMapInstructionRows() &&
+                    this.chkTreasureLiveSend != null &&
+                    this.chkTreasureLiveSend.Checked;
+
+                // 保存召唤兽技能书预设（本地数据，不读取游戏进程）
+                this.sriSelect.SummonedPetSkillBookPreset = this.presetEditing;
 
                 if (!Socket_Cache.RobotList.SaveRobotList_ToDB())
                 {
+                    this.sriSelect.TreasureLiveSendAuthorized = originalTreasureLiveSendAuthorized;
                     this.RestoreRobotEditorState(
                         originalName,
                         originalRobotInstructions,
@@ -5505,7 +6051,20 @@ namespace WPELibrary
                             }
                             return;
                         }
-                        sr.StartRobot(sriSelect.RName, this.dtRobotInstruction, parameters);
+                        if (!sr.StartRobot(sriSelect.RName, this.dtRobotInstruction, parameters))
+                        {
+                            this.bExecute.Enabled = true;
+                            this.bStop.Enabled = false;
+                            this.tcRobotInstruction.Enabled = true;
+                            if (this.dgvRobotInstruction.ContextMenuStrip != null)
+                            {
+                                this.dgvRobotInstruction.ContextMenuStrip.Enabled = true;
+                            }
+                            this.SetTreasureStatus("启动失败", Color.Firebrick);
+                            return;
+                        }
+
+                        this.SetTreasureStatus("运行中", Color.DarkOrange);
                     }
                 }                
             }
@@ -5518,6 +6077,11 @@ namespace WPELibrary
         private bool TryBuildRobotExecutionParameters(out Dictionary<string, object> parameters)
         {
             parameters = new Dictionary<string, object>();
+            parameters["TreasureLiveSendEnabled"] = this.HasTreasureMapInstructionRows() &&
+                this.chkTreasureLiveSend != null &&
+                this.chkTreasureLiveSend.Checked;
+            parameters["TreasureExecutionMode"] = this.treasureExecutionMode;
+            parameters["TreasureInstructionVersion"] = TreasureMapInstructionVersion.V2;
             if (!this.HasVisionInstructionRows())
             {
                 return true;
@@ -5549,6 +6113,67 @@ namespace WPELibrary
             parameters["VisionProfile"] = runProfile;
             parameters["VisionTextRecognizer"] = this.visionTextRecognizer;
             return true;
+        }
+
+        private bool HasTreasureMapInstructionRows()
+        {
+            return this.dtRobotInstruction != null &&
+                this.dtRobotInstruction.Rows.Cast<DataRow>().Any(row =>
+                (Socket_Cache.Robot.InstructionType)row["Type"] ==
+                    Socket_Cache.Robot.InstructionType.TreasureMap);
+        }
+
+        private void SyncTreasureMapInstructionMode()
+        {
+            if (this.treasureModeSyncing || this.dtRobotInstruction == null)
+            {
+                return;
+            }
+
+            string content = TreasureMapInstructionCodec.Encode(this.treasureExecutionMode);
+            foreach (DataRow row in this.dtRobotInstruction.Rows)
+            {
+                if ((Socket_Cache.Robot.InstructionType)row["Type"] ==
+                    Socket_Cache.Robot.InstructionType.TreasureMap)
+                {
+                    row["Content"] = content;
+                }
+            }
+        }
+
+        private void SyncTreasureMapModeFromInstructions()
+        {
+            if (this.dtRobotInstruction == null)
+            {
+                return;
+            }
+
+            foreach (DataRow row in this.dtRobotInstruction.Rows)
+            {
+                if ((Socket_Cache.Robot.InstructionType)row["Type"] !=
+                    Socket_Cache.Robot.InstructionType.TreasureMap)
+                {
+                    continue;
+                }
+
+                TreasureMapInstructionDefinition definition =
+                    TreasureMapInstructionCodec.DecodeOrDefault(row["Content"].ToString());
+                this.treasureExecutionMode = definition.Mode;
+                if (this.cbbTreasureMode != null)
+                {
+                    this.treasureModeSyncing = true;
+                    try
+                    {
+                        this.cbbTreasureMode.SelectedIndex =
+                            definition.Mode == TreasureMapExecutionMode.Continuous ? 1 : 0;
+                    }
+                    finally
+                    {
+                        this.treasureModeSyncing = false;
+                    }
+                }
+                return;
+            }
         }
 
         private void Worker_RunWorkerCompleted(object sender, System.ComponentModel.RunWorkerCompletedEventArgs e)
@@ -5590,6 +6215,40 @@ namespace WPELibrary
                 {
                     this.DisposeVisionTextRecognizerWhenIdle();
                 }
+
+                if (!this.sr.HasTreasureMapInstructionRows())
+                {
+                    this.SetTreasureStatus("未运行", Color.Gray);
+                }
+                else
+                {
+                    Socket_Robot.TreasureMapRunState treasureState =
+                        this.sr.GetTreasureMapRunState();
+                    if (treasureState != null &&
+                        treasureState.CurrentState == TreasureMapState.Ambiguous)
+                    {
+                        this.SetTreasureStatus("结果不确定", Color.Firebrick);
+                    }
+                    else if (treasureState != null &&
+                             treasureState.CurrentState == TreasureMapState.ControllerConflict)
+                    {
+                        this.SetTreasureStatus("控制冲突", Color.Firebrick);
+                    }
+                    else if (treasureState != null &&
+                             treasureState.CurrentState == TreasureMapState.Failed)
+                    {
+                        this.SetTreasureStatus("失败", Color.Firebrick);
+                    }
+                    else if (treasureState != null &&
+                             treasureState.CurrentState == TreasureMapState.Completed)
+                    {
+                        this.SetTreasureStatus("已完成", Color.DarkGreen);
+                    }
+                    else
+                    {
+                        this.SetTreasureStatus("已停止", Color.Gray);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -5606,7 +6265,19 @@ namespace WPELibrary
                 {
                     this.DisposeVisionTextRecognizerWhenIdle();
                 }
+                // 保留已保存的真实发送授权，避免每次运行后又退回“本次运行”。
             }
+        }
+
+        private void SetTreasureStatus(string text, Color color)
+        {
+            if (this.lTreasureStatus == null)
+            {
+                return;
+            }
+
+            this.lTreasureStatus.Text = text ?? string.Empty;
+            this.lTreasureStatus.ForeColor = color;
         }
 
         private void Worker_ProgressChanged(object sender, System.ComponentModel.ProgressChangedEventArgs e)

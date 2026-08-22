@@ -2,6 +2,7 @@ package com.xnas.wpe.mobile;
 
 import org.json.JSONException;
 import org.json.JSONObject;
+import android.util.Base64;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -18,8 +19,14 @@ public final class WpeSyncClient {
     // canonical payload whose limit is enforced by SyncModels.
     public static final int MAX_RESPONSE_BYTES = SyncModels.DEFAULT_MAX_SNAPSHOT_BYTES + 64 * 1024;
     private final String baseUrl;
+    private final String username;
+    private final String password;
 
     public WpeSyncClient(String baseUrl) {
+        this(baseUrl, "", "");
+    }
+
+    public WpeSyncClient(String baseUrl, String username, String password) {
         String normalized = baseUrl == null ? "" : baseUrl.trim();
         if (!normalized.regionMatches(true, 0, "https://", 0, "https://".length())) {
             throw new IllegalArgumentException("远程管理必须使用 HTTPS 地址。");
@@ -42,6 +49,8 @@ public final class WpeSyncClient {
             throw new IllegalArgumentException("电脑端地址无效。", ex);
         }
         this.baseUrl = normalized + "/";
+        this.username = username == null ? "" : username;
+        this.password = password == null ? "" : password;
     }
 
     public String get(String path) throws IOException {
@@ -127,6 +136,12 @@ public final class WpeSyncClient {
             connection.setInstanceFollowRedirects(false);
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty("Accept-Encoding", "gzip");
+            if (!username.isEmpty() && !password.isEmpty()) {
+                String credentials = username + ":" + password;
+                String encoded = Base64.encodeToString(
+                        credentials.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+                connection.setRequestProperty("Authorization", "Basic " + encoded);
+            }
             if ("POST".equals(method)) {
                 connection.setDoOutput(true);
                 connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
@@ -255,6 +270,9 @@ public final class WpeSyncClient {
         }
         if ("runtime_not_connected".equals(code)) {
             return "电脑端当前没有可用的目标连接";
+        }
+        if ("runtime_route_ambiguous".equals(code)) {
+            return "当前封包对应多个候选连接，请关闭其他连接或重新抓包";
         }
         if ("send_failed".equals(code)) {
             return "电脑端已接收发送请求，但当前连接未实际发送封包；请重新捕获当前连接后重试";

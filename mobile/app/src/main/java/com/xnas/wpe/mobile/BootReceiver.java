@@ -6,7 +6,7 @@ import android.content.Intent;
 import android.os.Build;
 import android.provider.Settings;
 
-/** Restores the passwordless sync service after the emulator restarts. */
+/** Restores the authenticated sync service after the emulator restarts. */
 public final class BootReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {

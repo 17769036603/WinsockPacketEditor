@@ -29,6 +29,7 @@ using System.Windows.Forms;
 using System.Xml.Linq;
 using WPELibrary.Lib.NativeMethods;
 using WPELibrary.Lib.WebAPI;
+using WPELibrary.Lib.Vision;
 
 namespace WPELibrary.Lib
 {   
@@ -89,6 +90,23 @@ namespace WPELibrary.Lib
         private static bool hookResultWorkerStopping;
         private static int hookResultQueueCount;
 
+
+        // 跳跃到达证据观察器 - 只读受限队列
+        private const int EvidenceQueueMaxCount = 10000;
+        private static readonly ConcurrentQueue<byte[]> evidenceQueue = new ConcurrentQueue<byte[]>();
+        private static readonly AutoResetEvent evidenceQueueSignal = new AutoResetEvent(false);
+        private static readonly object evidenceQueueSync = new object();
+        private static Thread evidenceWorker;
+        private static bool evidenceWorkerStopping;
+        private static int evidenceQueueCount;
+
+        // Use 结果证据观察器
+        private static readonly ConcurrentQueue<byte[]> useResultEvidenceQueue = new ConcurrentQueue<byte[]>();
+        private static readonly AutoResetEvent useResultEvidenceQueueSignal = new AutoResetEvent(false);
+        private static readonly object useResultEvidenceQueueSync = new object();
+        private static Thread useResultEvidenceWorker;
+        private static bool useResultEvidenceWorkerStopping;
+        private static int useResultEvidenceQueueCount;
         #region//密码字典
 
         private static readonly Dictionary<char, string> encryptionMap = new Dictionary<char, string>
@@ -535,12 +553,14 @@ namespace WPELibrary.Lib
 
                     foreach (Process p in procesArr)
                     {
+                        Image iICO = null;
+                        bool rowAdded = false;
                         try
                         {
                             string sPName = p.ProcessName;
                             string sPPath = Socket_Operation.GetProcessPath(p);
                             int iPID = p.Id;
-                            Image iICO = IconFromFile(p);
+                            iICO = IconFromFile(p);
                             bool isWin64 = Socket_Operation.IsWin64Process(iPID);
                             string injectionLibrary = Path.Combine(
                                 Path.GetDirectoryName(typeof(Socket_Operation).Assembly.Location),
@@ -556,12 +576,21 @@ namespace WPELibrary.Lib
                                 ? (MultiLanguage.DefaultLanguage == "en-US" ? "Ready" : "可注入")
                                 : (MultiLanguage.DefaultLanguage == "en-US" ? "Missing DLL" : "缺少 DLL");
                             dtProcessList.Rows.Add(dr);
+                            rowAdded = true;
                         }
                         catch (Exception ex)
                         {
                             Socket_Operation.DoLog(
                                 nameof(GetProcess),
                                 string.Format("跳过进程 {0}：{1}", p.Id, ex.Message));
+                        }
+                        finally
+                        {
+                            if (!rowAdded && iICO != null)
+                            {
+                                iICO.Dispose();
+                            }
+                            p.Dispose();
                         }
                     }
 
@@ -589,17 +618,39 @@ namespace WPELibrary.Lib
             string filePath = GetFilePath(process);
             if (string.IsNullOrEmpty(filePath))
             {
-                return new Icon(SystemIcons.Application, 256, 256).ToBitmap();
+                using (Icon fallback = new Icon(SystemIcons.Application, 256, 256))
+                {
+                    return fallback.ToBitmap();
+                }
             }
 
             try
             {
                 var extractor = new IconExtractor.IconExtractor(filePath);
-                var icon = extractor.GetIcon(0);
-                if (icon != null)
+                using (Icon icon = extractor.GetIcon(0))
                 {
                     var splitIcons = IconExtractor.IconUtil.Split(icon);
-                    return GetBestIcon(splitIcons);
+                    try
+                    {
+                        Image bestIcon = GetBestIcon(splitIcons);
+                        if (bestIcon != null)
+                        {
+                            return bestIcon;
+                        }
+                    }
+                    finally
+                    {
+                        if (splitIcons != null)
+                        {
+                            foreach (Icon splitIcon in splitIcons)
+                            {
+                                if (splitIcon != null)
+                                {
+                                    splitIcon.Dispose();
+                                }
+                            }
+                        }
+                    }
                 }
             }
             catch (Exception ex)
@@ -609,14 +660,20 @@ namespace WPELibrary.Lib
 
             try
             {
-                return Icon.ExtractAssociatedIcon(filePath)?.ToBitmap();
+                using (Icon extracted = Icon.ExtractAssociatedIcon(filePath))
+                {
+                    return extracted == null ? null : extracted.ToBitmap();
+                }
             }
             catch (Exception ex)
             {
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
 
-            return new Icon(SystemIcons.Application, 256, 256).ToBitmap();
+            using (Icon fallback = new Icon(SystemIcons.Application, 256, 256))
+            {
+                return fallback.ToBitmap();
+            }
         }
 
         private static string GetFilePath(Process process)
@@ -907,12 +964,103 @@ namespace WPELibrary.Lib
 
         public static byte[] StringToBytes(Socket_Cache.SocketPacket.EncodingFormat efFormat, string sString)
         {
-            byte[] bReturn = new byte[sString.Length];
+            byte[] bReturn = string.IsNullOrEmpty(sString) ? Array.Empty<byte>() : Encoding.Default.GetBytes(sString);
 
             try
             {
                 switch (efFormat)
                 {
+                    case Socket_Cache.SocketPacket.EncodingFormat.Char:
+                        bReturn = new byte[] { (byte)sString[0] };
+                        break;
+
+                    case Socket_Cache.SocketPacket.EncodingFormat.Byte:
+                        if (byte.TryParse(sString, out byte byteValue))
+                        {
+                            bReturn = new byte[] { byteValue };
+                        }
+                        break;
+
+                    case Socket_Cache.SocketPacket.EncodingFormat.Bytes:
+                        var byteList = new List<byte>();
+                        foreach (var part in sString.Split(','))
+                        {
+                            if (byte.TryParse(part.Trim(), out byte b))
+                            {
+                                byteList.Add(b);
+                            }
+                        }
+                        bReturn = byteList.ToArray();
+                        break;
+
+                    case Socket_Cache.SocketPacket.EncodingFormat.Short:
+                        if (short.TryParse(sString, out short shortValue))
+                        {
+                            bReturn = BitConverter.GetBytes(shortValue);
+                        }
+                        break;
+
+                    case Socket_Cache.SocketPacket.EncodingFormat.UShort:
+                        if (ushort.TryParse(sString, out ushort ushortValue))
+                        {
+                            bReturn = BitConverter.GetBytes(ushortValue);
+                        }
+                        break;
+
+                    case Socket_Cache.SocketPacket.EncodingFormat.Int32:
+                        if (int.TryParse(sString, out int intValue))
+                        {
+                            bReturn = BitConverter.GetBytes(intValue);
+                        }
+                        break;
+
+                    case Socket_Cache.SocketPacket.EncodingFormat.UInt32:
+                        if (uint.TryParse(sString, out uint uintValue))
+                        {
+                            bReturn = BitConverter.GetBytes(uintValue);
+                        }
+                        break;
+
+                    case Socket_Cache.SocketPacket.EncodingFormat.Int64:
+                        if (long.TryParse(sString, out long longValue))
+                        {
+                            bReturn = BitConverter.GetBytes(longValue);
+                        }
+                        break;
+
+                    case Socket_Cache.SocketPacket.EncodingFormat.UInt64:
+                        if (ulong.TryParse(sString, out ulong ulongValue))
+                        {
+                            bReturn = BitConverter.GetBytes(ulongValue);
+                        }
+                        break;
+
+                    case Socket_Cache.SocketPacket.EncodingFormat.Float:
+                        if (float.TryParse(sString, out float floatValue))
+                        {
+                            bReturn = BitConverter.GetBytes(floatValue);
+                        }
+                        break;
+
+                    case Socket_Cache.SocketPacket.EncodingFormat.Double:
+                        if (double.TryParse(sString, out double doubleValue))
+                        {
+                            bReturn = BitConverter.GetBytes(doubleValue);
+                        }
+                        break;
+
+                    case Socket_Cache.SocketPacket.EncodingFormat.Bin:
+                        var bitList = new List<byte>();
+                        foreach (var bytePart in sString.Split(' '))
+                        {
+                            if (byte.TryParse(Convert.ToString(Convert.ToByte(bytePart, 2)), out byte bitByte))
+                            {
+                                bitList.Add(bitByte);
+                            }
+                        }
+                        bReturn = bitList.ToArray();
+                        break;
+
                     case Socket_Cache.SocketPacket.EncodingFormat.Default:
                         bReturn = Encoding.Default.GetBytes(sString);
                         break;
@@ -929,6 +1077,10 @@ namespace WPELibrary.Lib
                         bReturn = Encoding.Unicode.GetBytes(sString);
                         break;
 
+                    case Socket_Cache.SocketPacket.EncodingFormat.ASCII:
+                        bReturn = Encoding.ASCII.GetBytes(sString);
+                        break;
+
                     case Socket_Cache.SocketPacket.EncodingFormat.UTF7:
                         bReturn = Encoding.UTF7.GetBytes(sString);
                         break;
@@ -943,7 +1095,11 @@ namespace WPELibrary.Lib
 
                     case Socket_Cache.SocketPacket.EncodingFormat.UTF32:
                         bReturn = Encoding.UTF32.GetBytes(sString);
-                        break;                
+                        break;
+
+                    case Socket_Cache.SocketPacket.EncodingFormat.Base64:
+                        bReturn = Convert.FromBase64String(sString);
+                        break;
                 }
             }
             catch (Exception ex)
@@ -1090,6 +1246,10 @@ namespace WPELibrary.Lib
 
                         case Socket_Cache.SocketPacket.EncodingFormat.UTF32:
                             sReturn = Encoding.UTF32.GetString(buffer.ToArray());
+                            break;
+
+                        case Socket_Cache.SocketPacket.EncodingFormat.Base64:
+                            sReturn = Convert.ToBase64String(buffer.ToArray());
                             break;
                     }
                 }
@@ -2273,7 +2433,183 @@ namespace WPELibrary.Lib
             {
                 worker.Join(1000);
             }
+            StopEvidenceWorker();
         }
+
+        #region// 跳跃到达证据观察
+
+        /// <summary>
+        /// 启动跳跃到达证据观察工作线程
+        /// </summary>
+        private static void StartEvidenceWorker()
+        {
+            lock (evidenceQueueSync)
+            {
+                if (evidenceWorkerStopping || (evidenceWorker != null && evidenceWorker.IsAlive))
+                    return;
+                evidenceWorkerStopping = false;
+                evidenceWorker = new Thread(ProcessEvidenceObservations);
+                evidenceWorker.IsBackground = true;
+                evidenceWorker.Start();
+            }
+        }
+
+        /// <summary>
+        /// 停止跳跃到达证据观察工作线程
+        /// </summary>
+        public static void StopEvidenceWorker()
+        {
+            Thread worker;
+            lock (evidenceQueueSync)
+            {
+                evidenceWorkerStopping = true;
+                worker = evidenceWorker;
+                while (evidenceQueue.TryDequeue(out byte[] discarded))
+                {
+                    Interlocked.Decrement(ref evidenceQueueCount);
+                }
+            }
+            evidenceQueueSignal.Set();
+            if (worker != null && worker != Thread.CurrentThread)
+            {
+                worker.Join(500);
+            }
+
+            Thread useResultWorker;
+            lock (useResultEvidenceQueueSync)
+            {
+                useResultEvidenceWorkerStopping = true;
+                useResultWorker = useResultEvidenceWorker;
+                while (useResultEvidenceQueue.TryDequeue(out byte[] discarded))
+                {
+                    Interlocked.Decrement(ref useResultEvidenceQueueCount);
+                }
+            }
+            useResultEvidenceQueueSignal.Set();
+            if (useResultWorker != null && useResultWorker != Thread.CurrentThread)
+            {
+                useResultWorker.Join(500);
+            }
+        }
+
+        /// <summary>
+        /// 获取最新的跳跃到达证据
+        /// </summary>
+        public static TreasureJumpArrivalEvidence DequeueArrivalEvidence()
+        {
+            TreasureJumpArrivalEvidence evidence;
+            return TreasureC6StreamObservation.TryDequeueArrivalEvidence(out evidence)
+                ? evidence
+                : null;
+        }
+
+        /// <summary>
+        /// 获取最新的 Use 结果证据
+        /// </summary>
+        public static TreasureUseResultEvidence DequeueUseResultEvidence()
+        {
+            TreasureUseResultEvidence evidence;
+            return TreasureC6StreamObservation.TryDequeueUseResultEvidence(out evidence)
+                ? evidence
+                : null;
+        }
+
+        private static void ProcessEvidenceObservations()
+        {
+            while (!Volatile.Read(ref evidenceWorkerStopping))
+            {
+                byte[] packet;
+                if (!evidenceQueue.TryDequeue(out packet))
+                {
+                    evidenceQueueSignal.WaitOne(100);
+                    continue;
+                }
+
+                Interlocked.Decrement(ref evidenceQueueCount);
+                try
+                {
+                    Vision.TreasureC6StreamObservation.OnArrivalEvidence(packet);
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(ProcessEvidenceObservations), ex.Message);
+                }
+            }
+        }
+
+        private static void ProcessUseResultObservations()
+        {
+            while (!Volatile.Read(ref useResultEvidenceWorkerStopping))
+            {
+                byte[] packet;
+                if (!useResultEvidenceQueue.TryDequeue(out packet))
+                {
+                    useResultEvidenceQueueSignal.WaitOne(100);
+                    continue;
+                }
+
+                Interlocked.Decrement(ref useResultEvidenceQueueCount);
+                try
+                {
+                    Vision.TreasureC6StreamObservation.OnUseResultEvidence(packet);
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(nameof(ProcessUseResultObservations), ex.Message);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 调度跳跃到达证据观察
+        /// </summary>
+        internal static void DispatchArrivalEvidence(byte[] buffer)
+        {
+            if (buffer == null || buffer.Length < 16)
+                return;
+
+            if (!TreasureEvidenceDecoder.IsJumpArrivalEvidenceFrame(buffer))
+                return;
+
+            if (Volatile.Read(ref evidenceQueueCount) >= EvidenceQueueMaxCount)
+                return;
+
+            StartEvidenceWorker();
+            evidenceQueue.Enqueue((byte[])buffer.Clone());
+            Interlocked.Increment(ref evidenceQueueCount);
+            evidenceQueueSignal.Set();
+        }
+
+        /// <summary>
+        /// 调度 Use 结果证据观察
+        /// </summary>
+        internal static void DispatchUseResultEvidence(byte[] buffer)
+        {
+            if (buffer == null || buffer.Length < 16)
+                return;
+
+            if (!TreasureEvidenceDecoder.IsUseResultEvidenceFrame(buffer))
+                return;
+
+            if (Volatile.Read(ref useResultEvidenceQueueCount) >= 10000)
+                return;
+
+            useResultEvidenceQueue.Enqueue((byte[])buffer.Clone());
+            Interlocked.Increment(ref useResultEvidenceQueueCount);
+            lock (useResultEvidenceQueueSync)
+            {
+                if (useResultEvidenceWorker == null || !useResultEvidenceWorker.IsAlive)
+                {
+                    useResultEvidenceWorkerStopping = false;
+                    useResultEvidenceWorker = new Thread(ProcessUseResultObservations);
+                    useResultEvidenceWorker.IsBackground = true;
+                    useResultEvidenceWorker.Start();
+                }
+            }
+            useResultEvidenceQueueSignal.Set();
+        }
+
+        #endregion
 
         public static Task ProcessingHookResultAsync(
             int socket,
@@ -2285,6 +2621,16 @@ namespace WPELibrary.Lib
             Socket_Cache.SocketPacket.SockAddr sockaddr,
             DateTime packetTime)
         {
+            // 跳跃到达证据观察 - 只读派发（仅观察 S2C 包）
+            if (bBuffer != null && bBuffer.Length >= 16)
+            {
+                if (ptType == Socket_Cache.SocketPacket.PacketType.WS2_Recv ||
+                    ptType == Socket_Cache.SocketPacket.PacketType.WS2_RecvFrom)
+                {
+                    DispatchArrivalEvidence(bBuffer);
+                    DispatchUseResultEvidence(bBuffer);
+                }
+            }
             if (filterAction == Socket_Cache.Filter.FilterAction.NoModify_NoDisplay)
                 return Task.CompletedTask;
 

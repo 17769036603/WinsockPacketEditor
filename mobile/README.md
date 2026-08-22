@@ -24,7 +24,7 @@ gradlew.bat lintDebug assembleDebug
 
 ## 连接
 
-移动端完全免账号、免密码。应用使用已保存的 HTTPS 地址；首次没有地址时直接连接 `https://192.168.0.100:89/`。配置主页面永久隐藏，启动后立即退回游戏并显示悬浮控制；Activity、粘性前台服务或模拟器开机重建时都会自动恢复连接。旧版保存的账号只作为升级期间的本地缓存命名空间保留，不会发送到电脑端，也不参与认证。
+移动端使用独立的低权限代理账号和密码认证。首次使用或认证失败时填写 HTTPS 地址、移动端账号和密码；密码使用 Android Keystore 加密保存，只通过 Basic Auth 发送到电脑端。凭据完整时配置页自动隐藏，启动后退回游戏并显示悬浮控制；Activity、粘性前台服务或模拟器开机重建时都会自动恢复连接。首次没有地址时仍使用 `https://192.168.0.100:89/` 作为默认值。
 
 ## 悬浮按钮
 
@@ -38,6 +38,6 @@ gradlew.bat lintDebug assembleDebug
 
 ![模拟器端最终悬浮面板参考图](docs/references/simulator-overlay-final-v1.5.png)
 
-电脑端远程管理使用 HTTPS；Windows HTTP.SYS 由电脑端完成证书绑定，Android 客户端内置本机连接证书信任，不要求你在模拟器设置中再安装证书。`/MobileSync/*` 在局域网内免密开放 manifest、完整 snapshot、runtime 以及发送/递进/助手的开始、暂停和停止接口；桌面远程管理后台继续要求管理员账号。雷电模拟器必须能够访问该电脑地址。
+电脑端远程管理使用 HTTPS；Windows HTTP.SYS 由电脑端完成证书绑定，Android 客户端内置本机连接证书信任，不要求你在模拟器设置中再安装证书。`/MobileSync/*` 仅在局域网内开放，并要求独立低权限代理账号；manifest、完整 snapshot、runtime 以及发送/递进/助手的开始、暂停和停止接口都受 Basic Auth 保护，桌面远程管理后台继续要求管理员账号。雷电模拟器必须能够访问该电脑地址。
 
 完整详情 DTO、稳定分组 ID、版本绑定动作和原子快照缓存已按 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) 落地；当前仍需在真实 HTTPS 证书和目标业务环境中完成最终联调验收。

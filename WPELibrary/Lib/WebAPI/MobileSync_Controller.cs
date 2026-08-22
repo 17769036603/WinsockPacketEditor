@@ -1915,7 +1915,48 @@ namespace WPELibrary.Lib.WebAPI
                 {
                     if (activeJobId == jobId && ReferenceEquals(activeRobot, robot))
                     {
-                        state = state == "stopping" ? "cancelled" : "completed";
+                        if (state == "stopping")
+                        {
+                            state = "cancelled";
+                        }
+                        else if (robot.HasTreasureMapInstructionRows())
+                        {
+                            Socket_Robot.TreasureMapRunState treasureState =
+                                robot.GetTreasureMapRunState();
+                            if (treasureState != null &&
+                                treasureState.CurrentState == TreasureMapState.Ambiguous)
+                            {
+                                state = "ambiguous";
+                                errorCode = string.IsNullOrWhiteSpace(treasureState.LastError)
+                                    ? "treasure_result_ambiguous"
+                                    : treasureState.LastError;
+                                detail = "藏宝图流程结果不确定，请先人工复核现场状态，禁止自动重试。";
+                            }
+                            else if (treasureState != null &&
+                                     (treasureState.CurrentState == TreasureMapState.Failed ||
+                                      treasureState.CurrentState == TreasureMapState.ControllerConflict))
+                            {
+                                state = "faulted";
+                                errorCode = string.IsNullOrWhiteSpace(treasureState.LastError)
+                                    ? treasureState.CurrentState == TreasureMapState.ControllerConflict
+                                        ? "controller_conflict"
+                                        : "treasure_run_failed"
+                                    : treasureState.LastError;
+                                detail = treasureState.CurrentState == TreasureMapState.ControllerConflict
+                                    ? "藏宝图流程已有其他控制器占用。"
+                                    : "藏宝图流程未完成。";
+                            }
+                            else
+                            {
+                                state = "completed";
+                                errorCode = string.Empty;
+                                detail = string.Empty;
+                            }
+                        }
+                        else
+                        {
+                            state = "completed";
+                        }
                         finishedAt = DateTime.UtcNow;
                         activeRobot = null;
                     }

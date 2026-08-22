@@ -168,6 +168,15 @@ namespace WinsockPacketEditor
         {
             try
             {
+                // The network process is the real WPE target.  Resolve it by
+                // process identity and newest start time so a restarted game
+                // never reuses a stale PID from the previous session.
+                if (this.TryBindLatestPreferredProcess())
+                {
+                    this.autoInjectLastProcess = HasAutoInjectSwitch();
+                    return;
+                }
+
                 if (!string.IsNullOrEmpty(Socket_Cache.System.LastInjection))
                 {
                     Process[] plProcess = Process.GetProcessesByName(Socket_Cache.System.LastInjection);
@@ -219,6 +228,11 @@ namespace WinsockPacketEditor
 
             try
             {
+                if (this.TryBindLatestPreferredProcess())
+                {
+                    return true;
+                }
+
                 foreach (Process process in Process.GetProcesses())
                 {
                     try
@@ -285,6 +299,49 @@ namespace WinsockPacketEditor
             }
         }
 
+        private bool TryBindLatestPreferredProcess()
+        {
+            Process latest;
+            if (!InjectionTargetResolver.TryResolveLatestPreferred(out latest))
+            {
+                return false;
+            }
+
+            using (latest)
+            {
+                Program.PID = latest.Id;
+                Program.PNAME = latest.ProcessName;
+                Program.PATH = Socket_Operation.GetProcessPath(latest);
+            }
+
+            this.ShowSelectProcess();
+            return true;
+        }
+
+        private bool IsSelectedProcessAlive()
+        {
+            if (Program.PID <= 0 || string.IsNullOrWhiteSpace(Program.PNAME))
+            {
+                return false;
+            }
+
+            try
+            {
+                using (Process process = Process.GetProcessById(Program.PID))
+                {
+                    return string.Equals(
+                        process.ProcessName,
+                        Program.PNAME,
+                        StringComparison.OrdinalIgnoreCase) &&
+                        ProcessList_Form.IsSupportedInjectionProcess(process.ProcessName);
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private void UpdateSelectedProcessState()
         {
             bool hasSelection =
@@ -310,6 +367,11 @@ namespace WinsockPacketEditor
         {
             try
             {
+                if (this.autoInjectLastProcess || !this.IsSelectedProcessAlive())
+                {
+                    this.TryBindLatestPreferredProcess();
+                }
+
                 string channelName = "WPE64";
                 ProcessID = Program.PID;
                 ProcessPath = Program.PATH;

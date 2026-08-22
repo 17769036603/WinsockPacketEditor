@@ -2,7 +2,7 @@
 
 版本：v1.6
 
-本次修订：按已确认的局域网边界将 `/MobileSync/*` 改为完全免账号、免密码，永久隐藏 Android 配置页，并补充启动、进程重建和开机后的自动连接/悬浮服务恢复。
+本次修订：在局域网边界内为 `/MobileSync/*` 增加独立低权限代理账号认证，使用 Android Keystore 保护移动端密码，并补充凭据完整时的启动、进程重建和开机后的自动连接/悬浮服务恢复。
 
 适用范围：雷电模拟器中的原生 Android 客户端、电脑端 `MobileSync` 接口及两端联调验收。
 
@@ -61,7 +61,7 @@ flowchart LR
 |---|---|---|---|
 | `MobileSync_Controller` | `WPELibrary/Lib/WebAPI/MobileSync_Controller.cs` | API 路由、输入校验、运行操作转发 | 不直接操作 Android UI |
 | `MobilePresetSnapshotBuilder` | 同上 | 在一致快照上生成完整只读 DTO 和 revision | 不把桌面端 XML、认证信息或未列入协议的内部状态直接放入响应 |
-| `Socket_Web` | `WPELibrary/Lib/WebAPI/Socket_Web.cs` | HTTPS 服务、MobileSync 匿名边界和其他路由管理员认证 | 不把匿名边界扩大到其他 Web API |
+| `Socket_Web` | `WPELibrary/Lib/WebAPI/Socket_Web.cs` | HTTPS 服务、MobileSync 局域网/低权限账号边界和其他路由管理员认证 | 不把 MobileSync 账号权限扩大到管理员路由 |
 | `WpeSyncClient` | `mobile/.../WpeSyncClient.java` | HTTPS 请求、超时、状态码和响应读取 | 不决定何时同步、不修改 UI |
 | `SyncStore` | 新增 Android 类 | profile 元数据、选中 ID、最近状态和快照版本指针 | 不发网络请求、不直接拼接完整快照 |
 | `SnapshotStore` | 新增 Android 类 | 使用应用私有的版本化快照文件（允许 gzip）保存完整只读快照，并提供临时写入、校验后原子提交和回滚 | 不发网络请求、不提供编辑写回 |
@@ -76,9 +76,9 @@ flowchart LR
 ### 3.1 认证与传输
 
 - 所有移动端路由必须使用 HTTPS。
-- `/MobileSync/*` 不要求账号或密码；其他 Web API 继续要求管理员远程管理账号。
+- `/MobileSync/*` 只允许局域网 peer，并要求独立低权限代理账号；其他 Web API 继续要求管理员远程管理账号。
 - Android 禁止跟随重定向；重定向到 HTTP 或其他主机都视为失败。
-- 客户端不创建或发送 `Authorization` 请求头，也不包含账号/密码输入与持久化路径。
+- 客户端使用 Basic `Authorization` 请求头；账号明文只存在于输入/请求内存，密码持久化内容由 Android Keystore 的 AES/GCM 密钥保护。
 - 日志只能记录主机、路由、HTTP 状态和错误类别，不得记录原始封包。
 
 #### 3.1.1 标识、编码和参数语义
@@ -302,7 +302,7 @@ flowchart LR
 }
 ```
 
-至少统一以下业务错误码：`preset_revision_mismatch`、`preset_not_found`、`preset_invalid`、`runtime_busy`、`runtime_not_connected`、`pause_not_allowed`、`pause_not_found`、`stop_not_found`。开始接口默认不自动重试；暂停和停止接口可安全重复提交，但必须以最终 runtime 为准。
+至少统一以下业务错误码：`preset_revision_mismatch`、`preset_not_found`、`preset_invalid`、`runtime_busy`、`runtime_not_connected`、`runtime_route_ambiguous`、`pause_not_allowed`、`pause_not_found`、`stop_not_found`。开始接口默认不自动重试；暂停和停止接口可安全重复提交，但必须以最终 runtime 为准。
 
 兼容当前纯文本/框架错误时，客户端按 HTTP 状态先分类，再把响应正文截断为安全的短提示。
 
@@ -407,7 +407,7 @@ profile.<key>.selectedAssistant
 profile.<key>.lastSyncAt
 ```
 
-移动端没有账号或密码字段。切换 endpoint profile 时先加载新 profile 的缓存；没有缓存就展示空目录和“首次连接将同步”，不能继续展示旧电脑的列表。
+移动端凭据不参与快照内容，但 profile 必须保存移动端账号标识，并由 `SyncStore` 使用 Android Keystore 加密保存密码。切换 endpoint/profile 时先加载新 profile 的缓存；没有缓存就展示空目录和“首次连接将同步”，不能继续展示旧电脑的列表。凭据不完整时不得自动连接或隐藏配置入口。
 
 上述轻量键只保存版本指针、分组摘要和选择状态；完整发送/递进/助手详情由 `SnapshotStore` 按 `profileKey + snapshotVersion` 保存。新版本提交完成前，旧 `snapshotStorageKey` 必须保持可读。
 
@@ -467,7 +467,7 @@ profile.<key>.lastSyncAt
 
 ### 7.2 服务端
 
-- `/MobileSync/*` 在局域网内匿名开放；匿名中间件必须精确匹配该路由前缀，其他 Web API 继续使用管理员认证。
+- `/MobileSync/*` 在局域网内要求独立低权限代理账号；认证中间件必须精确匹配该路由前缀，其他 Web API 继续使用管理员认证。
 - 启动发送、递进、助手前都要校验 GUID 存在且预设有效。
 - 启动发送、递进、助手前都要校验 `expectedRevision`；版本不一致返回 `preset_revision_mismatch`，不得执行客户端旧快照对应的请求。
 - 运行中的冲突统一返回可识别的业务错误，不依赖英文异常文本作为客户端逻辑条件。
@@ -556,16 +556,16 @@ profile.<key>.lastSyncAt
 
 1. 保留 `OverlayService` 的窗口实现，移除其中任何业务判断。
 2. 增加命令 ID、短期待处理队列和重复命令保护。
-3. 透明 Activity 实现免密自动连接、权限引导和服务恢复；更新、runtime 与选择状态只在悬浮面板展示。
+3. 透明 Activity 实现凭据完整时的自动连接、权限引导和服务恢复；更新、runtime 与选择状态只在悬浮面板展示。
 4. 复查 720p 模拟器、窄屏和系统字体放大下的面板可点击性。
 
 ### 阶段 D：可验证交付
 
 1. Android 单元测试：JSON 解析、revision 校验、快照事务、profile 隔离、选择恢复。
-2. 后端回归：manifest/snapshot/runtime/开始/暂停/停止、MobileSync 匿名边界、其他路由管理员认证和错误码。
+2. 后端回归：manifest/snapshot/runtime/开始/暂停/停止、MobileSync 局域网/低权限账号边界、其他路由管理员认证和错误码。
 3. Android Lint、Debug APK、Release APK 构建。
 4. 雷电模拟器安装和手工点击验收。
-5. 记录真实 HTTPS、免密路由边界、桌面远程服务开关和未执行的真实业务边界。
+5. 记录真实 HTTPS、MobileSync 认证边界、桌面远程服务开关和未执行的真实业务边界。
 
 ## 10. 测试与验收矩阵
 
@@ -612,12 +612,12 @@ profile.<key>.lastSyncAt
 | OVL-06 | 收起不影响任务 | 开始、暂停或停止请求后收起面板，任务状态不被改变；重新展开后显示电脑端最终 runtime |
 | OVL-07 | 悬浮球双状态图标 | 发送中显示绿色暂停图标，暂停中显示橙色继续图标，停止后恢复普通六点图标；不增加第三种运行图标状态 |
 | SEC-01 | HTTP/重定向 | 客户端拒绝明文和自动降级重定向 |
-| SEC-02 | 认证边界 | `/MobileSync/*` 无 `Authorization` 时可用，其他 Web API 无管理员凭据时返回 401 |
+| SEC-02 | 认证边界 | `/MobileSync/*` 无有效低权限账号时返回 401，其他 Web API 无管理员凭据时返回 401 |
 | SEC-03 | 快照敏感数据 | 原始封包、助手指令和视觉参数不写日志，并存放在 Android 应用私有缓存 |
 | SEC-04 | Schema/哈希 | 不支持的 schema、错误 payloadSha256 或错误大小声明均拒绝替换 |
 | API-01 | 快照安全 | 响应只包含版本化的完整只读预设字段，不包含密码、管理员配置或未授权桌面状态 |
 | BUILD-01 | 构建 | Lint、Debug/Release APK 和桌面端 API 构建通过 |
-| REAL-01 | 真实联调 | 配置真实 HTTPS 后，在雷电模拟器免密完成连接、更新、开始、暂停、恢复、停止 |
+| REAL-01 | 真实联调 | 配置真实 HTTPS 和低权限账号后，在雷电模拟器完成连接、更新、开始、暂停、恢复、停止 |
 
 ## 11. 交付门槛
 
@@ -631,6 +631,6 @@ profile.<key>.lastSyncAt
 - 断网、过期版本、快照超限、哈希错误和重复停止都有明确且可验证的行为。
 - profile 隔离和选择恢复通过测试。
 - 悬浮窗不复制业务逻辑，Activity/Service 生命周期不会造成静默失败。
-- API 错误可分类，MobileSync 匿名边界、其他路由管理员认证和 HTTPS 约束都已验证。
+- API 错误可分类，MobileSync 局域网/低权限账号边界、其他路由管理员认证和 HTTPS 约束都已验证。
 - Android 构建、Lint、模拟器安装和真实 HTTPS 联调均有实际证据。
 - 未执行的抓包、注入、真实封包发送或目标业务结果必须单独标明，不能由 UI/协议测试替代。

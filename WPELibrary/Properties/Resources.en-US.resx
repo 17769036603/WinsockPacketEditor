@@ -122,6 +122,7 @@
   <data name="UI_SendPresetSaved" xml:space="preserve"><value>Send preset saved: {0} / {1}</value></data>
   <data name="UI_SendPresetUpdated" xml:space="preserve"><value>Send preset updated: {0} / {1}</value></data>
   <data name="UI_CurrentSocketRequired" xml:space="preserve"><value>No current game connection matches this preset. Capture a packet with the same destination and type, or set the system Socket manually.</value></data>
+  <data name="UI_CurrentSocketAmbiguous" xml:space="preserve"><value>This packet matches multiple current connections and cannot be sent safely. Close the other connections or capture the target packet again.</value></data>
   <data name="UI_ContinuousSend" xml:space="preserve"><value>Continuous</value></data>
   <data name="SendPreset_Title" xml:space="preserve"><value>Save to send preset</value></data>
   <data name="SendPreset_SavePacketTitle" xml:space="preserve"><value>Save packet preset</value></data>
@@ -154,7 +155,13 @@
   <data name="UI_CharlesSessionFilter" xml:space="preserve"><value>Charles session (*.chlsx)|*.chlsx</value></data>
   <data name="UI_FilterFileFilter" xml:space="preserve"><value>FILT filter (*.filt)|*.filt</value></data>
   <data name="UI_PacketDetails" xml:space="preserve"><value>Packet details</value></data>
+  <data name="UI_ShowOnly4D5AHeader" xml:space="preserve"><value>Show only 4D5A packets</value></data>
   <data name="UI_Stop" xml:space="preserve"><value>Stop</value></data>
+  <data name="UI_TreasureLiveSendConfirmTitle" xml:space="preserve"><value>Treasure-map send confirmation</value></data>
+  <data name="UI_TreasureLiveSendConfirm" xml:space="preserve"><value>This assistant contains a treasure-map flow and will send Jump and native auto-dig packets. The confirmation is saved for this assistant and will not be shown again. Continue?</value></data>
+  <data name="UI_AssistantStartFailed" xml:space="preserve"><value>The assistant could not start. Check that its flow is valid.</value></data>
+  <data name="UI_TreasureC6Unavailable" xml:space="preserve"><value>The treasure-map assistant stopped because the C6 reader at 127.0.0.1:28765 is unavailable or disconnected.</value></data>
+  <data name="UI_TreasureRunFailed" xml:space="preserve"><value>The treasure-map assistant stopped: {0}</value></data>
   <data name="UI_SendCount" xml:space="preserve"><value>Send count</value></data>
   <data name="UI_IntervalMs" xml:space="preserve"><value>Interval (ms)</value></data>
   <data name="UI_Range" xml:space="preserve"><value>Range</value></data>
@@ -307,6 +314,8 @@
   <data name="ByteSweep_LogLive" xml:space="preserve"><value>Live status</value></data>
   <data name="ByteSweep_LogStarting" xml:space="preserve"><value>Starting</value></data>
   <data name="ByteSweep_LogRunning" xml:space="preserve"><value>Running</value></data>
+  <data name="UI_AssistantStartingTip" xml:space="preserve"><value>Starting, please wait</value></data>
+  <data name="UI_AssistantRunningTip" xml:space="preserve"><value>Running, click to stop</value></data>
   <data name="ByteSweep_LogStopping" xml:space="preserve"><value>Stopping</value></data>
   <data name="ByteSweep_LogCompleted" xml:space="preserve"><value>Completed</value></data>
   <data name="ByteSweep_LogCancelled" xml:space="preserve"><value>Stopped</value></data>

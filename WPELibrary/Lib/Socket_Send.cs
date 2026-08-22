@@ -21,6 +21,7 @@ namespace WPELibrary.Lib
 
         private CancellationTokenSource cts;
         private int resolvedSystemSocket;
+        private bool usePacketSockets;
         private List<Socket_PacketInfo> SendCollection;
         private readonly ManualResetEventSlim sendStopped = new ManualResetEventSlim(true);
         private readonly ManualResetEventSlim sendPauseGate = new ManualResetEventSlim(true);
@@ -52,33 +53,52 @@ namespace WPELibrary.Lib
             int socketSnapshot = SystemSocket
                 ? Socket_Cache.System.SystemSocket
                 : 0;
-            return this.StartSend(
+            return this.StartSendCore(
                 SendName,
                 SystemSocket,
                 socketSnapshot,
                 LoopCNT,
                 LoopINT,
-                SendCollection);
+                SendCollection,
+                false);
         }
 
         public bool StartSend(string SendName, int ResolvedSystemSocket, int LoopCNT, int LoopINT, BindingList<Socket_PacketInfo> SendCollection)
         {
-            return this.StartSend(
+            return this.StartSendCore(
                 SendName,
                 true,
                 ResolvedSystemSocket,
                 LoopCNT,
                 LoopINT,
-                SendCollection);
+                SendCollection,
+                false);
         }
 
-        public bool StartSend(
+        public bool StartSendWithPacketSockets(
+            string SendName,
+            int LoopCNT,
+            int LoopINT,
+            BindingList<Socket_PacketInfo> SendCollection)
+        {
+            return this.StartSendCore(
+                SendName,
+                false,
+                0,
+                LoopCNT,
+                LoopINT,
+                SendCollection,
+                true);
+        }
+
+        private bool StartSendCore(
             string SendName,
             bool SystemSocket,
             int ResolvedSystemSocket,
             int LoopCNT,
             int LoopINT,
-            BindingList<Socket_PacketInfo> SendCollection)
+            BindingList<Socket_PacketInfo> SendCollection,
+            bool usePacketSockets)
         {
             try
             {
@@ -102,6 +122,7 @@ namespace WPELibrary.Lib
                 this.SendName = SendName;
                 this.SystemSocket = SystemSocket;
                 this.resolvedSystemSocket = Math.Max(0, ResolvedSystemSocket);
+                this.usePacketSockets = usePacketSockets;
                 this.LoopCNT = LoopCNT;
                 this.LoopINT = LoopINT;
                 this.SendCollection = CreateSendSnapshot(SendCollection);
@@ -240,7 +261,7 @@ namespace WPELibrary.Lib
         {
             try
             {
-                if (this.SystemSocket)
+                if (this.SystemSocket && !this.usePacketSockets)
                 {
                     if (this.resolvedSystemSocket <= 0)
                     {
@@ -263,7 +284,7 @@ namespace WPELibrary.Lib
                         else
                         {
                             int Socket = spi == null ? 0 : spi.PacketSocket;
-                            if (this.SystemSocket && spi != null)
+                            if (this.SystemSocket && !this.usePacketSockets && spi != null)
                             {
                                 Socket = this.resolvedSystemSocket;
                             }
@@ -275,7 +296,7 @@ namespace WPELibrary.Lib
                             }
                             else
                             {
-                                bool bOK = Socket_Operation.SendPacket(Socket, spi.PacketType, string.Empty, spi.PacketTo, spi.PacketBuffer);
+                                bool bOK = Socket_Operation.SendPacket(Socket, spi.PacketType, spi.PacketFrom, spi.PacketTo, spi.PacketBuffer);
 
                                 if (bOK)
                                 {

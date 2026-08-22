@@ -4,7 +4,16 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.util.Base64;
 
+import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 import java.util.UUID;
 
 /** Lightweight profile metadata only; complete snapshots live in SnapshotStore. */
@@ -12,6 +21,8 @@ public final class SyncStore {
     private static final String PREFS = "wpe_mobile_sync_v2";
     private static final String ENDPOINT = "endpoint";
     private static final String USERNAME = "username";
+    private static final String PASSWORD = "passwordEncrypted";
+    private static final String KEY_ALIAS = "wpe_mobile_sync_credentials";
     private static final String ACTIVE_PROFILE = "activeProfile";
     private static final String LEGACY_CREDENTIAL_PREFS = "wpe_mobile_credentials_v1";
 
@@ -38,10 +49,40 @@ public final class SyncStore {
         return preferences.getString(USERNAME, "");
     }
 
+    public String getPassword() {
+        String encrypted = preferences.getString(PASSWORD, "");
+        if (encrypted.isEmpty()) {
+            return "";
+        }
+        try {
+            return decrypt(encrypted);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    public boolean hasCredentials() {
+        return !getEndpoint().isEmpty() && !getUsername().isEmpty() && !getPassword().isEmpty();
+    }
+
+    public void saveConnection(String endpoint, String username, String password) {
+        SharedPreferences.Editor editor = preferences.edit()
+                .putString(ENDPOINT, endpoint == null ? "" : endpoint)
+                .putString(USERNAME, username == null ? "" : username);
+        if (password == null || password.isEmpty()) {
+            editor.remove(PASSWORD);
+        } else {
+            try {
+                editor.putString(PASSWORD, encrypt(password));
+            } catch (Exception ignored) {
+                editor.remove(PASSWORD);
+            }
+        }
+        editor.apply();
+    }
+
     public void saveConnection(String endpoint, String username) {
-        preferences.edit().putString(ENDPOINT, endpoint == null ? "" : endpoint)
-                .putString(USERNAME, username == null ? "" : username)
-                .apply();
+        saveConnection(endpoint, username, getPassword());
     }
 
     public String activeProfileKey() {
@@ -142,6 +183,50 @@ public final class SyncStore {
 
     private static String prefix(String key) {
         return "profile." + key + ".";
+    }
+
+    private String encrypt(String value) throws Exception {
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey());
+        byte[] iv = cipher.getIV();
+        byte[] encrypted = cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));
+        byte[] payload = new byte[iv.length + encrypted.length];
+        System.arraycopy(iv, 0, payload, 0, iv.length);
+        System.arraycopy(encrypted, 0, payload, iv.length, encrypted.length);
+        return Base64.encodeToString(payload, Base64.NO_WRAP);
+    }
+
+    private String decrypt(String value) throws Exception {
+        byte[] payload = Base64.decode(value, Base64.NO_WRAP);
+        if (payload.length <= 12) {
+            throw new IllegalArgumentException("Invalid encrypted credential.");
+        }
+        byte[] iv = new byte[12];
+        byte[] encrypted = new byte[payload.length - iv.length];
+        System.arraycopy(payload, 0, iv, 0, iv.length);
+        System.arraycopy(payload, iv.length, encrypted, 0, encrypted.length);
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), new GCMParameterSpec(128, iv));
+        return new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8);
+    }
+
+    private SecretKey getOrCreateKey() throws Exception {
+        KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
+        keyStore.load(null);
+        if (!keyStore.containsAlias(KEY_ALIAS)) {
+            KeyGenerator generator = KeyGenerator.getInstance(
+                    KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+            generator.init(new KeyGenParameterSpec.Builder(
+                    KEY_ALIAS,
+                    KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .setRandomizedEncryptionRequired(true)
+                    .build());
+            generator.generateKey();
+        }
+        KeyStore.Entry entry = keyStore.getEntry(KEY_ALIAS, null);
+        return ((KeyStore.SecretKeyEntry) entry).getSecretKey();
     }
 
     private static String selectionKey(SyncModels.Module module) {
