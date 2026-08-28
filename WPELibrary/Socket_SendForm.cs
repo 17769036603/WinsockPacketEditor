@@ -3220,7 +3220,8 @@ namespace WPELibrary
             }
         }
 
-        private bool UpdateCurrentByteSweepPreset(bool closeAfterSave = true)
+        // 保存/更新后保持编辑窗口打开，便于继续调整；关闭由用户主动触发。
+        private bool UpdateCurrentByteSweepPreset(bool closeAfterSave = false)
         {
             long selectionStart = 0;
             long selectionLength = 1;
@@ -3336,8 +3337,28 @@ namespace WPELibrary
             {
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
-                    if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
-                        () => Socket_Cache.ByteSweepList.AddPreset(dialog.Result)))
+                    bool overwrote = false;
+                    if (dialog.OverwriteConfirmed && dialog.OverwriteTargetId.HasValue)
+                    {
+                        Socket_ByteSweepPresetInfo conflict =
+                            Socket_Cache.ByteSweepList.lstPresets.FirstOrDefault(item =>
+                                item.BID == dialog.OverwriteTargetId.Value);
+                        if (conflict != null)
+                        {
+                            if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                                () => Socket_Cache.ByteSweepList.UpdatePreset(conflict, dialog.Result)))
+                            {
+                                Socket_Operation.ShowMessageBox(UiText("UI_PresetSaveFailed"));
+                                return false;
+                            }
+
+                            overwrote = true;
+                        }
+                    }
+
+                    if (!overwrote &&
+                        !Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                            () => Socket_Cache.ByteSweepList.AddPreset(dialog.Result)))
                     {
                         Socket_Operation.ShowMessageBox(UiText("UI_PresetSaveFailed"));
                         return false;
@@ -3437,6 +3458,7 @@ namespace WPELibrary
                         : (int)this.nudSendType_Times.Value;
                     string targetFolder = dialog.FolderName;
                     Socket_SendInfo committedPreset = null;
+                    bool overwrote = false;
                     bool mutationValid = true;
                     bool saved = Socket_Cache.SendList.TryApplyListChangeAndSave(() =>
                     {
@@ -3452,6 +3474,26 @@ namespace WPELibrary
                         {
                             Socket_Cache.SendList.AddFolder(dialog.FolderName);
                             targetFolder = dialog.FolderName;
+                        }
+
+                        if (dialog.OverwriteConfirmed)
+                        {
+                            Socket_SendInfo conflict =
+                                Socket_Cache.SendList.lstSend.FirstOrDefault(item =>
+                                    item.SID == dialog.OverwriteTargetId);
+                            if (conflict != null)
+                            {
+                                OverwriteSendPreset(
+                                    conflict,
+                                    this.SPI,
+                                    dialog.PresetName,
+                                    targetFolder,
+                                    loopCount,
+                                    (int)this.nudSendType_Interval.Value);
+                                committedPreset = conflict;
+                                overwrote = true;
+                                return;
+                            }
                         }
 
                         if (existingPreset != null)
@@ -3505,9 +3547,9 @@ namespace WPELibrary
                         : this.SPI;
                     this.UpdatePresetIdentity(committedPreset);
                     this.ShowPresetSaveStatus(
-                        existingPreset == null
-                            ? UiText("UI_SendPresetSaved")
-                            : UiText("UI_SendPresetUpdated"),
+                        existingPreset != null || overwrote
+                            ? UiText("UI_SendPresetUpdated")
+                            : UiText("UI_SendPresetSaved"),
                         targetFolder,
                         dialog.PresetName);
                 }
@@ -3574,6 +3616,38 @@ namespace WPELibrary
                 string.Empty,
                 folder,
                 sortOrder);
+        }
+
+        internal static void OverwriteSendPreset(
+            Socket_SendInfo target,
+            Socket_PacketInfo packet,
+            string name,
+            string folder,
+            int loopCount,
+            int interval)
+        {
+            bool folderChanged = !string.Equals(
+                target.SFolder,
+                folder,
+                StringComparison.Ordinal);
+
+            BindingList<Socket_PacketInfo> collection =
+                new BindingList<Socket_PacketInfo>();
+            Socket_PacketInfo packetCopy = new Socket_PacketInfo();
+            CopyPacket(packet, packetCopy);
+            collection.Add(packetCopy);
+
+            target.SName = name;
+            target.SFolder = folder;
+            target.SLoopCNT = Math.Max(0, loopCount);
+            target.SLoopINT = Math.Max(0, interval);
+            target.SCollection = collection;
+            if (folderChanged)
+            {
+                target.SSortOrder = Socket_Cache.SendList.lstSend.Count(item =>
+                    !ReferenceEquals(item, target) &&
+                    string.Equals(item.SFolder, folder, StringComparison.Ordinal)) + 1;
+            }
         }
 
         private static void CopyPacket(Socket_PacketInfo source, Socket_PacketInfo target)

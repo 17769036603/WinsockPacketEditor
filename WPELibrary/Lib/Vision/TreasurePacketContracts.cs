@@ -2,6 +2,73 @@ using System;
 
 namespace WPELibrary.Lib.Vision
 {
+    /// <summary>
+    /// The four bytes at offsets 4..7 belong to the current client
+    /// connection/session. They are not part of the static protocol
+    /// signature.
+    /// </summary>
+    public static class TreasurePacketSessionHeader
+    {
+        public const int SequenceOffset = 4;
+        public const int SequenceLength = 4;
+
+        public static bool MatchesStaticBytes(byte[] frame, byte[] expected)
+        {
+            if (frame == null || expected == null || frame.Length < expected.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < expected.Length; i++)
+            {
+                if (i >= SequenceOffset &&
+                    i < SequenceOffset + SequenceLength)
+                {
+                    continue;
+                }
+
+                if (frame[i] != expected[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public static uint ReadSequence(byte[] frame)
+        {
+            if (frame == null ||
+                frame.Length < SequenceOffset + SequenceLength)
+            {
+                throw new ArgumentException(
+                    "A complete session header is required.",
+                    nameof(frame));
+            }
+
+            return ((uint)frame[SequenceOffset] << 24) |
+                ((uint)frame[SequenceOffset + 1] << 16) |
+                ((uint)frame[SequenceOffset + 2] << 8) |
+                frame[SequenceOffset + 3];
+        }
+
+        public static void WriteSequence(byte[] frame, uint sequence)
+        {
+            if (frame == null ||
+                frame.Length < SequenceOffset + SequenceLength)
+            {
+                throw new ArgumentException(
+                    "A complete session header is required.",
+                    nameof(frame));
+            }
+
+            frame[SequenceOffset] = (byte)(sequence >> 24);
+            frame[SequenceOffset + 1] = (byte)(sequence >> 16);
+            frame[SequenceOffset + 2] = (byte)(sequence >> 8);
+            frame[SequenceOffset + 3] = (byte)sequence;
+        }
+    }
+
     public sealed class TreasurePacketContractException : InvalidOperationException
     {
         public TreasurePacketContractException(string code, string message)
@@ -144,20 +211,7 @@ namespace WPELibrary.Lib.Vision
 
         public static bool IsHeader(byte[] frame)
         {
-            if (frame == null || frame.Length < Header.Length)
-            {
-                return false;
-            }
-
-            for (int i = 0; i < Header.Length; i++)
-            {
-                if (frame[i] != Header[i])
-                {
-                    return false;
-                }
-            }
-
-            return true;
+            return TreasurePacketSessionHeader.MatchesStaticBytes(frame, Header);
         }
     }
 
@@ -207,19 +261,30 @@ namespace WPELibrary.Lib.Vision
 
         public static bool IsFramePrefix(byte[] frame)
         {
-            if (frame == null || frame.Length < FramePrefix.Length)
+            return TreasurePacketSessionHeader.MatchesStaticBytes(frame, FramePrefix);
+        }
+
+        /// <summary>
+        /// The closed encoder uses a one-byte UTF-8 length at offset 24.
+        /// Captured current-client 0x783A frames use a zero marker there and
+        /// carry the UTF-8 parameter to the frame end. Both forms are
+        /// retained without rewriting captured bytes.
+        /// </summary>
+        public static bool TryGetParamByteLength(byte[] frame, out int length)
+        {
+            length = 0;
+            if (frame == null || frame.Length < ParamOffset)
             {
                 return false;
             }
 
-            for (int i = 0; i < FramePrefix.Length; i++)
+            if (frame[ParamLengthOffset] != 0)
             {
-                if (frame[i] != FramePrefix[i])
-                {
-                    return false;
-                }
+                length = frame[ParamLengthOffset];
+                return ParamOffset + length == frame.Length;
             }
 
+            length = frame.Length - ParamOffset;
             return true;
         }
     }

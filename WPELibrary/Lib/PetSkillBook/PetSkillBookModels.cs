@@ -128,4 +128,52 @@ namespace WPELibrary.Lib.PetSkillBook
         public int ItemId { get; set; }
         public bool LockAfter { get; set; }
     }
+
+    /// <summary>
+    /// 技能书执行状态
+    /// </summary>
+    public enum BookExecutionStatus
+    {
+        /// <summary>
+        /// 跳过：技能已存在（无需学习）
+        /// </summary>
+        SKIPPED_ALREADY_PRESENT = 0,
+        /// <summary>
+        /// 执行成功
+        /// </summary>
+        SUCCESS = 1,
+        /// <summary>
+        /// 执行失败
+        /// </summary>
+        FAILED = 2
+    }
+
+    /// <summary>
+    /// 单本技能书执行结果
+    /// </summary>
+    public class BookExecutionResult
+    {
+        public BookExecutionStatus Status { get; set; }
+        public int SkillId { get; set; }
+        public int ItemId { get; set; }
+        public int Sequence { get; set; }
+        public int? SkillSlotIndex { get; set; }
+        public string FailureReason { get; set; } = string.Empty;
+        public string StateVersionBefore { get; set; } = string.Empty;
+        public string StateVersionAfter { get; set; } = string.Empty;
+        public DateTime ExecutedAt { get; set; }
+    }
+
+    /// <summary>
+    /// 召唤兽技能书整体运行状态
+    /// </summary>
+    public class SummonedPetSkillBookRunStatus
+    {
+        public bool IsCompleted { get; set; }
+        public bool IsFailed { get; set; }
+        public bool IsCancelled { get; set; }
+        public List<BookExecutionResult> BookResults { get; set; } = new List<BookExecutionResult>();
+        public string FailureReason { get; set; } = string.Empty;
+        public DateTime CompletedAt { get; set; }
+    }
 }

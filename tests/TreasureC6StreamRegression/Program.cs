@@ -33,6 +33,10 @@ namespace TreasureC6StreamRegression
                 TestPersistentRunLogStore();
                 TestRunnerUsesAfterJumpWithoutArrivalEvidence();
                 TestRunnerEnforcedArrivalEvidenceFailsClosed();
+                TestRunnerStopsContinuousAfterSocketSendFailure();
+                TestRunnerDoesNotJumpWithoutCompleteActionTemplate();
+                TestRunnerKeepsJumpWhenUseTemplateIsMissing();
+                TestRunnerUsesGuardedJumpWithValidatedAutoDig();
                 TestRunnerExclusiveControlRejectsConcurrentRun();
                 TestRunnerUsesOriginalSlotWhenSnapshotChangesAfterJump();
                 TestRunnerDoesNotWaitForC6EventBeforeUse();
@@ -199,6 +203,7 @@ namespace TreasureC6StreamRegression
                    defaults.RetryDelayMilliseconds == 250 &&
                    defaults.ConsumptionConfirmTimeoutMilliseconds == 2500 &&
                    defaults.FailedTargetCooldownMilliseconds == 3000 &&
+                   !defaults.StopContinuousOnTransportFailure &&
                    !defaults.LiveSendEnabled &&
                    defaults.Mode == TreasureMapExecutionMode.Continuous,
                 "preset timing, continuous-mode and live-send defaults");
@@ -693,6 +698,255 @@ namespace TreasureC6StreamRegression
                 successfulAutoDig.ToString().IndexOf("code=", StringComparison.Ordinal) <
                 successfulAutoDig.ToString().IndexOf("packet=", StringComparison.Ordinal),
                 "log text exposes result code before the truncated packet field");
+        }
+
+        private static void TestRunnerUsesGuardedJumpWithValidatedAutoDig()
+        {
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            RegressionStream stream = new RegressionStream
+            {
+                StopSource = cancellation,
+                Snapshot = new TreasureC6InventorySnapshot(
+                    "c6-guarded-auto-dig-session",
+                    "guarded-auto-dig-snapshot",
+                    new[] { new TreasureC6InventoryItem("member-a", 13, 1009, 19, 65) },
+                    "31531|7373672|/system/bin/app_process64",
+                    "bagmgr:fixture/m_ItemDict:fixture")
+            };
+            RegressionSender sender = new RegressionSender
+            {
+                FailuresRemaining = 0,
+                Stream = stream,
+                UsesBeforeConsumption = 1
+            };
+            TreasurePacketRoute route = new TreasurePacketRoute(
+                Socket_Cache.SocketPacket.PacketType.WS2_Send,
+                "127.0.0.1:50000",
+                "127.0.0.1:12345");
+            byte[] autoDigBytes = TreasurePacketEncoder.EncodeAutoDig();
+            Socket_PacketInfo autoDigPacket = new Socket_PacketInfo
+            {
+                PacketType = route.PacketType,
+                PacketFrom = route.PacketFrom,
+                PacketTo = route.PacketTo,
+                PacketBuffer = autoDigBytes,
+                PacketLen = autoDigBytes.Length,
+                PacketTime = DateTime.UtcNow
+            };
+            Socket_SendInfo preset = new Socket_SendInfo(
+                false,
+                Guid.NewGuid(),
+                "挖宝图",
+                true,
+                0,
+                1000,
+                new System.ComponentModel.BindingList<Socket_PacketInfo>(
+                    new[] { autoDigPacket }),
+                string.Empty);
+            List<TreasureMapLogEntry> logs = new List<TreasureMapLogEntry>();
+
+            TreasurePacketRuntime.BeginSession();
+            Socket_Cache.SocketList.lstRecPacket.Clear();
+            Socket_Cache.SendList.lstSend.Add(preset);
+            try
+            {
+                TreasureMapPresetOptions options = new TreasureMapPresetOptions
+                {
+                    UseNativeAutoDig = true,
+                    RequireCurrentPacketTemplates = true,
+                    JumpUseDelayMilliseconds = 0,
+                    NextTargetDelayMilliseconds = 0,
+                    ConsumptionConfirmTimeoutMilliseconds = 1,
+                    LiveSendEnabled = true,
+                    Mode = TreasureMapExecutionMode.CurrentSnapshot
+                };
+                TreasureMapPresetRunner runner = new TreasureMapPresetRunner(
+                    stream,
+                    sender,
+                    () => route,
+                    logs.Add,
+                    options);
+                runner.Run(cancellation.Token);
+
+                Assert(sender.Calls == 2,
+                    "validated current-route AutoDig permits one guarded Jump and one AutoDig");
+                Assert(sender.Packets.Count(packet =>
+                        packet.PacketBuffer.Length == TreasureJumpPacketContract.FrameLength) == 1,
+                    "guarded AutoDig path sends one encoded Jump when no Jump template was captured");
+                Assert(sender.Packets.Count(packet =>
+                        TreasureAutoDigPacketContract.IsFrame(packet.PacketBuffer)) == 1,
+                    "guarded AutoDig path sends the validated AutoDig template");
+                Assert(!logs.Any(entry => entry.Code == "jump_template_not_found"),
+                    "guarded AutoDig path does not fail at the strict Jump gate");
+            }
+            finally
+            {
+                Socket_Cache.SendList.lstSend.Remove(preset);
+                Socket_Cache.SocketList.lstRecPacket.Clear();
+                TreasurePacketRuntime.EndSession();
+            }
+        }
+
+        private static void TestRunnerDoesNotJumpWithoutCompleteActionTemplate()
+        {
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            RegressionStream stream = new RegressionStream
+            {
+                StopSource = cancellation,
+                CancelAfterRead = true,
+                Snapshot = new TreasureC6InventorySnapshot(
+                    "c6-action-template-gate-session",
+                    "action-template-gate-snapshot",
+                    new[] { new TreasureC6InventoryItem("member-a", 13, 1009, 19, 65) },
+                    "31531|7373672|/system/bin/app_process64",
+                    "bagmgr:fixture/m_ItemDict:fixture")
+            };
+            RegressionSender sender = new RegressionSender
+            {
+                FailuresRemaining = 0,
+                Stream = stream
+            };
+            TreasurePacketRoute route = new TreasurePacketRoute(
+                Socket_Cache.SocketPacket.PacketType.WS2_Send,
+                "127.0.0.1:50000",
+                "127.0.0.1:12345");
+            List<TreasureMapLogEntry> logs = new List<TreasureMapLogEntry>();
+
+            TreasurePacketRuntime.BeginSession();
+            Socket_Cache.SocketList.lstRecPacket.Clear();
+            try
+            {
+                TreasureMapPresetRunner runner = new TreasureMapPresetRunner(
+                    stream,
+                    sender,
+                    () => route,
+                    logs.Add,
+                    new TreasureMapPresetOptions
+                    {
+                        UseNativeAutoDig = false,
+                        RequireCurrentPacketTemplates = true,
+                        RequireActionTemplateBeforeJump = true,
+                        LiveSendEnabled = true,
+                        Mode = TreasureMapExecutionMode.CurrentSnapshot
+                    });
+                runner.Run(cancellation.Token);
+
+                Assert(sender.Calls == 0,
+                    "missing current Use/AutoDig templates must block Jump before any send");
+                Assert(logs.Any(entry =>
+                        entry.Code == "action_templates_not_ready:jump_template_not_found" ||
+                        entry.Code == "action_templates_not_ready:use_template_not_found"),
+                    "the action template gate records the missing complete path");
+                Assert(runner.CurrentState == TreasureMapState.Failed,
+                    "the action template gate fails closed");
+            }
+            finally
+            {
+                Socket_Cache.SocketList.lstRecPacket.Clear();
+                TreasurePacketRuntime.EndSession();
+            }
+        }
+
+        private static void TestRunnerKeepsJumpWhenUseTemplateIsMissing()
+        {
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            RegressionStream stream = new RegressionStream
+            {
+                StopSource = cancellation,
+                Snapshot = new TreasureC6InventorySnapshot(
+                    "c6-jump-without-use-session",
+                    "jump-without-use-snapshot",
+                    new[] { new TreasureC6InventoryItem("member-a", 13, 1009, 19, 65) },
+                    "31531|7373672|/system/bin/app_process64",
+                    "bagmgr:fixture/m_ItemDict:fixture")
+            };
+            RegressionSender sender = new RegressionSender
+            {
+                FailuresRemaining = 0,
+                Stream = stream
+            };
+            TcpListener routeListener = new TcpListener(IPAddress.Loopback, 0);
+            try
+            {
+                routeListener.Start();
+                using (TcpClient routeClient = new TcpClient())
+                {
+                    int routePort = ((IPEndPoint)routeListener.LocalEndpoint).Port;
+                    routeClient.Connect(IPAddress.Loopback, routePort);
+                    using (TcpClient routeServer = routeListener.AcceptTcpClient())
+                    {
+                        IPEndPoint localEndpoint = (IPEndPoint)routeClient.Client.LocalEndPoint;
+                        IPEndPoint remoteEndpoint = (IPEndPoint)routeClient.Client.RemoteEndPoint;
+                        TreasurePacketRoute route = new TreasurePacketRoute(
+                            Socket_Cache.SocketPacket.PacketType.WS2_Send,
+                            localEndpoint.ToString(),
+                            remoteEndpoint.ToString());
+                        byte[] jumpBytes = TreasurePacketTemplatePatcher.BuildJump(
+                            new TreasureInventoryTarget(13, 1009, 19, 65));
+                        Socket_PacketInfo jumpTemplate = new Socket_PacketInfo
+                        {
+                            PacketSocket = routeClient.Client.Handle.ToInt32(),
+                            PacketType = route.PacketType,
+                            PacketFrom = route.PacketFrom,
+                            PacketTo = route.PacketTo,
+                            PacketBuffer = jumpBytes,
+                            PacketLen = jumpBytes.Length,
+                            PacketTime = DateTime.UtcNow
+                        };
+                        List<TreasureMapLogEntry> logs = new List<TreasureMapLogEntry>();
+
+                        TreasurePacketRuntime.BeginSession();
+                        Socket_Cache.SocketList.lstRecPacket.Clear();
+                        TreasurePacketRuntime.ObserveCapturedPacket(jumpTemplate);
+                        Socket_Cache.SocketList.lstRecPacket.Add(jumpTemplate);
+                        try
+                        {
+                            TreasureMapPresetRunner runner = new TreasureMapPresetRunner(
+                                stream,
+                                sender,
+                                () => route,
+                                logs.Add,
+                                new TreasureMapPresetOptions
+                                {
+                                    UseNativeAutoDig = false,
+                                    RequireCurrentPacketTemplates = true,
+                                    RequireActionTemplateBeforeJump = true,
+                                    JumpUseDelayMilliseconds = 0,
+                                    NextTargetDelayMilliseconds = 0,
+                                    ConsumptionConfirmTimeoutMilliseconds = 1,
+                                    LiveSendEnabled = true,
+                                    Mode = TreasureMapExecutionMode.CurrentSnapshot
+                                });
+                            runner.Run(cancellation.Token);
+
+                        Assert(sender.Calls == 1,
+                            "a current Jump template must still allow one Jump when Use is missing");
+                            Assert(sender.Packets.Count == 1 &&
+                                   TreasurePacketEncoder.DecodeJump(sender.Packets[0].PacketBuffer).MapId == 1009,
+                                "the restored Jump path sends the current target coordinates");
+                            Assert(logs.Any(entry =>
+                                    entry.Step == "preflight" &&
+                                    entry.Code == "use_template_not_found;continue_with_jump"),
+                                "missing Use is recorded without blocking the Jump");
+                            Assert(logs.Any(entry =>
+                                    entry.Step == "use" &&
+                                    entry.Code == "use_template_not_found"),
+                                "Use remains fail-closed when no current Use template exists");
+                            Assert(runner.CurrentState == TreasureMapState.Failed,
+                                "the runner stops after the missing Use is confirmed before dispatch");
+                        }
+                        finally
+                        {
+                            Socket_Cache.SocketList.lstRecPacket.Clear();
+                            TreasurePacketRuntime.EndSession();
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                routeListener.Stop();
+            }
         }
 
         private static void TestRunnerUsesUseOnlyOnFirstConsumptionRetry()
@@ -1254,7 +1508,7 @@ namespace TreasureC6StreamRegression
             delayedConsumption?.Wait();
             TimeSpan elapsed = DateTime.UtcNow - started;
 
-            Assert(sender.Calls == 4,
+            Assert(sender.Calls == 3,
                 "consumption during cooldown prevents a third Jump and AutoDig pair");
             Assert(elapsed.TotalMilliseconds < 800,
                 "cooldown exits soon after inventory consumption instead of waiting the full second");
@@ -1451,6 +1705,69 @@ namespace TreasureC6StreamRegression
                 "enforced arrival timeout is recorded in the structured timeline");
             Assert(!sender.Packets.Any(packet => packet.PacketBuffer.Length == 24),
                 "missing enforced arrival evidence does not send AutoDig");
+        }
+
+        private static void TestRunnerStopsContinuousAfterSocketSendFailure()
+        {
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            RegressionStream stream = new RegressionStream
+            {
+                StopSource = cancellation,
+                CancelAfterRead = true,
+                Snapshot = new TreasureC6InventorySnapshot(
+                    "c6-socket-failure-session",
+                    "socket-failure-snapshot",
+                    new[]
+                    {
+                        new TreasureC6InventoryItem("member-a", 13, 1009, 19, 65),
+                        new TreasureC6InventoryItem("member-b", 14, 1010, 20, 66)
+                    },
+                    "31531|7373672|/system/bin/app_process64",
+                    "bagmgr:fixture/m_ItemDict:fixture")
+            };
+            RegressionSender sender = new RegressionSender
+            {
+                FailuresRemaining = 0,
+                FailureOnCall = 3,
+                FailureCode = "socket_send_failed",
+                FailureDisposition = TreasureMapPacketSendDisposition.Ambiguous,
+                Stream = stream
+            };
+            List<TreasureMapLogEntry> logs = new List<TreasureMapLogEntry>();
+            TreasureMapPresetRunner runner = new TreasureMapPresetRunner(
+                stream,
+                sender,
+                () => new TreasurePacketRoute(
+                    Socket_Cache.SocketPacket.PacketType.WS2_Send,
+                    "127.0.0.1:50000",
+                    "127.0.0.1:12345"),
+                logs.Add,
+                new TreasureMapPresetOptions
+                {
+                    UseNativeAutoDig = false,
+                    JumpUseDelayMilliseconds = 0,
+                    NextTargetDelayMilliseconds = 0,
+                    RetryDelayMilliseconds = 1,
+                    ConsumptionConfirmTimeoutMilliseconds = 10,
+                    LiveSendEnabled = true,
+                    StopContinuousOnTransportFailure = true,
+                    Mode = TreasureMapExecutionMode.Continuous
+                });
+
+            runner.Run(cancellation.Token);
+
+            Assert(sender.Calls == 3,
+                "a socket send failure does not trigger another packet after the ambiguous write");
+            Assert(runner.CurrentState == TreasureMapState.Ambiguous,
+                "a socket send failure ends the continuous run as ambiguous");
+            Assert(runner.LastError == "socket_send_failed",
+                "the runner exposes the transport failure code");
+            Assert(logs.Any(entry =>
+                    entry.Code == "stopped_after_transport_failure:socket_send_failed" &&
+                    !entry.Success),
+                "the runner records an explicit transport stop reason");
+            Assert(!logs.Any(entry => entry.Code == "target_failed_skipped"),
+                "a transport failure is not silently skipped as an ordinary target failure");
         }
 
         private static void TestRunnerExclusiveControlRejectsConcurrentRun()
@@ -1865,6 +2182,10 @@ namespace TreasureC6StreamRegression
         {
             public int Calls;
             public int FailuresRemaining = 1;
+            public int FailureOnCall;
+            public string FailureCode = "synthetic_failure";
+            public TreasureMapPacketSendDisposition FailureDisposition =
+                TreasureMapPacketSendDisposition.NotDispatched;
             public List<Socket_PacketInfo> Packets = new List<Socket_PacketInfo>();
             public Action<int> OnSend;
             public RegressionStream Stream;
@@ -1881,14 +2202,22 @@ namespace TreasureC6StreamRegression
                 this.Calls++;
                 this.Packets.Add(packet);
                 this.OnSend?.Invoke(this.Calls);
-                if (this.FailuresRemaining > 0)
+                bool shouldFailOnCall = this.FailureOnCall > 0 &&
+                    this.Calls >= this.FailureOnCall;
+                if (this.FailuresRemaining > 0 || shouldFailOnCall)
                 {
-                    this.FailuresRemaining--;
+                    if (this.FailuresRemaining > 0)
+                    {
+                        this.FailuresRemaining--;
+                    }
                     return new TreasureMapPacketSendResult(
                         false,
-                        "synthetic_failure",
+                        this.FailureCode,
                         0,
-                        0);
+                        0,
+                        shouldFailOnCall
+                            ? this.FailureDisposition
+                            : TreasureMapPacketSendDisposition.NotDispatched);
                 }
 
                 if (packet.PacketBuffer.Length == TreasureJumpPacketContract.FrameLength &&

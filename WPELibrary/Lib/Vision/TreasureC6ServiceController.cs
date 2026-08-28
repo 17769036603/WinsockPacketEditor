@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using WPELibrary.Lib.Android;
 
 namespace WPELibrary.Lib.Vision
 {
@@ -228,6 +229,8 @@ namespace WPELibrary.Lib.Vision
                     0,
                     string.Empty);
             }
+
+            EnsureRootSession(adbPath, deviceSerial, cancellationToken);
 
             int gamePid;
             string gamePackage;
@@ -848,11 +851,54 @@ namespace WPELibrary.Lib.Vision
             string command,
             CancellationToken cancellationToken)
         {
-            string shellCommand = "su -c '" + (command ?? string.Empty).Replace("'", "'\\''") + "'";
-            return RunAdb(
-                adbPath,
-                BuildArguments("-s", deviceSerial, "shell", shellCommand),
-                cancellationToken);
+            try
+            {
+                using (AndroidRootShellSessionLease rootLease =
+                    AndroidRootShellSessionManager.Acquire(
+                        adbPath,
+                        deviceSerial,
+                        cancellationToken))
+                {
+                    AndroidRootShellCommandResult result = rootLease.Execute(
+                        command,
+                        CommandTimeoutMilliseconds,
+                        cancellationToken);
+                    return new AdbCommandResult(
+                        result.ExitCode,
+                        result.Output,
+                        string.IsNullOrWhiteSpace(result.Error)
+                            ? result.Output
+                            : result.Error);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                return new AdbCommandResult(-1, string.Empty, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Warm the process-wide Root shell before the first C6 command. The
+        /// shared manager owns the only `su` process for this ADB device; this
+        /// method no longer runs `adb root` or changes device properties.
+        /// </summary>
+        private static void EnsureRootSession(
+            string adbPath,
+            string deviceSerial,
+            CancellationToken cancellationToken)
+        {
+            using (AndroidRootShellSessionLease rootLease =
+                AndroidRootShellSessionManager.Acquire(
+                    adbPath,
+                    deviceSerial,
+                    cancellationToken))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
         }
 
         private static AdbCommandResult RunAdb(

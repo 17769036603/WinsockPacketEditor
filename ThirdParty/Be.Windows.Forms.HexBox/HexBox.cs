@@ -668,7 +668,7 @@ namespace Be.Windows.Forms
 
 			protected virtual bool PreProcessWmKeyDown_ControlC(ref Message m)
 			{
-				_hexBox.Copy();
+				_hexBox.CopyHex();
 				return true;
 			}
 

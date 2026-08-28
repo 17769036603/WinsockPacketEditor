@@ -24,6 +24,8 @@ public final class SyncStore {
     private static final String PASSWORD = "passwordEncrypted";
     private static final String KEY_ALIAS = "wpe_mobile_sync_credentials";
     private static final String ACTIVE_PROFILE = "activeProfile";
+    private static final String BALL_POS_X = "ballPosX";
+    private static final String BALL_POS_Y = "ballPosY";
     private static final String LEGACY_CREDENTIAL_PREFS = "wpe_mobile_credentials_v1";
 
     private final SharedPreferences preferences;
@@ -63,6 +65,21 @@ public final class SyncStore {
 
     public boolean hasCredentials() {
         return !getEndpoint().isEmpty() && !getUsername().isEmpty() && !getPassword().isEmpty();
+    }
+
+    public int ballPosX() {
+        return preferences.getInt(BALL_POS_X, -1);
+    }
+
+    public int ballPosY() {
+        return preferences.getInt(BALL_POS_Y, -1);
+    }
+
+    public void saveBallPosition(int x, int y) {
+        preferences.edit()
+                .putInt(BALL_POS_X, x)
+                .putInt(BALL_POS_Y, y)
+                .apply();
     }
 
     public void saveConnection(String endpoint, String username, String password) {

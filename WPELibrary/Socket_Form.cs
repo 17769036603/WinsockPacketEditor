@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml.Linq;
 using WPELibrary.Lib;
+using WPELibrary.Lib.EquipmentRefine;
 using WPELibrary.Lib.NativeMethods;
 using WPELibrary.Lib.Vision;
 using WPELibrary.TextComparison;
@@ -91,6 +92,7 @@ namespace WPELibrary
         private Guid activeAssistantRobotId = Guid.Empty;
         private Guid assistantStartingRobotId = Guid.Empty;
         private bool assistantStartPending;
+        private Socket_RobotInfo assistantMoveSourceRobot;
         private readonly Dictionary<Guid, Button> assistantButtons = new Dictionary<Guid, Button>();
         private int requestedClientWidth = -1;
 
@@ -826,6 +828,7 @@ namespace WPELibrary
             this.cmsAssistantButtonMoveToGroup.DropDownItems.Clear();
             Button source = this.cmsAssistantButton.SourceControl as Button;
             Socket_RobotInfo robot = source == null ? null : source.Tag as Socket_RobotInfo;
+            this.assistantMoveSourceRobot = robot;
             foreach (TreeNode node in this.tvRobotFolders.Nodes)
             {
                 if (robot != null && string.Equals(robot.RFolder, node.Text, StringComparison.Ordinal))
@@ -860,8 +863,15 @@ namespace WPELibrary
         private void MoveAssistantToFolder_Click(object sender, EventArgs e)
         {
             ToolStripMenuItem item = sender as ToolStripMenuItem;
-            Button source = this.cmsAssistantButton.SourceControl as Button;
-            Socket_RobotInfo robot = source == null ? null : source.Tag as Socket_RobotInfo;
+            // 嵌套子菜单点击时 ContextMenuStrip.SourceControl 可能失效，
+            // 优先使用菜单打开时（SourceControl 可靠）记录的目标机器人。
+            Socket_RobotInfo robot = this.assistantMoveSourceRobot;
+            if (robot == null)
+            {
+                Button source = this.cmsAssistantButton.SourceControl as Button;
+                robot = source == null ? null : source.Tag as Socket_RobotInfo;
+            }
+            this.assistantMoveSourceRobot = null;
             string folder = item == null ? string.Empty : item.Tag as string;
             if (robot == null || string.IsNullOrWhiteSpace(folder) || this.activeAssistantRobot != null)
             {
@@ -1050,12 +1060,63 @@ namespace WPELibrary
                 }
             }
 
-            Dictionary<string, object> parameters = hasTreasureMapInstruction
+            bool hasEquipmentRefineInstruction = HasEquipmentRefineInstruction(robot);
+            if (hasEquipmentRefineInstruction && robot.EquipmentRefinePreset == null)
+            {
+                Socket_Operation.ShowRobotForm_Dialog(robot, true);
+                return;
+            }
+
+            Dictionary<string, object> parameters = hasTreasureMapInstruction ||
+                hasEquipmentRefineInstruction
                 ? new Dictionary<string, object>
                 {
                     { "TreasureLiveSendEnabled", robot.TreasureLiveSendAuthorized }
                 }
                 : null;
+            if (hasEquipmentRefineInstruction)
+            {
+                EquipmentRefineSocketRouteTemplate routeTemplate;
+                string routeError;
+                if (EquipmentRefineSocketRouteTemplate.TryCreate(
+                    Socket_Cache.SocketList.spiSelect,
+                    out routeTemplate,
+                    out routeError))
+                {
+                    parameters["EquipmentRefineSocketRouteTemplate"] = routeTemplate;
+                    if (HasVerifiedEquipmentRefineTemplate(robot.EquipmentRefinePreset))
+                    {
+                        EquipmentRefineLiveSendAuthorization authorization;
+                        if (!EquipmentRefineLiveSendAuthorizationDialog.TryShow(
+                            this,
+                            out authorization))
+                        {
+                            return;
+                        }
+                        parameters["EquipmentRefineLiveSendAuthorization"] = authorization;
+                    }
+                }
+            }
+            if (HasVisionSystemInputAction(robot))
+            {
+                DialogResult confirmation = MessageBox.Show(
+                    this,
+                    UiText("Vision_ActionSafetyPrompt"),
+                    UiText("Vision_ActionSafetyTitle"),
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2);
+                if (confirmation != DialogResult.Yes)
+                {
+                    return;
+                }
+
+                if (parameters == null)
+                {
+                    parameters = new Dictionary<string, object>();
+                }
+                parameters["VisionAllowSystemInput"] = true;
+            }
 
             this.assistantStartPending = true;
             this.assistantStartingRobotId = robot.RID;
@@ -1066,7 +1127,11 @@ namespace WPELibrary
                 Socket_Robot running = await Socket_Cache.Robot.DoRobotAsync(robot.RID, parameters);
                 if (running == null)
                 {
-                    Socket_Operation.ShowMessageBox(UiText("UI_AssistantStartFailed"));
+                    string reason = Socket_Cache.Robot.LastStartFailureReason;
+                    Socket_Operation.ShowMessageBox(
+                        string.IsNullOrWhiteSpace(reason)
+                            ? UiText("UI_AssistantStartFailed")
+                            : UiText("UI_AssistantStartFailed") + Environment.NewLine + reason);
                     return;
                 }
 
@@ -1112,6 +1177,64 @@ namespace WPELibrary
             }
 
             return false;
+        }
+
+        private static bool HasEquipmentRefineInstruction(Socket_RobotInfo robot)
+        {
+            if (robot == null || robot.RInstruction == null ||
+                !robot.RInstruction.Columns.Contains("Type"))
+            {
+                return false;
+            }
+
+            foreach (System.Data.DataRow row in robot.RInstruction.Rows)
+            {
+                try
+                {
+                    if (Convert.ToInt32(row["Type"]) ==
+                        (int)Socket_Cache.Robot.InstructionType.EquipmentRefine)
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // The normal robot validator reports malformed instruction rows.
+                }
+            }
+
+            return false;
+        }
+
+        private static bool HasVerifiedEquipmentRefineTemplate(EquipmentRefinePreset preset)
+        {
+            string path = preset == null ? string.Empty : preset.PacketTemplatePath;
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                path = Environment.GetEnvironmentVariable(
+                    "WPE_EQUIPMENT_REFINE_TEMPLATE_FILE");
+            }
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            EquipmentRefineExecutor.RefinePacketTemplate template =
+                new EquipmentRefineExecutor().LoadTemplate(path);
+            return template != null && template.IsValid;
+        }
+
+        private static bool HasVisionSystemInputAction(Socket_RobotInfo robot)
+        {
+            if (robot == null || robot.VisionProfile == null ||
+                robot.VisionProfile.AssistantSteps == null)
+            {
+                return false;
+            }
+
+            return robot.VisionProfile.AssistantSteps.Any(step =>
+                step != null && step.ActionDefinition != null &&
+                step.ActionDefinition.Type != VisionActionType.None);
         }
 
         private void AssistantButton_DoubleClick(object sender, EventArgs e)
@@ -1190,6 +1313,9 @@ namespace WPELibrary
             if (this.activeAssistantRobot != null && ReferenceEquals(sender, this.activeAssistantRobot.Worker))
             {
                 Socket_Robot completedRobot = this.activeAssistantRobot;
+                Guid completedRobotId = this.activeAssistantRobotId;
+                Socket_RobotInfo completedRobotInfo = Socket_Cache.RobotList.lstRobot
+                    .FirstOrDefault(item => item != null && item.RID == completedRobotId);
                 this.activeAssistantRobot = null;
                 this.activeAssistantRobotId = Guid.Empty;
                 this.UpdateAssistantButtonState();
@@ -1212,6 +1338,41 @@ namespace WPELibrary
                         Socket_Operation.ShowMessageBox(
                             string.Format(UiText("UI_TreasureRunFailed"), treasureState.LastError));
                     }
+                }
+                if (completedRobot.LastMountRefineResult != null)
+                {
+                    Socket_Operation.ShowMessageBox(
+                        completedRobot.LastMountRefineResultMessage);
+                }
+                else if (!string.IsNullOrWhiteSpace(completedRobot.ReadOnlySnapshotStatus))
+                {
+                    string readOnlySnapshotStatus = completedRobot.ReadOnlySnapshotStatus;
+                    Socket_Operation.ShowMessageBox(
+                        UiText("UI_AssistantReadOnlySnapshotReady") + Environment.NewLine +
+                        readOnlySnapshotStatus);
+
+                    // 没有技能书预设时，启动只能完成只读读取；关闭结果提示后直接打开
+                    // 对应助手编辑页，避免用户回到主界面后无从继续配置。
+                    if (readOnlySnapshotStatus.IndexOf(
+                            "未加载召唤兽技能书配置",
+                            StringComparison.Ordinal) >= 0 &&
+                        completedRobotInfo != null)
+                    {
+                        Socket_Operation.ShowRobotForm_Dialog(completedRobotInfo);
+                        this.RefreshAssistantFolders();
+                    }
+                }
+                else if (completedRobot.LastEquipmentRefineResult != null)
+                {
+                    Socket_Operation.ShowMessageBox(
+                        completedRobot.LastEquipmentRefineResultMessage);
+                }
+                else if (!string.IsNullOrWhiteSpace(completedRobot.LastRunFailureReason))
+                {
+                    Socket_Operation.ShowMessageBox(
+                        string.Format(
+                            UiText("UI_AssistantRunFailed"),
+                            completedRobot.LastRunFailureReason));
                 }
             }
         }
@@ -2612,6 +2773,9 @@ namespace WPELibrary
             this.InitHotKeys();
 
             Socket_Cache.System.LoadSystemList_FromDB();
+            // 启动时列表已写入内存，但初始化/新增按钮只发生在构造与用户操作阶段，
+            // 这里必须再次刷新，否则助手预设与分组在打开软件时看起来是空的。
+            this.RefreshAssistantFolders();
             Socket_Operation.StartRemoteMGT();
             // Keep hook startup explicit. Mobile actions use
             // EnsureHookRunningForMobile() on demand, while the desktop user
@@ -2700,6 +2864,7 @@ namespace WPELibrary
                 }
 
                 ws.ExitHook();
+                WPELibrary.Lib.Vision.TreasurePacketRuntime.EndSession();
                 Socket_Operation.StopHookResultProcessing();
                 this.niWPE.Visible = false;
 
@@ -3739,6 +3904,7 @@ namespace WPELibrary
                 HookStartResult hookResult = ws.StartHook();
                 if (!hookResult.Success)
                 {
+                    Socket_Cache.SocketList.StopCaptureSessionPreservingRoutes();
                     this.SetHookUiState("UI_HookStatusFailed", false, false);
                     Socket_Operation.DoLog(
                         MethodBase.GetCurrentMethod().Name,
@@ -3767,6 +3933,7 @@ namespace WPELibrary
             }
             catch (Exception ex)
             {
+                Socket_Cache.SocketList.StopCaptureSessionPreservingRoutes();
                 this.SetHookUiState("UI_HookStatusFailed", false, false);
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
@@ -3855,11 +4022,14 @@ namespace WPELibrary
             {
                 this.SetHookUiState("UI_HookStatusStopping", false, true);
 
+                Socket_Cache.SocketList.StopCaptureSessionPreservingRoutes();
                 ws.StopHook();
-                WPELibrary.Lib.Vision.TreasurePacketRuntime.EndSession();
 
                 this.SetHookUiState("UI_HookStatusReady", false, false);
 
+                Socket_Operation.DoLog(
+                    MethodBase.GetCurrentMethod().Name,
+                    "抓包已停止；保留当前注入会话的预设路由与协议状态供继续发送，下一次开始抓包时重建。");
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_40));
             }
             catch (Exception ex)
@@ -5228,7 +5398,9 @@ namespace WPELibrary
                     buffer,
                     annotations,
                     variableBindings,
-                    dialog.PresetName);
+                    dialog.PresetName,
+                    dialog.OverwriteConfirmed,
+                    dialog.OverwriteTargetId);
             }
         }
 
@@ -5238,7 +5410,9 @@ namespace WPELibrary
             byte[] buffer,
             IEnumerable<Socket_ByteAnnotationInfo> annotations,
             IEnumerable<PresetVariableBinding> variableBindings,
-            string presetName = null)
+            string presetName = null,
+            bool overwrite = false,
+            Guid? overwriteTargetId = null)
         {
             if (packet == null || string.IsNullOrWhiteSpace(folderName) || buffer == null)
             {
@@ -5281,6 +5455,26 @@ namespace WPELibrary
                         UiText("UI_DefaultSendPresetName"),
                         Socket_Cache.SendList.lstSend.Count + 1)
                     : presetName;
+
+                if (overwrite)
+                {
+                    Socket_SendInfo conflict =
+                        Socket_Cache.SendList.lstSend.FirstOrDefault(item =>
+                            item.SID == overwriteTargetId);
+                    if (conflict != null)
+                    {
+                        Socket_SendForm.OverwriteSendPreset(
+                            conflict,
+                            packetCopy,
+                            actualName,
+                            folderName,
+                            1,
+                            1000);
+                        sendInfo = conflict;
+                        return;
+                    }
+                }
+
                 sendInfo = Socket_SendForm.CreateSendPreset(
                     packetCopy, actualName, folderName, 1, 1000);
                 Socket_Cache.SendList.SendToList(sendInfo);

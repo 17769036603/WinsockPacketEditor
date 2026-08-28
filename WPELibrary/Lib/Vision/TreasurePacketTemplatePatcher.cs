@@ -98,12 +98,6 @@ namespace WPELibrary.Lib.Vision
             0x58, 0x28
         };
 
-        private static readonly byte[] UsePrefix =
-        {
-            0x4D, 0x5A,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-        };
-
         public static byte[] BuildJump(TreasureInventoryTarget target)
         {
             RequireTarget(target);
@@ -160,14 +154,11 @@ namespace WPELibrary.Lib.Vision
                     "0x5828 template must be exactly 28 bytes.");
             }
 
-            for (int i = 0; i < JumpHeader.Length; i++)
+            if (!TreasureJumpPacketContract.IsHeader(template))
             {
-                if (template[i] != JumpHeader[i])
-                {
-                    throw new TreasurePacketTemplateException(
-                        "jump_header_invalid",
-                        "0x5828 template header or protocol ID does not match.");
-                }
+                throw new TreasurePacketTemplateException(
+                    "jump_header_invalid",
+                    "0x5828 template static header or protocol ID does not match.");
             }
 
             if (ReadInt32BigEndian(template, JumpIsTaskWalkOffset) != 0)
@@ -192,14 +183,11 @@ namespace WPELibrary.Lib.Vision
                     "0x783A template is shorter than the confirmed current contract.");
             }
 
-            for (int i = 0; i < UsePrefix.Length; i++)
+            if (!TreasureUsePacketContract.IsFramePrefix(template))
             {
-                if (template[i] != UsePrefix[i])
-                {
-                    throw new TreasurePacketTemplateException(
-                        "use_prefix_invalid",
-                        "0x783A template prefix does not match.");
-                }
+                throw new TreasurePacketTemplateException(
+                    "use_prefix_invalid",
+                    "0x783A template static prefix does not match.");
             }
 
             if (ReadUInt16BigEndian(template, UseProtocolOffset) != UseProtocolId)
@@ -216,8 +204,11 @@ namespace WPELibrary.Lib.Vision
                     "0x783A template outer length does not match the frame boundary.");
             }
 
-            int paramLength = template[UseParamLengthOffset];
-            if (UseParamOffset + paramLength != template.Length)
+            int paramLength;
+            if (!TreasureUsePacketContract.TryGetParamByteLength(
+                    template,
+                    out paramLength) ||
+                UseParamOffset + paramLength != template.Length)
             {
                 throw new TreasurePacketTemplateException(
                     "use_param_length_invalid",

@@ -655,8 +655,29 @@ namespace WPELibrary
             {
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
-                    if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
-                        () => Socket_Cache.ByteSweepList.AddPreset(dialog.Result)))
+                    bool overwrote = false;
+                    if (dialog.OverwriteConfirmed && dialog.OverwriteTargetId.HasValue)
+                    {
+                        Socket_ByteSweepPresetInfo conflict =
+                            Socket_Cache.ByteSweepList.lstPresets.FirstOrDefault(item =>
+                                item.BID == dialog.OverwriteTargetId.Value);
+                        if (conflict != null)
+                        {
+                            if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                                () => Socket_Cache.ByteSweepList.UpdatePreset(conflict, dialog.Result)))
+                            {
+                                MessageBox.Show(this, UiText("UI_PresetSaveFailed"), UiText("UI_Save"),
+                                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                                return;
+                            }
+
+                            overwrote = true;
+                        }
+                    }
+
+                    if (!overwrote &&
+                        !Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
+                            () => Socket_Cache.ByteSweepList.AddPreset(dialog.Result)))
                     {
                         MessageBox.Show(this, UiText("UI_PresetSaveFailed"), UiText("UI_Save"),
                             MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -689,14 +710,26 @@ namespace WPELibrary
             {
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
+                    Socket_ByteSweepPresetInfo target = preset;
+                    if (dialog.OverwriteConfirmed && dialog.OverwriteTargetId.HasValue)
+                    {
+                        Socket_ByteSweepPresetInfo conflict =
+                            Socket_Cache.ByteSweepList.lstPresets.FirstOrDefault(item =>
+                                item.BID == dialog.OverwriteTargetId.Value);
+                        if (conflict != null)
+                        {
+                            target = conflict;
+                        }
+                    }
+
                     if (!Socket_Cache.ByteSweepList.TryApplyListChangeAndSave(
-                        () => Socket_Cache.ByteSweepList.UpdatePreset(preset, dialog.Result)))
+                        () => Socket_Cache.ByteSweepList.UpdatePreset(target, dialog.Result)))
                     {
                         MessageBox.Show(this, UiText("UI_PresetSaveFailed"), UiText("UI_Save"),
                             MessageBoxButtons.OK, MessageBoxIcon.Error);
                         return;
                     }
-                    this.selectedByteSweepFolder = preset.BFolder;
+                    this.selectedByteSweepFolder = target.BFolder;
                     this.RefreshByteSweepFolderTree();
                     if (dialog.EditDetailsRequested)
                     {

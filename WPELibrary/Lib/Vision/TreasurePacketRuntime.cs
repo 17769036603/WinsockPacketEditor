@@ -278,13 +278,15 @@ namespace WPELibrary.Lib.Vision
             string code,
             int socket,
             int bytesSent,
-            TreasureMapPacketSendDisposition disposition)
+            TreasureMapPacketSendDisposition disposition,
+            int socketErrorCode = 0)
         {
             this.Success = success;
             this.Code = code ?? string.Empty;
             this.Socket = socket;
             this.BytesSent = bytesSent;
             this.Disposition = disposition;
+            this.SocketErrorCode = socketErrorCode;
         }
 
         public bool Success { get; private set; }
@@ -296,6 +298,8 @@ namespace WPELibrary.Lib.Vision
         public int BytesSent { get; private set; }
 
         public TreasureMapPacketSendDisposition Disposition { get; private set; }
+
+        public int SocketErrorCode { get; private set; }
     }
 
     public sealed class TreasurePacketRuntimeException : InvalidOperationException
@@ -311,11 +315,12 @@ namespace WPELibrary.Lib.Vision
 
     /// <summary>
     /// Runtime bridge for the read-only C6 stream and the existing WPE socket
-    /// sender. It can retain validated templates for compatibility, or
-    /// construct fresh Jump/Use/AutoDig frames through the closed encoder using
-    /// current route metadata. Resident-state JSON remains a compatibility
-    /// input, while the production preset binds targets directly from C6 and
-    /// keeps the actual send as a separately authorized one-shot operation.
+    /// sender. Offline callers can retain validated templates or construct
+    /// Jump/Use/AutoDig frames through the closed encoder using current route
+    /// metadata. The production Jump/Use path instead requires a validated
+    /// template from the current hook session before the one-shot send.
+    /// Resident-state JSON remains a compatibility input, while the
+    /// production preset binds targets directly from C6.
     /// </summary>
     public static class TreasurePacketRuntime
     {
@@ -329,6 +334,8 @@ namespace WPELibrary.Lib.Vision
         private static int sessionUseSocket;
         private static int sessionRouteSocket;
         private static DateTime sessionLastObservedUtc = DateTime.MinValue;
+        private static uint sessionLastSequence;
+        private static bool sessionSequenceAvailable;
 
         // 会话代次跟踪
         private static long sessionVersion = 0;
@@ -352,6 +359,8 @@ namespace WPELibrary.Lib.Vision
                 sessionUseSocket = 0;
                 sessionRouteSocket = 0;
                 sessionLastObservedUtc = DateTime.MinValue;
+                sessionLastSequence = 0;
+                sessionSequenceAvailable = false;
             }
         }
 
@@ -369,6 +378,39 @@ namespace WPELibrary.Lib.Vision
         public static void EndSession()
         {
             BeginSession();
+        }
+
+        /// <summary>
+        /// Prepares a caller-validated current-session game frame by binding
+        /// the next observed session sequence. Ordinary send presets may use
+        /// this narrow bridge only after validating their own protocol shape;
+        /// this method does not invent a sequence for a session that has not
+        /// produced one.
+        /// </summary>
+        public static bool TryPrepareCurrentSessionSequence(
+            byte[] buffer,
+            out string errorCode)
+        {
+            if (!IsCurrentGameFrame(buffer))
+            {
+                errorCode = "not_current_game_frame";
+                return false;
+            }
+
+            // Ordinary send presets may contain a stale non-zero sequence in
+            // their saved bytes. Only a sequence observed after the current
+            // session began is valid for this bridge; never promote the
+            // preset body into session state.
+            lock (SessionCacheSync)
+            {
+                if (!sessionSequenceAvailable)
+                {
+                    errorCode = "session_sequence_unavailable";
+                    return false;
+                }
+            }
+
+            return TryBindNextSessionSequence(buffer, out errorCode);
         }
 
         /// <summary>
@@ -391,10 +433,43 @@ namespace WPELibrary.Lib.Vision
             {
                 if (isGameFrame)
                 {
+                    bool routeChanged = sessionRoute != null &&
+                        (sessionRoute.PacketType != packet.PacketType ||
+                         !string.Equals(
+                             sessionRoute.PacketFrom,
+                             packet.PacketFrom ?? string.Empty,
+                             StringComparison.OrdinalIgnoreCase) ||
+                         !string.Equals(
+                             sessionRoute.PacketTo,
+                             packet.PacketTo ?? string.Empty,
+                             StringComparison.OrdinalIgnoreCase));
+                    if (routeChanged)
+                    {
+                        // A reconnect can keep the hook session alive while
+                        // replacing both the local ephemeral port and the
+                        // remote endpoint. Do not let the old Jump/Use
+                        // templates or their sockets cross that boundary.
+                        sessionJumpTemplate = null;
+                        sessionUseTemplate = null;
+                        sessionJumpSocket = 0;
+                        sessionUseSocket = 0;
+                        sessionRouteSocket = 0;
+                        sessionLastSequence = 0;
+                        sessionSequenceAvailable = false;
+                    }
+
                     sessionRoute = new TreasurePacketRoute(
                         packet.PacketType,
                         packet.PacketFrom,
                         packet.PacketTo);
+
+                    uint observedSequence = 0;
+                    if (TryReadSessionSequence(packet.PacketBuffer, out observedSequence) &&
+                        observedSequence != 0)
+                    {
+                        sessionLastSequence = observedSequence;
+                        sessionSequenceAvailable = true;
+                    }
                 }
 
                 if (isJump)
@@ -590,10 +665,84 @@ namespace WPELibrary.Lib.Vision
         }
 
         /// <summary>
+        /// Builds a Jump packet only from a validated template observed in
+        /// the current hook session. Production live sending must not fall
+        /// back to the closed encoder when the game has not supplied a real
+        /// outgoing Jump frame.
+        /// </summary>
+        public static Socket_PacketInfo GetCurrentJumpPacket(
+            TreasureInventoryTarget target,
+            TreasurePacketRoute route)
+        {
+            if (target == null)
+            {
+                throw new ArgumentNullException(nameof(target));
+            }
+
+            if (route == null)
+            {
+                throw new ArgumentNullException(nameof(route));
+            }
+
+            TreasurePacketTemplate template = FindCurrentTemplate(
+                route,
+                IsJumpTemplate,
+                false);
+            if (template == null)
+            {
+                throw new TreasurePacketRuntimeException(
+                    "jump_template_not_found",
+                    "No current-session outgoing 0x5828 Jump template matches the current connection.");
+            }
+
+            byte[] patched = TreasurePacketTemplatePatcher.PatchJump(
+                template.Buffer,
+                target);
+            return CreatePacket(route, patched);
+        }
+
+        /// <summary>
+        /// Builds a Use packet only from a validated template observed in the
+        /// current hook session. The package position is the only field that
+        /// is rebound; type, count, parameter, and all length fields remain
+        /// from the game's own frame.
+        /// </summary>
+        public static Socket_PacketInfo GetCurrentUsePacket(
+            TreasureInventoryTarget target,
+            TreasurePacketRoute route)
+        {
+            if (target == null)
+            {
+                throw new ArgumentNullException(nameof(target));
+            }
+
+            if (route == null)
+            {
+                throw new ArgumentNullException(nameof(route));
+            }
+
+            TreasurePacketTemplate template = FindCurrentTemplate(
+                route,
+                IsUseTemplate,
+                true);
+            if (template == null)
+            {
+                throw new TreasurePacketRuntimeException(
+                    "use_template_not_found",
+                    "No current-session outgoing 0x783A Use template matches the current connection.");
+            }
+
+            byte[] patched = TreasurePacketTemplatePatcher.PatchUse(
+                template.Buffer,
+                target);
+            return CreatePacket(route, patched);
+        }
+
+        /// <summary>
         /// Returns the native AutoDig packet used by an ordinary send preset,
-        /// rebinding only its route metadata to the current connection. The
-        /// saved packet is preferred over the closed fallback frame so an
-        /// older, already-working preset remains byte-for-byte compatible.
+        /// after the template has been validated against the current
+        /// connection. A saved template from a different destination is
+        /// rejected; Jump/Use templates remain current-route-only.
         /// </summary>
         public static Socket_PacketInfo GetCurrentAutoDigPacket(TreasurePacketRoute route)
         {
@@ -624,7 +773,7 @@ namespace WPELibrary.Lib.Vision
             {
                 throw new TreasurePacketRuntimeException(
                     "auto_dig_template_not_found",
-                    "No current outgoing 0xB0F4 AutoDig template matches the current route.");
+                    "No validated outgoing 0xB0F4 AutoDig template matches the current connection.");
             }
 
             return CreatePacket(route, candidate.PacketBuffer);
@@ -634,28 +783,56 @@ namespace WPELibrary.Lib.Vision
         {
             try
             {
-                TreasurePacketRoute route;
-                try
-                {
-                    route = GetSessionRoute();
-                }
-                catch (TreasurePacketRuntimeException ex)
-                {
-                    if (!string.Equals(
-                        ex.Code,
-                        "current_route_not_found",
-                        StringComparison.Ordinal))
-                    {
-                        throw;
-                    }
-
-                    route = GetCurrentRoute();
-                }
-
+                TreasurePacketRoute route = GetCurrentRoute();
                 GetCurrentAutoDigPacket(route);
                 return true;
             }
             catch (TreasurePacketRuntimeException)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Checks only for a Jump template from the current hook session.
+        /// This is used to choose the guarded AutoDig compatibility path
+        /// when a game build does not expose a current 0x5828 frame.
+        /// </summary>
+        public static bool HasCurrentJumpTemplate()
+        {
+            try
+            {
+                TreasurePacketRoute route = GetCurrentRoute();
+                return FindCurrentTemplate(route, IsJumpTemplate, false) != null;
+            }
+            catch (TreasurePacketRuntimeException)
+            {
+                return false;
+            }
+            catch (TreasurePacketContractException)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Checks only for a validated Use template from the current hook
+        /// session. This deliberately does not use GetCurrentUseRequest,
+        /// whose compatibility fallback can resolve saved Use parameters
+        /// without a real current-session 0x783A frame.
+        /// </summary>
+        public static bool HasCurrentUseTemplate()
+        {
+            try
+            {
+                TreasurePacketRoute route = GetCurrentRoute();
+                return FindCurrentTemplate(route, IsUseTemplate, true) != null;
+            }
+            catch (TreasurePacketRuntimeException)
+            {
+                return false;
+            }
+            catch (TreasurePacketContractException)
             {
                 return false;
             }
@@ -682,30 +859,14 @@ namespace WPELibrary.Lib.Vision
         }
 
         /// <summary>
-        /// Returns the best currently usable game route. A running hook session
-        /// remains the preferred source; when the session cache is empty, reuse
-        /// an already captured outgoing game frame and resolve its socket from
-        /// the existing capture list. This keeps treasure-map sending aligned
-        /// with ordinary presets, which can reuse an established connection
-        /// without requiring a new click on the hook-start button.
+        /// Returns the best currently usable game route. The current capture
+        /// list is checked first on every call so a reconnect can replace the
+        /// route cached earlier in the same hook session. When the display
+        /// list has auto-cleared, a still-live session socket is used as the
+        /// compatibility fallback.
         /// </summary>
         public static TreasurePacketRoute GetCurrentRoute()
         {
-            try
-            {
-                return GetSessionRoute();
-            }
-            catch (TreasurePacketRuntimeException ex)
-            {
-                if (!string.Equals(
-                    ex.Code,
-                    "current_route_not_found",
-                    StringComparison.Ordinal))
-                {
-                    throw;
-                }
-            }
-
             List<Socket_PacketInfo> capturedPackets = CaptureCurrentPacketsForRoute();
             IEnumerable<Socket_PacketInfo> candidates = capturedPackets
                 .Where(item => item != null &&
@@ -756,11 +917,70 @@ namespace WPELibrary.Lib.Vision
                 }
             }
 
+            TreasurePacketRoute cachedRoute = null;
+            int cachedSocket = 0;
+            lock (SessionCacheSync)
+            {
+                if (sessionRoute != null)
+                {
+                    cachedRoute = CloneRoute(sessionRoute);
+                    cachedSocket = sessionRouteSocket;
+                }
+            }
+
+            if (cachedRoute != null && IsCurrentSocketUsable(cachedSocket))
+            {
+                return cachedRoute;
+            }
+
             throw new TreasurePacketRuntimeException(
                 "current_route_not_found",
                 string.IsNullOrWhiteSpace(lastError)
                     ? "No current outgoing game route was found in the existing connection list."
                     : lastError);
+        }
+
+        private static bool IsCurrentSocketUsable(int socket)
+        {
+            if (socket <= 0)
+            {
+                return false;
+            }
+
+            string currentAddress = Socket_Operation.GetIP_BySocket(
+                socket,
+                Socket_Cache.SocketPacket.IPType.From);
+            return !string.IsNullOrWhiteSpace(currentAddress) &&
+                !string.Equals(
+                    currentAddress.Trim(),
+                    "0.0.0.0:0",
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void InvalidateSessionSocket(int socket)
+        {
+            if (socket <= 0)
+            {
+                return;
+            }
+
+            lock (SessionCacheSync)
+            {
+                if (sessionJumpSocket == socket)
+                {
+                    sessionJumpSocket = 0;
+                }
+
+                if (sessionUseSocket == socket)
+                {
+                    sessionUseSocket = 0;
+                }
+
+                if (sessionRouteSocket == socket)
+                {
+                    sessionRouteSocket = 0;
+                }
+            }
         }
 
         private static List<Socket_PacketInfo> CaptureCurrentPacketsForRoute()
@@ -897,62 +1117,98 @@ namespace WPELibrary.Lib.Vision
             Socket_Cache.SocketPacket.PacketType packetType,
             string packetTo)
         {
-            int socket = 0;
-            List<Socket_PacketInfo> capturedPackets = null;
-            Action resolve = () =>
+            return ResolveCurrentSessionSocket(packetType, packetTo, false);
+        }
+
+        private static int ResolveCurrentSessionSocket(
+            Socket_Cache.SocketPacket.PacketType packetType,
+            string packetTo,
+            bool preferUseSocket)
+        {
+            Socket_PacketInfo template = new Socket_PacketInfo
             {
-                capturedPackets = Socket_Cache.SocketList.lstRecPacket.ToList();
-                Socket_PacketInfo template = new Socket_PacketInfo
-                {
-                    PacketType = packetType,
-                    PacketTo = packetTo ?? string.Empty
-                };
-                socket = Socket_Cache.SocketList.FindLatestMatchingSocket(
-                    capturedPackets,
-                    new[] { template });
+                PacketType = packetType,
+                PacketTo = packetTo ?? string.Empty
             };
 
-            if (Socket_Cache.System.InvokeAction != null)
+            Socket_Cache.SocketList.CurrentSocketRouteResolution resolution = null;
+            try
             {
-                Socket_Cache.System.InvokeAction(resolve);
+                resolution = Socket_Cache.SocketList.ResolveCurrentRoute(template);
             }
-            else
+            catch (Exception)
             {
-                resolve();
+                resolution = null;
             }
 
-            if (capturedPackets != null)
+            if (resolution != null && resolution.Succeeded && resolution.Route != null)
+            {
+                ObserveCapturedPackets(CaptureCurrentPacketsForRoute());
+                return resolution.Route.Socket;
+            }
+
+            if (resolution != null &&
+                resolution.Status == Socket_Cache.SocketList.CurrentSocketRouteStatus.Ambiguous)
+            {
+                return 0;
+            }
+
+            List<Socket_PacketInfo> capturedPackets = CaptureCurrentPacketsForRoute();
+            if (capturedPackets.Count > 0)
             {
                 ObserveCapturedPackets(capturedPackets);
             }
 
-            if (socket > 0)
-            {
-                return socket;
-            }
-
+            bool enforceSocketLiveness =
+                Socket_Cache.SocketList.CaptureSessionStartedAt != DateTime.MinValue;
+            int cachedSocket = 0;
             lock (SessionCacheSync)
             {
-                if (sessionJumpTemplate != null &&
-                    MatchesRoute(sessionJumpTemplate, packetType, packetTo) &&
-                    sessionJumpSocket > 0)
-                {
-                    return sessionJumpSocket;
-                }
-
-                if (sessionUseTemplate != null &&
+                if (preferUseSocket &&
+                    sessionUseTemplate != null &&
                     MatchesRoute(sessionUseTemplate, packetType, packetTo) &&
                     sessionUseSocket > 0)
                 {
-                    return sessionUseSocket;
+                    cachedSocket = sessionUseSocket;
                 }
-
-                if (sessionRoute != null &&
+                else if (!preferUseSocket &&
+                    sessionJumpTemplate != null &&
+                    MatchesRoute(sessionJumpTemplate, packetType, packetTo) &&
+                    sessionJumpSocket > 0)
+                {
+                    cachedSocket = sessionJumpSocket;
+                }
+                else if (sessionRoute != null &&
                     MatchesRoute(sessionRoute, packetType, packetTo) &&
                     sessionRouteSocket > 0)
                 {
-                    return sessionRouteSocket;
+                    cachedSocket = sessionRouteSocket;
                 }
+                else if (preferUseSocket &&
+                    sessionJumpTemplate != null &&
+                    MatchesRoute(sessionJumpTemplate, packetType, packetTo) &&
+                    sessionJumpSocket > 0)
+                {
+                    cachedSocket = sessionJumpSocket;
+                }
+                else if (!preferUseSocket &&
+                    sessionUseTemplate != null &&
+                    MatchesRoute(sessionUseTemplate, packetType, packetTo) &&
+                    sessionUseSocket > 0)
+                {
+                    cachedSocket = sessionUseSocket;
+                }
+            }
+
+            if (cachedSocket > 0 &&
+                (!enforceSocketLiveness || IsCurrentSocketUsable(cachedSocket)))
+            {
+                return cachedSocket;
+            }
+
+            if (cachedSocket > 0 && enforceSocketLiveness)
+            {
+                InvalidateSessionSocket(cachedSocket);
             }
 
             return 0;
@@ -1316,13 +1572,49 @@ namespace WPELibrary.Lib.Vision
 
         /// <summary>
         /// Sends exactly one already-prepared packet. The caller must provide
-        /// the explicit token, and the socket is resolved again from the
-        /// current capture list or the current-session observation cache so a
-        /// stale template socket is never reused.
+        /// the explicit token. The current route is read again immediately
+        /// before socket resolution; if it changed after preparation, the
+        /// packet is rejected rather than rebound across connections.
         /// </summary>
         public static TreasurePacketSendResult SendPreparedPacketOnce(
             Socket_PacketInfo preparedPacket,
             TreasureLiveSendAuthorization authorization)
+        {
+            return SendPreparedPacketOnce(
+                preparedPacket,
+                authorization,
+                false);
+        }
+
+        /// <summary>
+        /// Sends one prepared packet. The Xiangju Chang'an production path can
+        /// opt into action-specific cached-socket fallback so a Use packet does
+        /// not inherit a stale Jump socket when the visible capture list has
+        /// just auto-cleared. Other callers retain the previous generic order.
+        /// </summary>
+        public static TreasurePacketSendResult SendPreparedPacketOnce(
+            Socket_PacketInfo preparedPacket,
+            TreasureLiveSendAuthorization authorization,
+            bool preferActionSpecificSocketFallback)
+        {
+            return SendPreparedPacketOnce(
+                preparedPacket,
+                authorization,
+                preferActionSpecificSocketFallback,
+                false);
+        }
+
+        /// <summary>
+        /// Sends one prepared packet with an explicit compatibility choice for
+        /// a caller that has no current-session sequence template. The
+        /// compatibility choice is opt-in; ordinary callers keep the strict
+        /// session-sequence requirement.
+        /// </summary>
+        public static TreasurePacketSendResult SendPreparedPacketOnce(
+            Socket_PacketInfo preparedPacket,
+            TreasureLiveSendAuthorization authorization,
+            bool preferActionSpecificSocketFallback,
+            bool allowMissingSessionSequence)
         {
             if (preparedPacket == null)
             {
@@ -1364,9 +1656,11 @@ namespace WPELibrary.Lib.Vision
                     TreasureMapPacketSendDisposition.NotDispatched);
             }
 
-            if (!IsEncodedJumpFrame(preparedPacket.PacketBuffer) &&
-                !IsEncodedUseFrame(preparedPacket.PacketBuffer) &&
-                !IsEncodedAutoDigFrame(preparedPacket.PacketBuffer))
+            byte[] sendBuffer = (byte[])preparedPacket.PacketBuffer.Clone();
+            bool isJumpFrame = IsEncodedJumpFrame(sendBuffer);
+            bool isUseFrame = IsEncodedUseFrame(sendBuffer);
+            bool isAutoDigFrame = IsEncodedAutoDigFrame(sendBuffer);
+            if (!isJumpFrame && !isUseFrame && !isAutoDigFrame)
             {
                 return new TreasurePacketSendResult(
                     false,
@@ -1376,7 +1670,45 @@ namespace WPELibrary.Lib.Vision
                     TreasureMapPacketSendDisposition.NotDispatched);
             }
 
-            int socket = ResolveCurrentCapturedSocket(preparedPacket.PacketType, preparedPacket.PacketTo);
+            TreasurePacketRoute currentRoute;
+            try
+            {
+                currentRoute = GetCurrentRoute();
+            }
+            catch (TreasurePacketRuntimeException ex)
+            {
+                return new TreasurePacketSendResult(
+                    false,
+                    ex.Code,
+                    0,
+                    0,
+                    TreasureMapPacketSendDisposition.NotDispatched);
+            }
+            catch (Exception)
+            {
+                return new TreasurePacketSendResult(
+                    false,
+                    "current_route_not_found",
+                    0,
+                    0,
+                    TreasureMapPacketSendDisposition.NotDispatched);
+            }
+
+            if (!MatchesRoute(currentRoute, preparedPacket))
+            {
+                return new TreasurePacketSendResult(
+                    false,
+                    "current_route_changed",
+                    0,
+                    0,
+                    TreasureMapPacketSendDisposition.NotDispatched);
+            }
+
+            int socket = ResolveCurrentCapturedSocket(
+                preparedPacket.PacketType,
+                preparedPacket.PacketTo,
+                isUseFrame,
+                preferActionSpecificSocketFallback);
             if (socket <= 0)
             {
                 return new TreasurePacketSendResult(
@@ -1387,25 +1719,59 @@ namespace WPELibrary.Lib.Vision
                     TreasureMapPacketSendDisposition.NotDispatched);
             }
 
+            if ((isJumpFrame || isUseFrame) &&
+                !TryBindNextSessionSequence(sendBuffer, out string sequenceError) &&
+                !(allowMissingSessionSequence &&
+                  string.Equals(
+                      sequenceError,
+                      "session_sequence_unavailable",
+                      StringComparison.Ordinal)))
+            {
+                return new TreasurePacketSendResult(
+                    false,
+                    sequenceError,
+                    0,
+                    0,
+                    TreasureMapPacketSendDisposition.NotDispatched);
+            }
+
+            int bytesSent;
+            int socketErrorCode;
             bool sent = Socket_Operation.SendPacket(
                 socket,
                 preparedPacket.PacketType,
                 preparedPacket.PacketFrom,
                 preparedPacket.PacketTo,
-                (byte[])preparedPacket.PacketBuffer.Clone());
+                sendBuffer,
+                out bytesSent,
+                out socketErrorCode);
             return sent
                 ? new TreasurePacketSendResult(
                     true,
                     "sent",
                     socket,
-                    preparedPacket.PacketBuffer.Length,
-                    TreasureMapPacketSendDisposition.Dispatched)
-                : new TreasurePacketSendResult(
-                    false,
-                    "socket_send_failed",
+                    bytesSent,
+                    TreasureMapPacketSendDisposition.Dispatched,
+                    0)
+                : CreateSocketSendFailureResult(
                     socket,
-                    0,
-                    TreasureMapPacketSendDisposition.Ambiguous);
+                    bytesSent,
+                    socketErrorCode);
+        }
+
+        private static TreasurePacketSendResult CreateSocketSendFailureResult(
+            int socket,
+            int bytesSent,
+            int socketErrorCode)
+        {
+            InvalidateSessionSocket(socket);
+            return new TreasurePacketSendResult(
+                false,
+                "socket_send_failed",
+                socket,
+                bytesSent,
+                TreasureMapPacketSendDisposition.Ambiguous,
+                socketErrorCode);
         }
 
         private static JObject ParseAndValidateResidentState(string residentStateJson)
@@ -1524,6 +1890,48 @@ namespace WPELibrary.Lib.Vision
             };
         }
 
+        private static TreasurePacketTemplate FindCurrentTemplate(
+            TreasurePacketRoute route,
+            Func<byte[], bool> validator,
+            bool useTemplate)
+        {
+            Socket_PacketInfo candidate = CaptureCurrentPacketsForRoute()
+                .Where(item => item != null &&
+                    IsSendPacketType(item.PacketType) &&
+                    validator(item.PacketBuffer) &&
+                    MatchesRoute(route, item.PacketType, item.PacketTo))
+                .OrderByDescending(item => item.PacketTime)
+                .FirstOrDefault();
+
+            if (candidate != null)
+            {
+                // The capture list is also a valid source for the session
+                // sequence when a caller reached this method without first
+                // draining the hook queue through SocketToList.
+                ObserveCapturedPacket(candidate);
+                return new TreasurePacketTemplate(
+                    candidate.PacketType,
+                    candidate.PacketFrom,
+                    candidate.PacketTo,
+                    candidate.PacketBuffer);
+            }
+
+            lock (SessionCacheSync)
+            {
+                TreasurePacketTemplate cached = useTemplate
+                    ? sessionUseTemplate
+                    : sessionJumpTemplate;
+                if (cached != null &&
+                    validator(cached.Buffer) &&
+                    MatchesRoute(route, cached.PacketType, cached.PacketTo))
+                {
+                    return CloneTemplate(cached);
+                }
+            }
+
+            return null;
+        }
+
         private static TreasurePacketTemplate CloneTemplate(TreasurePacketTemplate template)
         {
             return new TreasurePacketTemplate(
@@ -1581,6 +1989,22 @@ namespace WPELibrary.Lib.Vision
                 route.PacketTo.Trim(),
                 (packetTo ?? string.Empty).Trim(),
                 StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool MatchesRoute(
+            TreasurePacketRoute route,
+            Socket_PacketInfo packet)
+        {
+            return route != null && packet != null &&
+                route.PacketType == packet.PacketType &&
+                string.Equals(
+                    route.PacketFrom ?? string.Empty,
+                    packet.PacketFrom ?? string.Empty,
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(
+                    route.PacketTo ?? string.Empty,
+                    packet.PacketTo ?? string.Empty,
+                    StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsCurrentGameFrame(byte[] buffer)
@@ -1661,6 +2085,67 @@ namespace WPELibrary.Lib.Vision
             }
         }
 
+        private static bool TryReadSessionSequence(byte[] buffer, out uint sequence)
+        {
+            sequence = 0;
+            if (buffer == null ||
+                buffer.Length < TreasurePacketSessionHeader.SequenceOffset +
+                    TreasurePacketSessionHeader.SequenceLength)
+            {
+                return false;
+            }
+
+            sequence = TreasurePacketSessionHeader.ReadSequence(buffer);
+            return true;
+        }
+
+        private static bool TryBindNextSessionSequence(
+            byte[] buffer,
+            out string errorCode)
+        {
+            // The supplied client captures show this field advancing with
+            // outgoing game frames. Use the next value only after a current
+            // non-zero session value has been observed; do not invent a
+            // value for a session that has not produced one.
+            errorCode = string.Empty;
+            if (buffer == null ||
+                buffer.Length < TreasurePacketSessionHeader.SequenceOffset +
+                    TreasurePacketSessionHeader.SequenceLength)
+            {
+                errorCode = "session_sequence_unavailable";
+                return false;
+            }
+
+            lock (SessionCacheSync)
+            {
+                if (!sessionSequenceAvailable)
+                {
+                    uint templateSequence =
+                        TreasurePacketSessionHeader.ReadSequence(buffer);
+                    if (templateSequence == 0)
+                    {
+                        errorCode = "session_sequence_unavailable";
+                        return false;
+                    }
+
+                    sessionLastSequence = templateSequence;
+                    sessionSequenceAvailable = true;
+                }
+
+                uint nextSequence = unchecked(sessionLastSequence + 1U);
+                if (nextSequence == 0)
+                {
+                    errorCode = "session_sequence_exhausted";
+                    return false;
+                }
+
+                TreasurePacketSessionHeader.WriteSequence(buffer, nextSequence);
+                sessionLastSequence = nextSequence;
+            }
+
+            return true;
+        }
+
         private static bool IsSendPacketType(Socket_Cache.SocketPacket.PacketType packetType)
         {
             switch (packetType)
@@ -1679,9 +2164,13 @@ namespace WPELibrary.Lib.Vision
 
         private static int ResolveCurrentCapturedSocket(
             Socket_Cache.SocketPacket.PacketType packetType,
-            string packetTo)
+            string packetTo,
+            bool isUseFrame,
+            bool preferActionSpecificSocketFallback)
         {
-            return ResolveCurrentSessionSocket(packetType, packetTo);
+            return preferActionSpecificSocketFallback
+                ? ResolveCurrentSessionSocket(packetType, packetTo, isUseFrame)
+                : ResolveCurrentSessionSocket(packetType, packetTo);
         }
 
         private static void RequireBoolean(

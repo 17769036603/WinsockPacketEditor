@@ -438,6 +438,12 @@ public final class MainActivity extends android.app.Activity implements SyncCoor
         if (!automaticStartup || destroyed) {
             return;
         }
+        // Keep the connection/setup page in the foreground until the user has
+        // saved valid credentials. Auto-bouncing to the game before then made
+        // the login page impossible to reach after the overlay had ever started.
+        if (!setupPageHidden) {
+            return;
+        }
         if (!canDrawOverlays()) {
             if (!awaitingOverlayPermission) {
                 awaitingOverlayPermission = true;

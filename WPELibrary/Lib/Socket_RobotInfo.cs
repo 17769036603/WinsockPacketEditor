@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Data;
 
+using WPELibrary.Lib.EquipmentRefine;
+using WPELibrary.Lib.MountSpeed;
 namespace WPELibrary.Lib
 {
     public class Socket_RobotInfo
@@ -115,6 +117,39 @@ namespace WPELibrary.Lib
         {
             get => _summonedPetSkillBookPreset;
             set => _summonedPetSkillBookPreset = value;
+        }
+
+        #endregion
+
+        #region//坐骑速度预设
+
+        private MountSpeed.MountSpeedPreset _mountSpeedPreset;
+
+        /// <summary>
+        /// 坐骑速度监控预设。
+        /// 持久化为 JSON 存于 RobotMountSpeedPreset 表。
+        /// 未确认真实游戏数据来源时，仅用于离线测试。
+        /// </summary>
+        public MountSpeed.MountSpeedPreset MountSpeedPreset
+        {
+            get => _mountSpeedPreset;
+            set => _mountSpeedPreset = value;
+        }
+
+        #endregion
+
+        #region//装备炼化预设
+
+        private EquipmentRefinePreset _equipmentRefinePreset;
+
+        /// <summary>
+        /// 装备炼化纯发包预设。
+        /// 只持久化目标、规则和已验收字段映射；发送授权仍由运行时参数显式注入。
+        /// </summary>
+        public EquipmentRefinePreset EquipmentRefinePreset
+        {
+            get => _equipmentRefinePreset;
+            set => _equipmentRefinePreset = value;
         }
 
         #endregion

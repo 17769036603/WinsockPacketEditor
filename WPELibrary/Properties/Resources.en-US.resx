@@ -134,6 +134,7 @@
   <data name="SendPreset_SweepFolder" xml:space="preserve"><value>Byte-sweep group</value></data>
   <data name="SendPreset_Required" xml:space="preserve"><value>Enter a preset name and group.</value></data>
   <data name="SendPreset_Duplicate" xml:space="preserve"><value>A preset with this name already exists in the group.</value></data>
+  <data name="SendPreset_DuplicateOverwrite" xml:space="preserve"><value>A preset with this name already exists in the group. Overwrite it?</value></data>
   <data name="UI_SendSelected" xml:space="preserve"><value>Send selected</value></data>
   <data name="UI_SequentialSend" xml:space="preserve"><value>Sequential</value></data>
   <data name="UI_ConcurrentSend" xml:space="preserve"><value>Concurrent</value></data>
@@ -160,6 +161,8 @@
   <data name="UI_TreasureLiveSendConfirmTitle" xml:space="preserve"><value>Treasure-map send confirmation</value></data>
   <data name="UI_TreasureLiveSendConfirm" xml:space="preserve"><value>This assistant contains a treasure-map flow and will send Jump and native auto-dig packets. The confirmation is saved for this assistant and will not be shown again. Continue?</value></data>
   <data name="UI_AssistantStartFailed" xml:space="preserve"><value>The assistant could not start. Check that its flow is valid.</value></data>
+  <data name="UI_AssistantRunFailed" xml:space="preserve"><value>Assistant run failed: {0}</value></data>
+  <data name="UI_AssistantReadOnlySnapshotReady" xml:space="preserve"><value>Summoned-pet skill read-only snapshot was read successfully; no game operation was executed.</value></data>
   <data name="UI_TreasureC6Unavailable" xml:space="preserve"><value>The treasure-map assistant stopped because the C6 reader at 127.0.0.1:28765 is unavailable or disconnected.</value></data>
   <data name="UI_TreasureRunFailed" xml:space="preserve"><value>The treasure-map assistant stopped: {0}</value></data>
   <data name="UI_SendCount" xml:space="preserve"><value>Send count</value></data>
@@ -244,6 +247,7 @@
   <data name="ByteSweep_Required" xml:space="preserve"><value>Enter a preset name and sweep group.</value></data>
   <data name="ByteSweep_RangeInvalid" xml:space="preserve"><value>The sweep range exceeds the packet length.</value></data>
   <data name="ByteSweep_Duplicate" xml:space="preserve"><value>A preset with this name already exists in the selected group.</value></data>
+  <data name="ByteSweep_DuplicateOverwrite" xml:space="preserve"><value>A preset with this name already exists in the selected group. Overwrite it?</value></data>
   <data name="ByteSweep_ControlTitle" xml:space="preserve"><value>Sweep control</value></data>
   <data name="ByteSweep_Mode" xml:space="preserve"><value>Mode</value></data>
   <data name="ByteSweep_SequentialMode" xml:space="preserve"><value>Sequential sweep</value></data>

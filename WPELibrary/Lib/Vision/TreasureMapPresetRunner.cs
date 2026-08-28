@@ -46,6 +46,7 @@ namespace WPELibrary.Lib.Vision
             this.ConsumptionConfirmTimeoutMilliseconds = 2500;
             this.FailedTargetCooldownMilliseconds = 3000;
             this.LiveSendEnabled = false;
+            this.RequireCurrentPacketTemplates = false;
             this.Mode = TreasureMapExecutionMode.Continuous;
             this.Version = TreasureMapInstructionVersion.V2;
             // 生产桌面入口显式使用兼容性 Jump→Use；AutoDig 仅保留给
@@ -106,6 +107,22 @@ namespace WPELibrary.Lib.Vision
         public bool LiveSendEnabled { get; set; }
 
         /// <summary>
+        /// Requires production actions to use current-session captured
+        /// Jump/Use templates. Offline callers keep the default false value
+        /// so the closed encoder remains available for deterministic tests.
+        /// </summary>
+        public bool RequireCurrentPacketTemplates { get; set; }
+
+        /// <summary>
+        /// Requires the production runner to confirm a current Jump or
+        /// validated AutoDig path before dispatching the first Jump. The Use
+        /// template is checked immediately before the Use dispatch so a
+        /// missing Use template cannot suppress a valid Jump. This is opt-in
+        /// so unchanged treasure presets retain their existing behavior.
+        /// </summary>
+        public bool RequireActionTemplateBeforeJump { get; set; }
+
+        /// <summary>
         /// 执行模式：一次性处理当前快照或持续监听
         /// </summary>
         public TreasureMapExecutionMode Mode { get; set; }
@@ -130,6 +147,12 @@ namespace WPELibrary.Lib.Vision
         /// 到达证据策略。Shadow 只记录，不改变旧流程；Enforced 要求匹配证据。
         /// </summary>
         public TreasureEvidenceMode EvidenceMode { get; set; }
+
+        /// <summary>
+        /// 传输写入结果不确定时，是否结束持续运行。默认关闭，只有明确
+        /// 选择了需要止损的藏宝图预设才启用，保持其他预设的旧语义。
+        /// </summary>
+        public bool StopContinuousOnTransportFailure { get; set; }
 
         public int ArrivalEvidenceTimeoutMilliseconds { get; set; }
 
@@ -280,6 +303,27 @@ namespace WPELibrary.Lib.Vision
 
     public sealed class TreasureMapRuntimePacketSender : ITreasureMapPacketSender
     {
+        private readonly bool preferActionSpecificSocketFallback;
+        private readonly bool allowMissingSessionSequence;
+
+        public TreasureMapRuntimePacketSender()
+            : this(false, false)
+        {
+        }
+
+        public TreasureMapRuntimePacketSender(bool preferActionSpecificSocketFallback)
+            : this(preferActionSpecificSocketFallback, false)
+        {
+        }
+
+        public TreasureMapRuntimePacketSender(
+            bool preferActionSpecificSocketFallback,
+            bool allowMissingSessionSequence)
+        {
+            this.preferActionSpecificSocketFallback = preferActionSpecificSocketFallback;
+            this.allowMissingSessionSequence = allowMissingSessionSequence;
+        }
+
         public TreasureMapPacketSendResult SendOnce(
             Socket_PacketInfo packet,
             bool liveSendEnabled)
@@ -298,10 +342,27 @@ namespace WPELibrary.Lib.Vision
             try
             {
                 TreasurePacketSendResult result =
-                    TreasurePacketRuntime.SendPreparedPacketOnce(packet, authorization);
+                    TreasurePacketRuntime.SendPreparedPacketOnce(
+                        packet,
+                        authorization,
+                        this.preferActionSpecificSocketFallback,
+                        this.allowMissingSessionSequence);
+                string resultCode = result.Code;
+                if (!result.Success)
+                {
+                    resultCode = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0};socket={1};bytes_sent={2};wsa_error={3};disposition={4}",
+                        resultCode,
+                        result.Socket,
+                        result.BytesSent,
+                        result.SocketErrorCode,
+                        result.Disposition);
+                }
+
                 return new TreasureMapPacketSendResult(
                     result.Success,
-                    result.Code,
+                    resultCode,
                     result.Socket,
                     result.BytesSent,
                     result.Disposition);
@@ -426,6 +487,7 @@ namespace WPELibrary.Lib.Vision
         private readonly ManualResetEventSlim pauseGate;
         private volatile bool isPaused;
         private volatile bool isStopping;
+        private bool stopAfterTransportFailure;
 
         // Exclusive is the safe default: only one treasure-map runner may
         // own the live action boundary in this process at a time. Cooperative
@@ -581,6 +643,7 @@ namespace WPELibrary.Lib.Vision
         public void Run(CancellationToken externalToken)
         {
             this.lastError = string.Empty;
+            this.stopAfterTransportFailure = false;
             this.currentRunId = Guid.NewGuid();
             this.actionLog.Clear();
             this.lastRecognitionFingerprint = string.Empty;
@@ -854,6 +917,19 @@ namespace WPELibrary.Lib.Vision
                         else if (this.currentState == TreasureMapState.Ambiguous ||
                                  this.currentState == TreasureMapState.Failed)
                         {
+                            if (this.options.StopContinuousOnTransportFailure &&
+                                this.stopAfterTransportFailure)
+                            {
+                                this.Log(
+                                    "run",
+                                    "Control",
+                                    null,
+                                    "stopped_after_transport_failure:" + this.lastError,
+                                    0,
+                                    false);
+                                return;
+                            }
+
                             TreasureMapTargetVersion failedVersion;
                             this.TryGetTargetVersion(target, out failedVersion);
                             skippedTargets[BuildTargetSlotKey(target)] = failedVersion;
@@ -956,6 +1032,14 @@ namespace WPELibrary.Lib.Vision
                     return;
                 }
 
+                if (consumptionRetryCount == 0 &&
+                    !this.EnsureActionPathReadyBeforeJump(
+                        target,
+                        targetVersion))
+                {
+                    return;
+                }
+
                 long attemptId = ++this.nextAttemptId;
                 this.currentAttemptId = attemptId;
 
@@ -1019,6 +1103,7 @@ namespace WPELibrary.Lib.Vision
 
                     if (jumpResult.Disposition == TreasureMapPacketSendDisposition.Ambiguous)
                     {
+                        this.MarkAmbiguousSendResult(jumpResult.Code);
                         this.RecordAction(target, TreasureMapState.Ambiguous, jumpResult.Code, 0);
                         this.currentState = TreasureMapState.Ambiguous;
                         return;
@@ -1094,6 +1179,7 @@ namespace WPELibrary.Lib.Vision
 
                 if (actionResult.Disposition == TreasureMapPacketSendDisposition.Ambiguous)
                 {
+                    this.MarkAmbiguousSendResult(actionResult.Code);
                     this.RecordAction(target, TreasureMapState.Ambiguous, actionResult.Code, 0);
                     this.currentState = TreasureMapState.Ambiguous;
                     return;
@@ -1176,6 +1262,91 @@ namespace WPELibrary.Lib.Vision
                     return;
                 }
             }
+        }
+
+        private bool EnsureActionPathReadyBeforeJump(
+            TreasureMapTargetIdentity target,
+            TreasureMapTargetVersion targetVersion)
+        {
+            if (!this.options.RequireActionTemplateBeforeJump ||
+                !this.options.RequireCurrentPacketTemplates)
+            {
+                return true;
+            }
+
+            bool hasJumpTemplate;
+            bool hasUseTemplate;
+            bool hasAutoDigPacket;
+            try
+            {
+                hasJumpTemplate = TreasurePacketRuntime.HasCurrentJumpTemplate();
+                hasUseTemplate = TreasurePacketRuntime.HasCurrentUseTemplate();
+                hasAutoDigPacket = TreasurePacketRuntime.HasCurrentAutoDigPacket();
+            }
+            catch (Exception ex)
+            {
+                this.lastError = "action_template_check_failed:" + ex.Message;
+                this.Log(
+                    "preflight",
+                    "Treasure",
+                    this.FindCurrentItem(target),
+                    this.lastError,
+                    0,
+                    false);
+                this.currentState = TreasureMapState.Failed;
+                return false;
+            }
+
+            // Prefer the validated AutoDig path when the current game build
+            // exposes it but does not expose a complete Jump/Use pair. This
+            // selection is refreshed per target so templates captured after
+            // assistant startup are not ignored.
+            bool useNativeAutoDig = hasAutoDigPacket &&
+                (!hasUseTemplate || !hasJumpTemplate);
+            if (useNativeAutoDig)
+            {
+                this.options.UseNativeAutoDig = true;
+                return true;
+            }
+
+            if (hasJumpTemplate && hasUseTemplate)
+            {
+                this.options.UseNativeAutoDig = false;
+                return true;
+            }
+
+            // A missing Use template must not suppress a valid current Jump.
+            // The Use step will perform its own current-session validation and
+            // fail closed before writing anything if the template is still
+            // unavailable. This restores the observed production behavior:
+            // the character can still enter the target route while avoiding a
+            // stale or invented Use frame.
+            if (hasJumpTemplate && !hasUseTemplate)
+            {
+                this.options.UseNativeAutoDig = false;
+                this.Log(
+                    "preflight",
+                    "Treasure",
+                    this.FindCurrentItem(target),
+                    "use_template_not_found;continue_with_jump",
+                    0,
+                    false);
+                return true;
+            }
+
+            string missing = !hasJumpTemplate
+                ? "jump_template_not_found"
+                : "use_template_not_found";
+            this.lastError = "action_templates_not_ready:" + missing;
+            this.Log(
+                "preflight",
+                "Treasure",
+                this.FindCurrentItem(target),
+                this.lastError,
+                0,
+                false);
+            this.currentState = TreasureMapState.Failed;
+            return false;
         }
 
         private void ConnectToC6()
@@ -1897,6 +2068,34 @@ namespace WPELibrary.Lib.Vision
             this.currentState = TreasureMapState.TargetCompleted;
         }
 
+        private void MarkAmbiguousSendResult(string code)
+        {
+            if (!this.options.StopContinuousOnTransportFailure ||
+                !IsTransportSendFailureCode(code))
+            {
+                return;
+            }
+
+            this.lastError = string.IsNullOrWhiteSpace(code)
+                ? "ambiguous_send"
+                : code;
+            // A failed socket write may have written part of the frame.
+            // Do not retry it or continue this selected continuous preset,
+            // because a second packet could duplicate an action on a new socket.
+            this.stopAfterTransportFailure = true;
+        }
+
+        private static bool IsTransportSendFailureCode(string code)
+        {
+            return string.Equals(
+                       code,
+                       "socket_send_failed",
+                       StringComparison.Ordinal) ||
+                   (!string.IsNullOrWhiteSpace(code) &&
+                    (code.StartsWith("socket_send_failed:", StringComparison.Ordinal) ||
+                     code.StartsWith("send_exception:", StringComparison.Ordinal)));
+        }
+
         private void ReadUntilSnapshot(CancellationToken externalToken)
         {
             Stopwatch wait = Stopwatch.StartNew();
@@ -2312,12 +2511,45 @@ namespace WPELibrary.Lib.Vision
                     "current route is not available");
             }
 
-            TreasurePacketPreparedSet prepared;
+            Socket_PacketInfo jumpPacket;
             try
             {
-                prepared = TreasurePacketRuntime.PrepareEncodedFromTarget(
-                    inventoryTarget,
-                    route);
+                if (this.options.RequireCurrentPacketTemplates)
+                {
+                    try
+                    {
+                        jumpPacket = TreasurePacketRuntime.GetCurrentJumpPacket(
+                            inventoryTarget,
+                            route);
+                    }
+                    catch (TreasurePacketRuntimeException ex) when (
+                        string.Equals(
+                            ex.Code,
+                            "jump_template_not_found",
+                            StringComparison.Ordinal) &&
+                        this.options.UseNativeAutoDig)
+                    {
+                        // The legacy AutoDig route has a validated current-
+                        // connection 0xB0F4 frame, but some game builds do
+                        // not expose a 0x5828 frame in the hook stream. In
+                        // that narrow mode, permit only the coordinate-bound
+                        // Jump encoder and keep the AutoDig frame templated.
+                        TreasurePacketRuntime.GetCurrentAutoDigPacket(route);
+                        TreasurePacketPreparedSet prepared =
+                            TreasurePacketRuntime.PrepareEncodedFromTarget(
+                                inventoryTarget,
+                                route);
+                        jumpPacket = prepared.JumpPacket;
+                    }
+                }
+                else
+                {
+                    TreasurePacketPreparedSet prepared =
+                        TreasurePacketRuntime.PrepareEncodedFromTarget(
+                            inventoryTarget,
+                            route);
+                    jumpPacket = prepared.JumpPacket;
+                }
             }
             catch (TreasurePacketRuntimeException ex)
             {
@@ -2331,7 +2563,7 @@ namespace WPELibrary.Lib.Vision
             }
 
             return this.packetSender.SendOnce(
-                prepared.JumpPacket,
+                jumpPacket,
                 this.options.LiveSendEnabled);
         }
 
@@ -2395,6 +2627,13 @@ namespace WPELibrary.Lib.Vision
                     "auto_dig_template_not_found",
                     StringComparison.Ordinal))
             {
+                if (this.options.RequireCurrentPacketTemplates)
+                {
+                    return TreasureMapPacketSendResult.NotDispatched(
+                        ex.Code,
+                        ex.Message);
+                }
+
                 try
                 {
                     TreasurePacketPreparedSet prepared =
@@ -2475,31 +2714,50 @@ namespace WPELibrary.Lib.Vision
                     "current route is not available");
             }
 
-            TreasureUsePacketRequest useRequest = this.ResolveUseRequest(
-                inventoryTarget.PackageNum,
-                out string useRequestSource);
-            this.Log(
-                "use_prepare",
-                "Use",
-                this.BuildLogTarget(target, targetVersion),
-                string.Format(
-                    CultureInfo.InvariantCulture,
-                    "{0};type={1};num={2};param={3}",
-                    useRequestSource,
-                    useRequest.Type,
-                    useRequest.Num,
-                    useRequest.Param),
-                0,
-                false,
-                attemptId);
-
-            TreasurePacketPreparedSet prepared;
+            Socket_PacketInfo usePacket;
             try
             {
-                prepared = TreasurePacketRuntime.PrepareEncodedFromTarget(
-                    inventoryTarget,
-                    route,
-                    useRequest);
+                if (this.options.RequireCurrentPacketTemplates)
+                {
+                    usePacket = TreasurePacketRuntime.GetCurrentUsePacket(
+                        inventoryTarget,
+                        route);
+                    this.Log(
+                        "use_prepare",
+                        "Use",
+                        this.BuildLogTarget(target, targetVersion),
+                        "current_template",
+                        0,
+                        false,
+                        attemptId);
+                }
+                else
+                {
+                    TreasureUsePacketRequest useRequest = this.ResolveUseRequest(
+                        inventoryTarget.PackageNum,
+                        out string useRequestSource);
+                    this.Log(
+                        "use_prepare",
+                        "Use",
+                        this.BuildLogTarget(target, targetVersion),
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "{0};type={1};num={2};param={3}",
+                            useRequestSource,
+                            useRequest.Type,
+                            useRequest.Num,
+                            useRequest.Param),
+                        0,
+                        false,
+                        attemptId);
+
+                    TreasurePacketPreparedSet prepared =
+                        TreasurePacketRuntime.PrepareEncodedFromTarget(
+                            inventoryTarget,
+                            route,
+                            useRequest);
+                    usePacket = prepared.UsePacket;
+                }
             }
             catch (TreasurePacketRuntimeException ex)
             {
@@ -2512,7 +2770,7 @@ namespace WPELibrary.Lib.Vision
                     ex.Message);
             }
 
-            if (prepared.UsePacket == null)
+            if (usePacket == null)
             {
                 return TreasureMapPacketSendResult.NotDispatched(
                     "use_packet_missing",
@@ -2520,7 +2778,7 @@ namespace WPELibrary.Lib.Vision
             }
 
             return this.packetSender.SendOnce(
-                prepared.UsePacket,
+                usePacket,
                 this.options.LiveSendEnabled);
         }
 

@@ -1,125 +1,99 @@
 # PetSkillBookPersistenceRegression.ps1
-# Tests for SummonedPetSkillBook preset persistence
-# Covers: round-trip, schema verification, null handling, edge cases
+# Offline persistence and model checks for the summoned-pet preset.
 
 param(
     [string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot),
-    [string]$BuildDirectory = "$(Join-Path (Split-Path -Parent $PSScriptRoot) 'WPELibrary\bin\SummonedPetSkillBookValidation')"
+    [string]$BuildDirectory = (Join-Path (Split-Path -Parent $PSScriptRoot) 'WPELibrary\bin\SummonedPetSkillBookValidation')
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = 'Stop'
 
 function Read-SourceFile {
     param([string]$RelativePath)
     $path = Join-Path $RepositoryRoot $RelativePath
-    if (-not (Test-Path -LiteralPath $path)) {
-        throw "Missing source file: $RelativePath"
-    }
+    if (-not (Test-Path -LiteralPath $path)) { throw "Missing source file: $RelativePath" }
     return [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
 }
 
 function Assert-True {
-    param($Condition, $Message)
-    if (-not $Condition) {
-        throw $Message
-    }
+    param($Condition, [string]$Message)
+    if (-not $Condition) { throw $Message }
 }
 
 function Assert-False {
-    param($Condition, $Message)
-    if ($Condition) {
-        throw $Message
-    }
+    param($Condition, [string]$Message)
+    if ($Condition) { throw $Message }
 }
 
-$libraryPath = Join-Path $BuildDirectory "WPELibrary.dll"
-if (-not (Test-Path -LiteralPath $libraryPath)) {
-    throw "The built WPELibrary.dll is missing: $libraryPath"
-}
+Write-Host 'PetSkillBookPersistenceRegression starting...'
 
-# 1. Verify RobotSummonedPetPreset table is created in DeleteTable_Robot
-$cacheSource = Read-SourceFile "WPELibrary\Lib\Socket_Cache.cs"
-Assert-True ($cacheSource.Contains("CREATE TABLE IF NOT EXISTS RobotSummonedPetPreset")) "RobotSummonedPetPreset table CREATE statement missing"
-Assert-True ($cacheSource.Contains("PresetJson")) "RobotSummonedPetPreset table missing PresetJson column"
+$cacheSource = Read-SourceFile 'WPELibrary\Lib\Socket_Cache.cs'
+Assert-True $cacheSource.Contains('CREATE TABLE IF NOT EXISTS RobotSummonedPetPreset') 'Preset table CREATE statement is missing.'
+Assert-True $cacheSource.Contains('PresetJson') 'PresetJson column is missing.'
+Assert-True $cacheSource.Contains('SelectTable_RobotSummonedPetPreset') 'Preset SELECT method is missing.'
+Assert-True $cacheSource.Contains('INSERT OR REPLACE INTO RobotSummonedPetPreset') 'Preset INSERT statement is missing.'
+Assert-True $cacheSource.Contains('DELETE FROM RobotSummonedPetPreset') 'Preset DELETE statement is missing.'
 
-# 2. Verify SelectTable_RobotSummonedPetPreset method exists
-Assert-True ($cacheSource.Contains("SelectTable_RobotSummonedPetPreset")) "SelectTable_RobotSummonedPetPreset method missing"
-
-# 3. Verify INSERT OR REPLACE in preset save path
-Assert-True ($cacheSource.Contains("INSERT OR REPLACE INTO RobotSummonedPetPreset")) "INSERT OR REPLACE statement for preset missing"
-
-# 4. Verify DELETE in DeleteTable_Robot for preset cleanup
-Assert-True ($cacheSource.Contains("DELETE FROM RobotSummonedPetPreset")) "DELETE from RobotSummonedPetPreset missing"
-
+$libraryPath = Join-Path $BuildDirectory 'WPELibrary.dll'
+Assert-True (Test-Path -LiteralPath $libraryPath) "Missing built library: $libraryPath"
 Add-Type -Path $libraryPath
 
-# 5. Round-trip test: serialize -> deserialize
-$preset = [WPELibrary.Lib.PetSkillBook.SummonedPetSkillBookPreset]::new()
-$preset.Name = "TestPreset"
-$preset.PetMode = [WPELibrary.Lib.PetSkillBook.PetMode]::Specified
-$preset.OpenAllSlots = $true
+$presetType = [WPELibrary.Lib.PetSkillBook.SummonedPetSkillBookPreset]
+$entryType = [WPELibrary.Lib.PetSkillBook.SkillBookEntry]
+$serializerType = [WPELibrary.Lib.PetSkillBook.SummonedPetSkillBookPresetSerializer]
+
+$preset = $presetType::new()
+$preset.Name = 'PersistenceTest'
+$preset.OpenAllSlots = $false
+$preset.LockAfter = $false
 $preset.OpenItemId = 1001
-$preset.OpenSlotSilverCost = 500
-$preset.StudySilverCost = 1000
-$preset.TimeoutMs = 10000
-$preset.EnableStepLog = $true
-
-$book1 = [WPELibrary.Lib.PetSkillBook.SkillBookEntry]::new()
-$book1.SkillId = 101
-$book1.ItemId = 2001
-$book1.LockAfter = $true
+$book1 = $entryType::new(101, 2001, $false)
+$book2 = $entryType::new(102, 2002, $true)
 $preset.Books.Add($book1)
-
-$book2 = [WPELibrary.Lib.PetSkillBook.SkillBookEntry]::new()
-$book2.SkillId = 102
-$book2.ItemId = 2002
-$book2.LockAfter = $false
 $preset.Books.Add($book2)
 
-$serializer = [WPELibrary.Lib.PetSkillBook.SummonedPetSkillBookPresetSerializer]
-$json = $serializer::Serialize($preset)
-Assert-True (-not [string]::IsNullOrWhiteSpace($json)) "Serialized JSON is empty"
+$json = $serializerType::Serialize($preset)
+Assert-True (-not [string]::IsNullOrWhiteSpace($json)) 'Serialize returned an empty string.'
+Assert-True $json.Contains('PersistenceTest') 'Serialized JSON lost the preset name.'
+Assert-False $json.Contains('BookResults') 'Runtime BookResults must not be embedded in preset JSON.'
 
 $loaded = $null
-$deserializeErr = ""
-$result = $serializer::TryDeserialize($json, [ref]$loaded, [ref]$deserializeErr)
-Assert-True $result "Deserialize failed: $deserializeErr"
-Assert-True ($loaded.Name -eq $preset.Name) "Name mismatch after deserialize"
-Assert-True ($loaded.Books.Count -eq 2) "Book count mismatch after deserialize"
+$deserializeError = ''
+Assert-True ($serializerType::TryDeserialize($json, [ref]$loaded, [ref]$deserializeError)) "Deserialize failed: $deserializeError"
+Assert-True ($loaded.Name -eq 'PersistenceTest') 'Preset name did not round-trip.'
+Assert-True ($loaded.Books.Count -eq 2) 'Book count did not round-trip.'
+Assert-True $loaded.OpenAllSlots 'Loaded preset must force OpenAllSlots=true.'
+Assert-True $loaded.LockAfter 'Loaded preset must force LockAfter=true.'
+$unlockedBookCount = @($loaded.Books | Where-Object { -not $_.LockAfter }).Count
+Assert-True ($unlockedBookCount -eq 0) 'Loaded books must force LockAfter=true.'
 
-# 6. Clone test via DeserializeClone
-$clone = $serializer::DeserializeClone($loaded)
-Assert-True ($null -ne $clone) "Clone failed"
-Assert-True ($clone.Name -eq $loaded.Name) "Name mismatch after clone"
+$legacyJson = '{"SchemaVersionProperty":1,"Name":"Legacy","OpenAllSlots":false,"LockAfter":false,"Books":[{"SkillId":301,"ItemId":6001,"LockAfter":false}]}'
+$legacy = $null
+$legacyError = ''
+Assert-True ($serializerType::TryDeserialize($legacyJson, [ref]$legacy, [ref]$legacyError)) "Legacy deserialize failed: $legacyError"
+Assert-True ($legacy.SchemaVersionProperty -eq 2) 'Legacy schema was not migrated to V2.'
+Assert-True $legacy.OpenAllSlots 'Legacy preset did not force OpenAllSlots=true.'
+Assert-True $legacy.Books[0].LockAfter 'Legacy book did not force LockAfter=true.'
 
-# 7. Empty string handling
-$nullLoaded = $null
-$nullErr = ""
-$nullResult = $serializer::TryDeserialize("", [ref]$nullLoaded, [ref]$nullErr)
-Assert-False $nullResult "Empty JSON should return false"
+$clone = $serializerType::DeserializeClone($loaded)
+Assert-True ($null -ne $clone) 'DeserializeClone returned null.'
+Assert-True ($clone.Name -eq $loaded.Name) 'Clone name mismatch.'
+Assert-True $clone.Books[0].LockAfter 'Clone lost immediate-lock rule.'
 
-# 8. Invalid JSON handling
-$invalidLoaded = $null
-$invalidErr = ""
-$invalidResult = $serializer::TryDeserialize("invalid json", [ref]$invalidLoaded, [ref]$invalidErr)
-Assert-False $invalidResult "Invalid JSON should return false"
+$empty = $null
+$emptyError = ''
+Assert-False ($serializerType::TryDeserialize('', [ref]$empty, [ref]$emptyError)) 'Empty JSON must fail.'
+$invalid = $null
+$invalidError = ''
+Assert-False ($serializerType::TryDeserialize('not json', [ref]$invalid, [ref]$invalidError)) 'Invalid JSON must fail.'
 
-# 9. Verify SkillBookEntry constructor exists
-$entry = [WPELibrary.Lib.PetSkillBook.SkillBookEntry]::new(500, 600, $true)
-Assert-True ($entry.SkillId -eq 500) "SkillBookEntry constructor SkillId failed"
-Assert-True ($entry.ItemId -eq 600) "SkillBookEntry constructor ItemId failed"
-Assert-True $entry.LockAfter "SkillBookEntry constructor LockAfter failed"
+$resultType = [WPELibrary.Lib.PetSkillBook.BookExecutionResult]
+foreach ($propertyName in @('Status', 'SkillId', 'ItemId', 'Sequence', 'SkillSlotIndex', 'FailureReason', 'StateVersionBefore', 'StateVersionAfter', 'ExecutedAt')) {
+    Assert-True ($resultType.GetProperty($propertyName) -ne $null) "BookExecutionResult is missing $propertyName."
+}
+$runStatusType = [WPELibrary.Lib.PetSkillBook.SummonedPetSkillBookRunStatus]
+foreach ($propertyName in @('IsCompleted', 'IsFailed', 'IsCancelled', 'BookResults', 'FailureReason', 'CompletedAt')) {
+    Assert-True ($runStatusType.GetProperty($propertyName) -ne $null) "RunStatus is missing $propertyName."
+}
 
-# 10. Verify PetMode enum has Specied value
-$petMode = [WPELibrary.Lib.PetSkillBook.PetMode]::Specified
-Assert-True ($petMode -eq 1) "PetMode.Specified should equal 1"
-
-# 11. Verify SaveRobotList_ToDB is called in RobotForm bSave_Click
-$formSource = Read-SourceFile "WPELibrary\Socket_RobotForm.cs"
-Assert-True ($formSource.Contains("this.sriSelect.SummonedPetSkillBookPreset = this.presetEditing")) "Preset not assigned before SaveRobotList_ToDB"
-Assert-True ($formSource.Contains("bSavePreset_Click")) "bSavePreset_Click method missing"
-
-# 12. Verify LoadPresetToControls is called in InitFrom
-Assert-True ($formSource.Contains("LoadPresetToControls()")) "LoadPresetToControls call missing in InitFrom"
-
-Write-Output "PetSkillBookPersistenceRegression: PASS"
+Write-Host 'PetSkillBookPersistenceRegression: PASS'

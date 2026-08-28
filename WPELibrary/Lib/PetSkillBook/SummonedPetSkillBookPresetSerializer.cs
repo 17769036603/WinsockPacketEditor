@@ -58,9 +58,27 @@ namespace WPELibrary.Lib.PetSkillBook
                     return false;
                 }
 
+                // 兼容旧模板迁移：SchemaVersion=1 的模板自动升级到 SchemaVersion=2
+                if (loaded.SchemaVersionProperty < SummonedPetSkillBookPreset.SchemaVersion)
+                {
+                    loaded.SchemaVersionProperty = SummonedPetSkillBookPreset.SchemaVersion;
+                }
+
                 if (loaded.Books == null)
                 {
                     loaded.Books = new System.Collections.Generic.List<SkillBookEntry>();
+                }
+
+                // 运行时规则强制：无论 JSON 中保存的值是什么，加载后一律固定。
+                // 旧 SchemaVersion=1 模板同样适用该规则，保证行为一致。
+                loaded.LockAfter = true;
+                loaded.OpenAllSlots = true;
+                foreach (var book in loaded.Books)
+                {
+                    if (book != null)
+                    {
+                        book.LockAfter = true;
+                    }
                 }
 
                 preset = loaded;

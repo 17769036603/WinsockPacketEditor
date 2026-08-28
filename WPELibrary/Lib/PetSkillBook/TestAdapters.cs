@@ -112,6 +112,9 @@ namespace WPELibrary.Lib.PetSkillBook
     {
         private readonly ScriptableGameState _state;
 
+        public int ReadResourcesCallCount { get; private set; }
+        public int ReadSkillCatalogCallCount { get; private set; }
+
         public ScriptableTestReadOnlyAdapter(ScriptableGameState sharedState = null)
         {
             _state = sharedState ?? new ScriptableGameState();
@@ -220,6 +223,7 @@ namespace WPELibrary.Lib.PetSkillBook
 
         public Task<InventorySnapshot> ReadResourcesAsync(CancellationToken cancellationToken)
         {
+            ReadResourcesCallCount++;
             var itemsCopy = _state.InventoryItems.Select(i => new InventoryItemSnapshot
             {
                 ItemId = i.ItemId,
@@ -236,6 +240,7 @@ namespace WPELibrary.Lib.PetSkillBook
 
         public Task<List<SkillBookCatalogEntry>> ReadSkillCatalogAsync(CancellationToken cancellationToken)
         {
+            ReadSkillCatalogCallCount++;
             var entries = _state.SkillCatalog.Select(s => new SkillBookCatalogEntry
             {
                 SkillId = s.SkillId,
@@ -285,6 +290,7 @@ namespace WPELibrary.Lib.PetSkillBook
         private OperationResult _nextOpenSlotResult = OperationResult.Accepted;
         private OperationResult _nextStudyBookResult = OperationResult.Accepted;
         private OperationResult _nextLockSlotResult = OperationResult.Accepted;
+        private bool _suppressStudyEffect;
         private bool _isCancelled;
 
         public ScriptableTestOperationAdapter(ScriptableGameState sharedState = null)
@@ -297,6 +303,7 @@ namespace WPELibrary.Lib.PetSkillBook
         public void SetNextOpenSlotResult(OperationResult result) => _nextOpenSlotResult = result;
         public void SetNextStudyBookResult(OperationResult result) => _nextStudyBookResult = result;
         public void SetNextLockSlotResult(OperationResult result) => _nextLockSlotResult = result;
+        public void SetSuppressStudyEffect(bool suppress) => _suppressStudyEffect = suppress;
 
         public void Cancel() => _isCancelled = true;
 
@@ -341,8 +348,21 @@ namespace WPELibrary.Lib.PetSkillBook
                 return Task.FromResult(_nextStudyBookResult);
             }
 
-            // 模拟成功操作：学习技能、消耗技能书、消耗银两
-            SimulateStudyBookAsync(itemId, skillId, slotIndex);
+            // 模拟成功操作：学习技能、消耗技能书、消耗银两。
+            // 某些回归场景可关闭学习效果，用于验证目标技能未出现。
+            if (!_suppressStudyEffect)
+            {
+                SimulateStudyBookAsync(itemId, skillId, slotIndex);
+            }
+            else
+            {
+                _state.StateVersion++;
+                var bookItem = _state.GetInventoryItem(itemId);
+                if (bookItem != null && bookItem.Count > 0)
+                {
+                    bookItem.Count--;
+                }
+            }
 
             return Task.FromResult(OperationResult.Accepted);
         }
@@ -378,6 +398,7 @@ namespace WPELibrary.Lib.PetSkillBook
             _nextOpenSlotResult = OperationResult.Accepted;
             _nextStudyBookResult = OperationResult.Accepted;
             _nextLockSlotResult = OperationResult.Accepted;
+            _suppressStudyEffect = false;
         }
 
         // 状态变更模拟方法（同步，调用方负责在需要时切线程）

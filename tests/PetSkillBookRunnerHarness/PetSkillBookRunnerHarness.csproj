@@ -20,6 +20,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\WPELibrary\Lib\Memory\ReadOnlyProcessMemoryReader.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\Memory\MemoryTraceSession.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\Memory\MemoryTraceLogStore.cs" />
     <Compile Include="..\..\WPELibrary\Lib\PetSkillBook\PetSkillBookModels.cs" />
     <Compile Include="..\..\WPELibrary\Lib\PetSkillBook\IPetSkillBookAdapter.cs" />
     <Compile Include="..\..\WPELibrary\Lib\PetSkillBook\SummonedPetSkillBookPreset.cs" />
@@ -30,6 +32,9 @@
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>..\..\packages\Newtonsoft.Json.13.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
+    </Reference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

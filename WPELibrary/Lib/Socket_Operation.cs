@@ -4639,11 +4639,22 @@ namespace WPELibrary.Lib
 
         public static void ShowRobotForm_Dialog(Socket_RobotInfo sri)
         {
+            ShowRobotForm_Dialog(sri, false);
+        }
+
+        public static void ShowRobotForm_Dialog(
+            Socket_RobotInfo sri,
+            bool openEquipmentRefinePreset)
+        {
             try
             {
                 if (sri != null)
                 {
                     Socket_RobotForm fRobotForm = new Socket_RobotForm(sri);
+                    if (openEquipmentRefinePreset)
+                    {
+                        fRobotForm.OpenEquipmentRefinePresetEditorFromHost();
+                    }
                     fRobotForm.ShowDialog();
                 }
             }
@@ -4983,17 +4994,21 @@ namespace WPELibrary.Lib
             IntPtr buffer,
             int length,
             SocketFlags flags,
-            bool useWinsock1)
+            bool useWinsock1,
+            out int socketError)
         {
             int totalSent = 0;
+            socketError = 0;
             while (totalSent < length)
             {
                 IntPtr currentBuffer = IntPtr.Add(buffer, totalSent);
                 int bytesSent = useWinsock1
                     ? WSock32.send(socket, currentBuffer, length - totalSent, flags)
                     : WS2_32.send(socket, currentBuffer, length - totalSent, flags);
+                int nativeError = (int)WS2_32.WSAGetLastError();
                 if (bytesSent <= 0)
                 {
+                    socketError = nativeError;
                     break;
                 }
 
@@ -5005,8 +5020,31 @@ namespace WPELibrary.Lib
 
         public static unsafe bool SendPacket(int Socket, Socket_Cache.SocketPacket.PacketType packetType, string sIPFrom, string sIPTo, byte[] bSendBuffer)
         {
+            int bytesSent;
+            int socketError;
+            return SendPacket(
+                Socket,
+                packetType,
+                sIPFrom,
+                sIPTo,
+                bSendBuffer,
+                out bytesSent,
+                out socketError);
+        }
+
+        public static unsafe bool SendPacket(
+            int Socket,
+            Socket_Cache.SocketPacket.PacketType packetType,
+            string sIPFrom,
+            string sIPTo,
+            byte[] bSendBuffer,
+            out int bytesSent,
+            out int socketError)
+        {
             bool bReturn = false;
             IntPtr ipSend = IntPtr.Zero;
+            bytesSent = 0;
+            socketError = 0;
 
             try
             {
@@ -5038,18 +5076,31 @@ namespace WPELibrary.Lib
                     }
 
                     int res = -1;
+                    int nativeError = 0;
                     switch (packetType)
                     {
                         case Socket_Cache.SocketPacket.PacketType.WS1_Send:
                         case Socket_Cache.SocketPacket.PacketType.WS1_Recv:
-                            res = SendNativeTcp(Socket, ipSend, bSendBuffer.Length, SocketFlags.None, true);
+                            res = SendNativeTcp(
+                                Socket,
+                                ipSend,
+                                bSendBuffer.Length,
+                                SocketFlags.None,
+                                true,
+                                out nativeError);
                             break;
                         case Socket_Cache.SocketPacket.PacketType.WS2_Send:
                         case Socket_Cache.SocketPacket.PacketType.WS2_Recv:
                         case Socket_Cache.SocketPacket.PacketType.WSASend:
                         case Socket_Cache.SocketPacket.PacketType.WSARecv:
                         case Socket_Cache.SocketPacket.PacketType.WSARecvEx:
-                            res = SendNativeTcp(Socket, ipSend, bSendBuffer.Length, SocketFlags.None, false);
+                            res = SendNativeTcp(
+                                Socket,
+                                ipSend,
+                                bSendBuffer.Length,
+                                SocketFlags.None,
+                                false,
+                                out nativeError);
                             break;
                         case Socket_Cache.SocketPacket.PacketType.WS1_SendTo:
                         case Socket_Cache.SocketPacket.PacketType.WS1_RecvFrom:
@@ -5057,6 +5108,7 @@ namespace WPELibrary.Lib
                             {
                                 Socket_Cache.SocketPacket.SockAddr saAddr = Socket_Operation.GetSocketAddr_ByIPString(sIPString);
                                 res = WSock32.sendto(Socket, ipSend, bSendBuffer.Length, SocketFlags.None, ref saAddr, Marshal.SizeOf(saAddr));
+                                nativeError = (int)WS2_32.WSAGetLastError();
                             }
                             break;
                         case Socket_Cache.SocketPacket.PacketType.WS2_SendTo:
@@ -5067,10 +5119,13 @@ namespace WPELibrary.Lib
                             {
                                 Socket_Cache.SocketPacket.SockAddr saAddr = Socket_Operation.GetSocketAddr_ByIPString(sIPString);
                                 res = WS2_32.sendto(Socket, ipSend, bSendBuffer.Length, SocketFlags.None, ref saAddr, Marshal.SizeOf(saAddr));
+                                nativeError = (int)WS2_32.WSAGetLastError();
                             }
                             break;
                     }
 
+                    bytesSent = Math.Max(0, res);
+                    socketError = res == bSendBuffer.Length ? 0 : nativeError;
                     if (res == bSendBuffer.Length)
                     {
                         bReturn = true;
@@ -5079,6 +5134,8 @@ namespace WPELibrary.Lib
             }
             catch (Exception ex)
             {
+                bytesSent = 0;
+                socketError = Marshal.GetLastWin32Error();
                 Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
             }
             finally

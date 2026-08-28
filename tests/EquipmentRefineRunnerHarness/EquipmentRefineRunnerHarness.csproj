@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{C0E7F6F0-02E2-4C53-8FB0-9AA0C9C7B21B}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>EquipmentRefineRunnerHarness</RootNamespace>
+    <AssemblyName>EquipmentRefineRunnerHarness</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <LangVersion>latest</LangVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+    <Prefer32Bit>false</Prefer32Bit>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <DefineConstants>TRACE;DEBUG</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefineModels.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefineDetector.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefineAttributeReader.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefineExecutor.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefineStateMachine.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefinePreset.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefinePresetPlan.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefinePresetSerializer.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefineResponse.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefineResultFormatter.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefineMemoryResult.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\ResidentJsonlRefineMemoryResultSource.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefineRunner.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefinePresetEditor.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentInventoryAndroidSnapshotReader.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefineRunnerFactory.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefineHost.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\JsonFixtureRefineResponseAdapter.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefineFrameFraming.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\EquipmentRefine\EquipmentRefineManualCaptureBinding.cs" />
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>..\..\packages\Newtonsoft.Json.13.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

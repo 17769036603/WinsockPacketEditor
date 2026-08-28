@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using WPELibrary.Lib;
+using WPELibrary.Lib.EquipmentRefine;
 using WPELibrary.Lib.Vision;
 using WPELibrary.Lib.PetSkillBook;
 
@@ -154,6 +155,7 @@ namespace WPELibrary
 
         private TextBox txtPresetName;
         private ComboBox cbbPetMode;
+        private NumericUpDown nudPetId;
         private CheckBox chkOpenAllSlots;
         private NumericUpDown nudOpenItemId;
         private NumericUpDown nudOpenSlotSilverCost;
@@ -165,6 +167,7 @@ namespace WPELibrary
         private Button bRemoveSkillBook;
         private Button bUpSkillBook;
         private Button bDownSkillBook;
+        private Button bEditSkillBook;
         private TextBox txtSkillId;
         private TextBox txtItemId;
         private CheckBox chkLockAfter;
@@ -172,6 +175,59 @@ namespace WPELibrary
         private Button bSavePreset;
         private Button bClearPreset;
         private Label lblPresetStatus;
+        // 离线功能占位控件
+        private TextBox txtSkillNameSearch;          // 技能名称搜索
+        private ComboBox cbbSkillTypeFilter;          // 类型筛选
+        private Label lblInventoryCount;              // 背包数量显示
+        private Label lblResourceStatus;              // 资源状态指示
+        private Button bRefreshPetSnapshot;
+        private Label lblPetSnapshotStatus;
+        private TextBox txtPetSnapshot;
+        private CancellationTokenSource petSnapshotCancellation;
+        private PetSkillBookReadOnlySnapshot latestPetSkillSnapshot;
+        private PetSkillBookReadOnlyState latestPetSkillReadOnlyState;
+        private bool petSnapshotClosing;
+
+        #endregion
+
+        #region//坐骑目标技能编辑控件
+
+        private WPELibrary.Lib.MountSpeed.MountSpeedPreset mountSpeedPresetEditing =
+            WPELibrary.Lib.MountSpeed.MountSpeedPreset.CreateDefaultFirstRideRefinePreset();
+        private WPELibrary.Lib.MountSpeed.MountSpeedPreset originalMountSpeedPreset;
+        private TextBox txtMountPresetName;
+        private TextBox txtMountTargetGrowthRate;
+        private ListBox lstMountTargetSkills;
+        private TextBox txtMountSkillId;
+        private TextBox txtMountSkillName;
+        private Button bAddMountSkill;
+        private Button bRemoveMountSkill;
+        private Button bLoadMountPreset;
+        private Button bSaveMountPreset;
+        private Button bClearMountPreset;
+        private Label lblMountPresetStatus;
+        private Button bRefreshMountSnapshot;
+        private Label lblMountSnapshotStatus;
+        private TextBox txtMountSnapshot;
+        private CancellationTokenSource mountSnapshotCancellation;
+        private WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader mountSnapshotReader;
+        private WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot latestMountSnapshot;
+        private bool mountSnapshotClosing;
+
+        #endregion
+
+        #region//装备炼化预设入口
+
+        private EquipmentRefinePreset equipmentRefinePresetEditing;
+        private IList<EquipmentRefineBagOption> equipmentRefineBagOptions =
+            new List<EquipmentRefineBagOption>();
+        private Func<CancellationToken, Task<EquipmentRefineDetector.EquipmentInventory>>
+            equipmentRefineBagInventoryProvider;
+        private EquipmentRefinePreset originalEquipmentRefinePreset;
+        private ListBox lstEquipmentRefinePresets;
+        private Button bEditEquipmentRefinePreset;
+        private Button bNewEquipmentRefinePreset;
+        private Label lblEquipmentRefinePresetStatus;
 
         #endregion
         private Label lVisionFixedClientSizeStatus;
@@ -209,6 +265,8 @@ namespace WPELibrary
                 this.InitTreasureMapLayout();
                 this.InitVisionLayout();
                 this.InitSummonedPetSkillBookLayout();
+                this.InitMountSpeedLayout();
+                this.InitEquipmentRefineLayout();
 
                 if (sri != null)
                 { 
@@ -236,13 +294,23 @@ namespace WPELibrary
 
                 this.txtRobotName.Text = sriSelect.RName;
                 this.dtRobotInstruction = sriSelect.RInstruction.Copy();
+                if (sriSelect != null &&
+                    string.Equals(
+                        (sriSelect.RName ?? string.Empty).Trim(),
+                        WPELibrary.Lib.Socket_Cache.Robot.FirstRideRefinePresetName,
+                        StringComparison.Ordinal) &&
+                    !this.HasMountSpeedInstructionRows())
+                {
+                    this.dtRobotInstruction =
+                        WPELibrary.Lib.Socket_Cache.Robot.CreateMountSpeedPresetInstructions();
+                }
                 this.chkTreasureLiveSend.Checked = sriSelect.TreasureLiveSendAuthorized;
 
-                this.cbbKeyBoard_KeyType.SelectedIndex = 0;
-                this.cbbMouse.SelectedIndex = 0;
-                this.cbbMouseWheel_Direction.SelectedIndex = 0;
-                
-this.InitSendPresetPicker();
+this.cbbKeyBoard_KeyType.SelectedIndex = 0;
+                    this.cbbMouse.SelectedIndex = 0;
+                    this.cbbMouseWheel_Direction.SelectedIndex = 0;
+
+                    this.InitSendPresetPicker();
                     this.InitRobot();
                     this.InitVisionProfile();
                     this.EnsureVisionInstructionRows();
@@ -255,6 +323,22 @@ this.InitSendPresetPicker();
                             sriSelect.SummonedPetSkillBookPreset);
                     }
                     this.LoadPresetToControls();
+
+                    // 加载坐骑目标技能预设到编辑控件
+                    if (sriSelect != null && sriSelect.MountSpeedPreset != null)
+                    {
+                        this.mountSpeedPresetEditing =
+                            WPELibrary.Lib.MountSpeed.MountSpeedPresetSerializer.DeserializeClone(
+                                sriSelect.MountSpeedPreset);
+                    }
+                    this.LoadMountSpeedPresetToControls();
+
+                    // 加载助手当前的装备炼化预设到助手页列表；总设置仍由现有编辑器承载。
+                    this.LoadEquipmentRefinePresetToControls();
+
+                    // 刷新离线资源状态显示
+                    this.RefreshResourceStatus();
+                    this.UpdateInventoryDisplay();
             }
             catch (Exception ex)
             {
@@ -667,6 +751,11 @@ this.InitSendPresetPicker();
             new Lib.PetSkillBook.SummonedPetSkillBookPreset();
 
         /// <summary>
+        /// 用于 bSave_Click 失败时回滚召唤兽技能书预设。
+        /// </summary>
+        private Lib.PetSkillBook.SummonedPetSkillBookPreset originalSummonedPetSkillBookPreset;
+
+        /// <summary>
         /// 构建召唤兽技能书编辑选项卡。
         /// 仅编辑本地预设 JSON，不读取游戏进程、不发送任何操作；
         /// 执行入口保持 fail-closed（真实适配器未确认）。
@@ -691,7 +780,7 @@ this.InitSendPresetPicker();
                 {
                     Dock = DockStyle.Fill,
                     ColumnCount = 1,
-                    RowCount = 4,
+                    RowCount = 6,
                     AutoScroll = true,
                     Padding = new Padding(4)
                 };
@@ -700,12 +789,14 @@ this.InitSendPresetPicker();
                 layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
                 layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
                 layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
                 // 基本设置
                 GroupBox gbBasic = new GroupBox { Text = "基本设置", Dock = DockStyle.Top, AutoSize = true };
                 TableLayoutPanel tlpBasic = new TableLayoutPanel
                 {
-                    Dock = DockStyle.Top, AutoSize = true, ColumnCount = 4, RowCount = 3
+                    Dock = DockStyle.Top, AutoSize = true, ColumnCount = 4, RowCount = 4
                 };
                 for (int i = 0; i < 4; i++)
                 {
@@ -715,24 +806,31 @@ this.InitSendPresetPicker();
                 tlpBasic.Controls.Add(new Label { Text = "预设名称", AutoSize = true, Padding = new Padding(0, 6, 4, 0) }, 0, 0);
                 this.txtPresetName = new TextBox { Width = 160 };
                 tlpBasic.Controls.Add(this.txtPresetName, 1, 0);
-                tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Padding = new Padding(12, 6, 4, 0) }, 2, 0);
+tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Padding = new Padding(12, 6, 4, 0) }, 2, 0);
                 this.cbbPetMode = new ComboBox { Width = 100, DropDownStyle = ComboBoxStyle.DropDownList };
                 this.cbbPetMode.Items.AddRange(new object[] { "当前参战", "指定宠物" });
                 this.cbbPetMode.SelectedIndex = 0;
+                this.cbbPetMode.DropDownStyle = ComboBoxStyle.DropDownList;
+                this.cbbPetMode.SelectedIndexChanged += this.cbbPetMode_SelectedIndexChanged;
                 tlpBasic.Controls.Add(this.cbbPetMode, 3, 0);
 
-                this.chkOpenAllSlots = new CheckBox { Text = "自动开满技能格", AutoSize = true, Checked = true };
+                this.chkOpenAllSlots = new CheckBox { Text = "自动开满技能格（固定）", AutoSize = true, Checked = true, Enabled = false };
                 tlpBasic.Controls.Add(this.chkOpenAllSlots, 0, 1);
-                tlpBasic.Controls.Add(new Label { Text = "开格材料ID", AutoSize = true, Padding = new Padding(12, 6, 4, 0) }, 1, 1);
-                this.nudOpenItemId = new NumericUpDown { Minimum = 0, Maximum = int.MaxValue, Width = 100 };
+                tlpBasic.Controls.Add(new Label { Text = "开格材料ID（兼容字段）", AutoSize = true, Padding = new Padding(12, 6, 4, 0) }, 1, 1);
+                this.nudOpenItemId = new NumericUpDown { Minimum = 0, Maximum = int.MaxValue, Width = 100, Enabled = false };
                 tlpBasic.Controls.Add(this.nudOpenItemId, 2, 1);
 
-                tlpBasic.Controls.Add(new Label { Text = "开格银两(0=未配置)", AutoSize = true, Padding = new Padding(0, 6, 4, 0) }, 0, 2);
-                this.nudOpenSlotSilverCost = new NumericUpDown { Minimum = 0, Maximum = int.MaxValue, Width = 100 };
+                tlpBasic.Controls.Add(new Label { Text = "开格银两（兼容字段）", AutoSize = true, Padding = new Padding(0, 6, 4, 0) }, 0, 2);
+                this.nudOpenSlotSilverCost = new NumericUpDown { Minimum = 0, Maximum = int.MaxValue, Width = 100, Enabled = false };
                 tlpBasic.Controls.Add(this.nudOpenSlotSilverCost, 1, 2);
-                tlpBasic.Controls.Add(new Label { Text = "打书银两(0=未配置)", AutoSize = true, Padding = new Padding(12, 6, 4, 0) }, 2, 2);
-                this.nudStudySilverCost = new NumericUpDown { Minimum = 0, Maximum = int.MaxValue, Width = 100 };
+                tlpBasic.Controls.Add(new Label { Text = "打书银两（兼容字段）", AutoSize = true, Padding = new Padding(12, 6, 4, 0) }, 2, 2);
+                this.nudStudySilverCost = new NumericUpDown { Minimum = 0, Maximum = int.MaxValue, Width = 100, Enabled = false };
                 tlpBasic.Controls.Add(this.nudStudySilverCost, 3, 2);
+
+                // 目标宠物ID设置（仅在选择"指定宠物"时显示）
+                this.nudPetId = new NumericUpDown { Minimum = 0, Maximum = int.MaxValue, Width = 100 };
+                tlpBasic.Controls.Add(new Label { Text = "目标宠物ID(0=当前)", AutoSize = true, Padding = new Padding(0, 6, 4, 0) }, 0, 3);
+                tlpBasic.Controls.Add(this.nudPetId, 1, 3);
                 gbBasic.Controls.Add(tlpBasic);
                 layout.Controls.Add(gbBasic, 0, 0);
 
@@ -755,8 +853,8 @@ this.InitSendPresetPicker();
                 tlpBooks.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
                 tlpBooks.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-                this.lstSkillBooks = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
-                this.lstSkillBooks.DisplayMember = "DisplayText";
+                this.lstSkillBooks = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false, DrawMode = DrawMode.OwnerDrawFixed };
+                this.lstSkillBooks.DrawItem += this.lstSkillBooks_DrawItem;
                 tlpBooks.Controls.Add(this.lstSkillBooks, 0, 0);
 
                 FlowLayoutPanel flpBookButtons = new FlowLayoutPanel
@@ -765,15 +863,17 @@ this.InitSendPresetPicker();
                 };
                 this.bAddSkillBook = new Button { Text = "手动添加", Width = 100 };
                 this.bRemoveSkillBook = new Button { Text = "删除选中", Width = 100 };
+                this.bEditSkillBook = new Button { Text = "编辑选中", Width = 100 };
                 this.bUpSkillBook = new Button { Text = "上移", Width = 100 };
                 this.bDownSkillBook = new Button { Text = "下移", Width = 100 };
                 this.bAddSkillBook.Click += this.bAddSkillBook_Click;
                 this.bRemoveSkillBook.Click += (s, ev) => this.RemoveSelectedBook();
+                this.bEditSkillBook.Click += (s, ev) => this.EditSelectedBook();
                 this.bUpSkillBook.Click += (s, ev) => this.MoveSelectedBook(-1);
                 this.bDownSkillBook.Click += (s, ev) => this.MoveSelectedBook(1);
                 flpBookButtons.Controls.AddRange(new Control[]
                 {
-                    this.bAddSkillBook, this.bRemoveSkillBook, this.bUpSkillBook, this.bDownSkillBook
+                    this.bAddSkillBook, this.bRemoveSkillBook, this.bEditSkillBook, this.bUpSkillBook, this.bDownSkillBook
                 });
                 tlpBooks.Controls.Add(flpBookButtons, 1, 0);
 
@@ -784,11 +884,107 @@ this.InitSendPresetPicker();
                 flpBookEdit.Controls.Add(new Label { Text = "物品ID", AutoSize = true, Padding = new Padding(8, 6, 4, 0) });
                 this.txtItemId = new TextBox { Width = 80 };
                 flpBookEdit.Controls.Add(this.txtItemId);
-                this.chkLockAfter = new CheckBox { Text = "学习后锁定", AutoSize = true, Padding = new Padding(8, 4, 0, 0) };
+                // LockAfter 控件：运行时固定为 true，显示为禁用状态
+                this.chkLockAfter = new CheckBox { Text = "学习后锁定 (固定)", AutoSize = true, Checked = true, Enabled = false, Padding = new Padding(8, 4, 0, 0) };
                 flpBookEdit.Controls.Add(this.chkLockAfter);
                 tlpBooks.Controls.Add(flpBookEdit, 0, 1);
                 gbBooks.Controls.Add(tlpBooks);
                 layout.Controls.Add(gbBooks, 0, 2);
+
+                // 只读资源与预演区；不提供任何游戏操作入口。
+                GroupBox gbOfflineControls = new GroupBox { Text = "资源与预演（只读）", Dock = DockStyle.Top, AutoSize = true };
+                FlowLayoutPanel flpOffline = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true };
+
+                this.txtSkillNameSearch = new TextBox { Width = 120 };
+                this.txtSkillNameSearch.Text = "搜索技能名称...";
+                this.txtSkillNameSearch.TextChanged += this.txtSkillNameSearch_TextChanged;
+                flpOffline.Controls.Add(new Label { Text = "技能名称搜索:", AutoSize = true, Padding = new Padding(0, 6, 4, 0) });
+                flpOffline.Controls.Add(this.txtSkillNameSearch);
+
+                this.cbbSkillTypeFilter = new ComboBox { Width = 100, DropDownStyle = ComboBoxStyle.DropDownList };
+                this.cbbSkillTypeFilter.Items.AddRange(new object[] { "全部类型", "普通", "高级", "终极" });
+                this.cbbSkillTypeFilter.SelectedIndex = 0;
+                this.cbbSkillTypeFilter.SelectedIndexChanged += this.cbbSkillTypeFilter_SelectedIndexChanged;
+                flpOffline.Controls.Add(new Label { Text = "类型筛选:", AutoSize = true, Padding = new Padding(12, 6, 4, 0) });
+                flpOffline.Controls.Add(this.cbbSkillTypeFilter);
+
+                this.lblInventoryCount = new Label
+                {
+                    Text = "背包数量: 未知 | 需开格材料: 未知 | 需技能书: 未知",
+                    AutoSize = true,
+                    Padding = new Padding(12, 6, 4, 0),
+                    ForeColor = Color.Gray
+                };
+                flpOffline.Controls.Add(this.lblInventoryCount);
+
+                this.lblResourceStatus = new Label
+                {
+                    Text = "状态: 等待读取 Android 只读数据源",
+                    AutoSize = true,
+                    Padding = new Padding(12, 6, 4, 0),
+                    ForeColor = Color.DarkOrange
+                };
+                flpOffline.Controls.Add(this.lblResourceStatus);
+
+                gbOfflineControls.Controls.Add(flpOffline);
+                layout.Controls.Add(gbOfflineControls, 0, 3);
+
+                // 真实客户端只读快照（不修改预设，不执行游戏操作）
+                GroupBox gbPetSnapshot = new GroupBox
+                {
+                    Text = "真实客户端快照（只读）",
+                    Dock = DockStyle.Top,
+                    AutoSize = true
+                };
+                TableLayoutPanel snapshotLayout = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Top,
+                    AutoSize = true,
+                    ColumnCount = 1,
+                    RowCount = 2
+                };
+                snapshotLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+                snapshotLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                snapshotLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 150F));
+
+                FlowLayoutPanel snapshotActions = new FlowLayoutPanel
+                {
+                    Dock = DockStyle.Top,
+                    AutoSize = true,
+                    WrapContents = true
+                };
+                this.bRefreshPetSnapshot = new Button
+                {
+                    Text = "刷新只读快照",
+                    Width = 110,
+                    AutoSize = false,
+                    AccessibleRole = AccessibleRole.PushButton
+                };
+                this.bRefreshPetSnapshot.Click += this.bRefreshPetSnapshot_Click;
+                snapshotActions.Controls.Add(this.bRefreshPetSnapshot);
+                this.lblPetSnapshotStatus = new Label
+                {
+                    Text = "未读取；读取器路径由 WPE_PET_SKILL_READER_PATH 配置",
+                    AutoSize = true,
+                    ForeColor = Color.Gray,
+                    Padding = new Padding(8, 6, 4, 0)
+                };
+                snapshotActions.Controls.Add(this.lblPetSnapshotStatus);
+                snapshotLayout.Controls.Add(snapshotActions, 0, 0);
+
+                this.txtPetSnapshot = new TextBox
+                {
+                    Dock = DockStyle.Fill,
+                    Multiline = true,
+                    ReadOnly = true,
+                    ScrollBars = ScrollBars.Vertical,
+                    WordWrap = false,
+                    Font = new Font(FontFamily.GenericMonospace, 8.5F),
+                    Text = "保持游戏打开后点击“刷新只读快照”。此区域不会写入游戏或执行操作。"
+                };
+                snapshotLayout.Controls.Add(this.txtPetSnapshot, 0, 1);
+                gbPetSnapshot.Controls.Add(snapshotLayout);
+                layout.Controls.Add(gbPetSnapshot, 0, 5);
 
                 // 保存/加载/状态
                 GroupBox gbPresetActions = new GroupBox { Text = "预设保存（本地 JSON，不连接游戏）", Dock = DockStyle.Top, AutoSize = true };
@@ -806,14 +1002,14 @@ this.InitSendPresetPicker();
                 flpActions.Controls.AddRange(new Control[] { this.bSavePreset, this.bLoadPreset, this.bClearPreset });
                 this.lblPresetStatus = new Label
                 {
-                    Text = "状态：未确认真实游戏数据来源；执行保持 fail-closed（测试数据）",
+                    Text = "状态：预设仅本地保存；真实操作保持 fail-closed",
                     AutoSize = true,
                     ForeColor = Color.DarkOrange,
                     Padding = new Padding(0, 8, 0, 0)
                 };
                 flpActions.Controls.Add(this.lblPresetStatus);
                 gbPresetActions.Controls.Add(flpActions);
-                layout.Controls.Add(gbPresetActions, 0, 3);
+                layout.Controls.Add(gbPresetActions, 0, 4);
 
                 petTab.Controls.Add(layout);
             }
@@ -830,7 +1026,8 @@ this.InitSendPresetPicker();
 
             this.txtPresetName.Text = preset.Name;
             this.cbbPetMode.SelectedIndex = preset.PetMode == Lib.PetSkillBook.PetMode.Specified ? 1 : 0;
-            this.chkOpenAllSlots.Checked = preset.OpenAllSlots;
+            this.nudPetId.Value = preset.PetId;
+            this.chkOpenAllSlots.Checked = true;
             this.nudOpenItemId.Value = preset.OpenItemId.HasValue ? preset.OpenItemId.Value : 0;
             this.nudOpenSlotSilverCost.Value = preset.OpenSlotSilverCost;
             this.nudStudySilverCost.Value = preset.StudySilverCost;
@@ -843,6 +1040,10 @@ this.InitSendPresetPicker();
             {
                 this.lstSkillBooks.Items.Add(new SkillBookListItem(book));
             }
+
+            // 同步宠物模式控件状态
+            this.UpdatePetModeControls();
+            this.UpdateInventoryDisplay();
         }
 
         private void LoadPresetFromRobot()
@@ -853,6 +1054,343 @@ this.InitSendPresetPicker();
                     .DeserializeClone(this.sriSelect.SummonedPetSkillBookPreset);
                 this.LoadPresetToControls();
             }
+        }
+
+        /// <summary>
+        /// 同步宠物模式控件的可见性和启用状态
+        /// </summary>
+        private void UpdatePetModeControls()
+        {
+            bool isSpecifiedMode = this.cbbPetMode.SelectedIndex == 1;
+            this.nudPetId.Enabled = isSpecifiedMode;
+        }
+
+        private void cbbPetMode_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            this.UpdatePetModeControls();
+        }
+
+        /// <summary>
+        /// 离线模式下的技能名称搜索（占位实现）
+        /// </summary>
+        private void txtSkillNameSearch_TextChanged(object sender, EventArgs e)
+        {
+            // 占位：实际搜索需要真实技能目录数据源
+            string keyword = this.txtSkillNameSearch.Text.Trim();
+            if (string.IsNullOrEmpty(keyword) || keyword == "搜索技能名称...")
+            {
+                Socket_Operation.DoLog("技能搜索", "搜索功能待真实数据源激活");
+                return;
+            }
+
+            Socket_Operation.ShowMessageBox(
+                $"搜索功能占位：'{keyword}'\n" +
+                "需要提供游戏技能目录 XML/JSON 数据源才能启用。");
+        }
+
+        /// <summary>
+        /// 离线模式下的类型筛选（占位实现）
+        /// </summary>
+        private void cbbSkillTypeFilter_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            string selectedType = this.cbbSkillTypeFilter.Text;
+            Socket_Operation.DoLog("类型筛选", $"类型筛选为：{selectedType}（占位）");
+
+            if (selectedType == "全部类型")
+            {
+                Socket_Operation.ShowMessageBox("筛选功能占位：当前显示全部技能书。");
+            }
+            else
+            {
+                Socket_Operation.ShowMessageBox(
+                    $"筛选功能占位：显示'{selectedType}'类型技能书。\n" +
+                    "需要提供游戏技能目录数据源才能启用。");
+            }
+        }
+
+        /// <summary>
+        /// 更新当前预设和最近一次只读技能书库存的摘要。
+        /// 该显示只反映快照，不代表任何游戏操作已获授权或已执行。
+        /// </summary>
+        private void UpdateInventoryDisplay()
+        {
+            int presetBookCount = this.lstSkillBooks == null
+                ? 0
+                : this.lstSkillBooks.Items.Count;
+            if (this.lblInventoryCount == null)
+            {
+                return;
+            }
+
+            if (this.latestPetSkillReadOnlyState == null)
+            {
+                this.lblInventoryCount.Text = string.Format(
+                    "当前预设：{0} 本技能书 | 技能书库存：未读取 | 操作：未启用",
+                    presetBookCount);
+                this.lblInventoryCount.ForeColor = Color.Gray;
+                return;
+            }
+
+            if (!this.latestPetSkillReadOnlyState.HasSkillBookInventorySnapshot)
+            {
+                this.lblInventoryCount.Text = string.Format(
+                    "当前预设：{0} 本技能书 | 技能书库存：未读取 | 操作：未启用",
+                    presetBookCount);
+                this.lblInventoryCount.ForeColor = Color.DarkOrange;
+                return;
+            }
+
+            int skillBookKinds = this.latestPetSkillReadOnlyState.SkillBookInventory == null
+                ? 0
+                : this.latestPetSkillReadOnlyState.SkillBookInventory.Count;
+            int skillBookTotal = this.latestPetSkillReadOnlyState.SkillBookInventory == null
+                ? 0
+                : this.latestPetSkillReadOnlyState.SkillBookInventory
+                    .Where(item => item != null)
+                    .Sum(item => Math.Max(0, item.Count));
+            this.lblInventoryCount.Text = string.Format(
+                CultureInfo.InvariantCulture,
+                "当前预设：{0} 本技能书 | 技能书库存：{1} 种/{2} 本 | 操作：未启用",
+                presetBookCount,
+                skillBookKinds,
+                skillBookTotal);
+            this.lblInventoryCount.ForeColor = Color.DarkGreen;
+        }
+
+        /// <summary>
+        /// 刷新资源状态（离线模式显示）
+        /// </summary>
+        private void RefreshResourceStatus()
+        {
+            if (this.sriSelect != null)
+            {
+                this.lblResourceStatus.Text = "状态: 保持游戏运行后可刷新 Android 只读数据源";
+                this.lblResourceStatus.ForeColor = Color.DarkOrange;
+            }
+            else
+            {
+                this.lblResourceStatus.Text = "状态: 请先选择助手预设";
+                this.lblResourceStatus.ForeColor = Color.Gray;
+            }
+        }
+
+        private async void bRefreshPetSnapshot_Click(object sender, EventArgs e)
+        {
+            if (this.petSnapshotCancellation != null || this.bRefreshPetSnapshot == null)
+            {
+                return;
+            }
+
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            this.petSnapshotCancellation = cancellation;
+            this.bRefreshPetSnapshot.Enabled = false;
+            this.lblPetSnapshotStatus.Text = "正在读取 Android 客户端（只读）...";
+            this.lblPetSnapshotStatus.ForeColor = Color.DarkOrange;
+            this.txtPetSnapshot.Text = string.Empty;
+            this.latestPetSkillSnapshot = null;
+            this.latestPetSkillReadOnlyState = null;
+            this.UpdateInventoryDisplay();
+
+            try
+            {
+                PetSkillBookAndroidSnapshotReader reader =
+                    new PetSkillBookAndroidSnapshotReader();
+                PetSkillBookSnapshotReadResult result = await reader.ReadSnapshotAsync(
+                    cancellation.Token);
+
+                if (this.IsDisposed || this.petSnapshotClosing)
+                {
+                    return;
+                }
+
+                if (result == null || !result.Succeeded)
+                {
+                    string error = result == null
+                        ? "未返回只读快照。"
+                        : result.Error;
+                    this.lblPetSnapshotStatus.Text = "读取失败：" + error;
+                    this.lblPetSnapshotStatus.ForeColor = Color.Firebrick;
+                    this.txtPetSnapshot.Text =
+                        "读取失败。未执行任何游戏操作。\r\n" + error;
+                    this.UpdateInventoryDisplay();
+                    return;
+                }
+
+                this.latestPetSkillSnapshot = result.Snapshot;
+                this.RenderPetSnapshot(result.Snapshot);
+                PetSkillBookReadOnlyState state;
+                string stateError;
+                if (!PetSkillBookReadOnlyStateAdapter.TryCreate(
+                    result.Snapshot,
+                    out state,
+                    out stateError))
+                {
+                    this.latestPetSkillReadOnlyState = null;
+                    this.txtPetSnapshot.AppendText(
+                        Environment.NewLine + Environment.NewLine +
+                        "预设预演不可用：只读状态规范化失败：" + stateError);
+                    this.lblPetSnapshotStatus.Text = "读取成功，但只读预演不可用";
+                    this.lblPetSnapshotStatus.ForeColor = Color.DarkOrange;
+                    this.UpdateInventoryDisplay();
+                    return;
+                }
+
+                this.latestPetSkillReadOnlyState = state;
+                this.AppendPetSkillPreflight(state);
+                this.UpdateInventoryDisplay();
+                this.lblPetSnapshotStatus.Text = "读取成功：快照与只读预演已更新";
+                this.lblPetSnapshotStatus.ForeColor = Color.DarkGreen;
+                if (this.lblResourceStatus != null)
+                {
+                    this.lblResourceStatus.Text = "状态: Android 只读数据源已读取 | 操作：未启用";
+                    this.lblResourceStatus.ForeColor = Color.DarkGreen;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                if (!this.IsDisposed && !this.petSnapshotClosing)
+                {
+                    this.lblPetSnapshotStatus.Text = "读取已取消";
+                    this.lblPetSnapshotStatus.ForeColor = Color.Gray;
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!this.IsDisposed && !this.petSnapshotClosing)
+                {
+                    this.lblPetSnapshotStatus.Text = "读取失败：" + ex.Message;
+                    this.lblPetSnapshotStatus.ForeColor = Color.Firebrick;
+                    this.txtPetSnapshot.Text =
+                        "读取失败。未执行任何游戏操作。\r\n" + ex.Message;
+                    this.latestPetSkillSnapshot = null;
+                    this.latestPetSkillReadOnlyState = null;
+                    this.UpdateInventoryDisplay();
+                }
+            }
+            finally
+            {
+                if (object.ReferenceEquals(this.petSnapshotCancellation, cancellation))
+                {
+                    this.petSnapshotCancellation = null;
+                }
+                cancellation.Dispose();
+                if (!this.IsDisposed && this.bRefreshPetSnapshot != null)
+                {
+                    this.bRefreshPetSnapshot.Enabled = true;
+                }
+            }
+        }
+
+        private void RenderPetSnapshot(PetSkillBookReadOnlySnapshot snapshot)
+        {
+            if (snapshot == null || snapshot.Process == null)
+            {
+                throw new InvalidOperationException("只读快照缺少进程身份。");
+            }
+
+            List<string> lines = new List<string>
+            {
+                "模式：readOnly=true | actionAuthorized=false",
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "进程：PID={0} | startTicks={1} | exe={2}",
+                    snapshot.Process.Pid,
+                    snapshot.Process.StartTicks,
+                    snapshot.Process.Executable),
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "宠物：petId={0} | currentPetId={1} | match={2}",
+                    snapshot.PetId,
+                    snapshot.CurrentPetId,
+                    snapshot.IsCurrentPetMatch),
+                "槽位：slot | skill(raw) | lock(raw)"
+            };
+
+            foreach (PetSkillRawSlotSnapshot slot in snapshot.Slots)
+            {
+                lines.Add(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0,2} | {1} | {2}",
+                    slot.SlotIndex,
+                    FormatPetSnapshotValue(slot.Skill),
+                    FormatPetSnapshotValue(slot.Lock)));
+            }
+
+            if (!snapshot.HasInventorySnapshot && !snapshot.HasSkillBookInventorySnapshot)
+            {
+                lines.Add("背包：当前只读探针未提供物品数量。");
+            }
+            if (snapshot.HasInventorySnapshot)
+            {
+                lines.Add("背包：itemId | count");
+                foreach (PetSkillInventoryItemSnapshot item in snapshot.InventoryItems)
+                {
+                    lines.Add(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0} | {1}",
+                        item.ItemId,
+                        item.Count));
+                }
+            }
+
+            if (snapshot.HasSkillBookInventorySnapshot)
+            {
+                lines.Add("技能书：skillId | count");
+                foreach (PetSkillBookSkillInventorySnapshot item in snapshot.SkillBookInventory)
+                {
+                    lines.Add(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0} | {1}",
+                        item.SkillId,
+                        item.Count));
+                }
+            }
+
+            this.txtPetSnapshot.Text = string.Join(Environment.NewLine, lines);
+        }
+
+        private void AppendPetSkillPreflight(PetSkillBookReadOnlyState state)
+        {
+            if (this.txtPetSnapshot == null)
+            {
+                return;
+            }
+
+            SummonedPetSkillBookPreset preset = this.ReadPresetFromControls();
+            string report = PetSkillBookReadOnlyStateAdapter.DescribePresetTargets(
+                preset,
+                state);
+            this.txtPetSnapshot.AppendText(
+                Environment.NewLine + Environment.NewLine +
+                "槽位判定（只读）：" +
+                PetSkillBookReadOnlyStateAdapter.DescribeSlotEvidence(state) +
+                Environment.NewLine +
+                "预设预演（只读）：" + report);
+        }
+
+        private static string FormatPetSnapshotValue(PetSkillRuntimeValue value)
+        {
+            if (value == null)
+            {
+                return "<null>";
+            }
+
+            string detail = value.Raw ?? string.Empty;
+            if (value.Integer.HasValue)
+            {
+                detail = value.Integer.Value.ToString(CultureInfo.InvariantCulture);
+            }
+            else if (value.Number.HasValue)
+            {
+                detail = value.Number.Value.ToString(CultureInfo.InvariantCulture);
+            }
+            else if (value.Text != null)
+            {
+                detail = value.Text;
+            }
+
+            return (value.Kind ?? "unknown") + "=" + detail +
+                " [raw=" + (value.Raw ?? string.Empty) + "]";
         }
 
         private void bSavePreset_Click(object sender, EventArgs e)
@@ -895,7 +1433,9 @@ this.InitSendPresetPicker();
                 PetMode = this.cbbPetMode.SelectedIndex == 1
                     ? Lib.PetSkillBook.PetMode.Specified
                     : Lib.PetSkillBook.PetMode.Current,
-                OpenAllSlots = this.chkOpenAllSlots.Checked,
+                PetId = (int)this.nudPetId.Value,
+                OpenAllSlots = true,
+                LockAfter = true,
                 OpenItemId = this.nudOpenItemId.Value > 0
                     ? (int?)this.nudOpenItemId.Value
                     : null,
@@ -912,7 +1452,7 @@ this.InitSendPresetPicker();
                 if (entry != null)
                 {
                     preset.Books.Add(new Lib.PetSkillBook.SkillBookEntry(
-                        entry.Book.SkillId, entry.Book.ItemId, entry.Book.LockAfter));
+                        entry.Book.SkillId, entry.Book.ItemId, true));
                 }
             }
 
@@ -936,8 +1476,21 @@ this.InitSendPresetPicker();
                     return;
                 }
 
+                // 检查是否为重复的技能ID+物品ID组合
+                foreach (object item in this.lstSkillBooks.Items)
+                {
+                    SkillBookListItem existing = item as SkillBookListItem;
+                    if (existing != null && existing.Book.SkillId == skillId && existing.Book.ItemId == itemId)
+                    {
+                        Socket_Operation.ShowMessageBox($"重复的技能书：技能ID {skillId}，物品ID {itemId} 已存在。");
+                        return;
+                    }
+                }
+
+                // LockAfter 运行时固定为 true，始终使用 true
                 this.lstSkillBooks.Items.Add(new SkillBookListItem(
-                    new Lib.PetSkillBook.SkillBookEntry(skillId, itemId, this.chkLockAfter.Checked)));
+                    new Lib.PetSkillBook.SkillBookEntry(skillId, itemId, true)));
+                this.UpdateInventoryDisplay();
             }
             catch (Exception ex)
             {
@@ -948,9 +1501,20 @@ this.InitSendPresetPicker();
         private void RemoveSelectedBook()
         {
             int index = this.lstSkillBooks.SelectedIndex;
-            if (index >= 0)
+            if (index < 0) return;
+
+            SkillBookListItem selectedItem = this.lstSkillBooks.Items[index] as SkillBookListItem;
+            if (selectedItem == null) return;
+
+            if (MessageBox.Show(
+                    string.Format("确认删除技能书？技能ID: {0}，物品ID: {1}",
+                        selectedItem.Book.SkillId, selectedItem.Book.ItemId),
+                    "确认删除",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question) == DialogResult.Yes)
             {
                 this.lstSkillBooks.Items.RemoveAt(index);
+                this.UpdateInventoryDisplay();
             }
         }
 
@@ -967,6 +1531,165 @@ this.InitSendPresetPicker();
             this.lstSkillBooks.Items.RemoveAt(index);
             this.lstSkillBooks.Items.Insert(target, item);
             this.lstSkillBooks.SelectedIndex = target;
+            this.UpdateInventoryDisplay();
+        }
+
+        /// <summary>
+        /// 编辑选中的技能书
+        /// </summary>
+        private void EditSelectedBook()
+        {
+            int index = this.lstSkillBooks.SelectedIndex;
+            if (index < 0)
+            {
+                Socket_Operation.ShowMessageBox("请先选择要编辑的技能书。");
+                return;
+            }
+
+            SkillBookListItem selectedItem = this.lstSkillBooks.Items[index] as SkillBookListItem;
+            if (selectedItem == null) return;
+
+            try
+            {
+                int skillId = selectedItem.Book.SkillId;
+                int itemId = selectedItem.Book.ItemId;
+
+                // 创建编辑窗体（简单对话框）
+                using (var editForm = new Form())
+                {
+                    editForm.Text = "编辑技能书";
+                    editForm.FormBorderStyle = FormBorderStyle.FixedDialog;
+                    editForm.StartPosition = FormStartPosition.CenterParent;
+                    editForm.MinimizeBox = false;
+                    editForm.MaximizeBox = false;
+                    editForm.Size = new Size(280, 150);
+                    editForm.Padding = new Padding(12);
+
+                    TableLayoutPanel tlp = new TableLayoutPanel
+                    {
+                        Dock = DockStyle.Fill,
+                        ColumnCount = 2,
+                        RowCount = 3,
+                        Padding = new Padding(4)
+                    };
+                    tlp.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+                    tlp.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+                    TextBox txtEditSkillId = new TextBox { Text = skillId.ToString(), Width = 70 };
+                    TextBox txtEditItemId = new TextBox { Text = itemId.ToString(), Width = 70 };
+                    CheckBox chkEditLockAfter = new CheckBox { Text = "学习后锁定 (固定)", Checked = true, Enabled = false, AutoSize = true };
+
+                    tlp.Controls.Add(new Label { Text = "技能ID:" }, 0, 0);
+                    tlp.Controls.Add(txtEditSkillId, 1, 0);
+                    tlp.Controls.Add(new Label { Text = "物品ID:" }, 0, 1);
+                    tlp.Controls.Add(txtEditItemId, 1, 1);
+                    tlp.Controls.Add(chkEditLockAfter, 0, 2);
+
+                    FlowLayoutPanel flpButtons = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft };
+                    Button bOk = new Button { Text = "确定", DialogResult = DialogResult.None, Width = 75 };
+                    Button bCancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Width = 75 };
+                    flpButtons.Controls.AddRange(new Control[] { bOk, bCancel });
+
+                    editForm.Controls.Add(tlp);
+                    editForm.Controls.Add(flpButtons);
+
+                    bOk.Click += (s, ev) =>
+                    {
+                        int newSkillId, newItemId;
+                        if (!int.TryParse(txtEditSkillId.Text.Trim(), out newSkillId) || newSkillId <= 0)
+                        {
+                            Socket_Operation.ShowMessageBox("技能 ID 无效。");
+                            return;
+                        }
+                        if (!int.TryParse(txtEditItemId.Text.Trim(), out newItemId) || newItemId <= 0)
+                        {
+                            Socket_Operation.ShowMessageBox("物品 ID 无效。");
+                            return;
+                        }
+
+                        // LockAfter 运行时固定为 true
+                        const bool lockAfter = true;
+
+                        // 检查是否ID或ItemID发生变化
+                        if (newSkillId == selectedItem.Book.SkillId &&
+                            newItemId == selectedItem.Book.ItemId &&
+                            lockAfter == selectedItem.Book.LockAfter)
+                        {
+                            editForm.DialogResult = DialogResult.OK;
+                            return;
+                        }
+
+                        // 检查是否为重复的技能ID+物品ID组合
+                        for (int i = 0; i < this.lstSkillBooks.Items.Count; i++)
+                        {
+                            if (i == index) continue;
+                            SkillBookListItem existing = this.lstSkillBooks.Items[i] as SkillBookListItem;
+                            if (existing != null && existing.Book.SkillId == newSkillId && existing.Book.ItemId == newItemId)
+                            {
+                                Socket_Operation.ShowMessageBox($"编辑后将产生重复：技能ID {newSkillId}，物品ID {newItemId} 已存在于其他技能书中。");
+                                return;
+                            }
+                        }
+
+                        // 更新列表中的项
+                        var updatedEntry = new SkillBookListItem(
+                            new Lib.PetSkillBook.SkillBookEntry(newSkillId, newItemId, lockAfter));
+                        this.lstSkillBooks.Items[index] = updatedEntry;
+
+                        editForm.DialogResult = DialogResult.OK;
+                    };
+
+                    if (editForm.ShowDialog() == DialogResult.OK)
+                    {
+                        this.UpdateInventoryDisplay();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// 技能书顺序调整：使用上移/下移按钮实现，无需拖动排序。
+        /// </summary>
+
+        /// <summary>
+        /// 自定义绘制 ListBox 项，显示序号
+        /// </summary>
+        private void lstSkillBooks_DrawItem(object sender, DrawItemEventArgs e)
+        {
+            if (e.Index < 0) return;
+
+            int index = e.Index;
+            SkillBookListItem item = this.lstSkillBooks.Items[e.Index] as SkillBookListItem;
+            if (item == null) return;
+
+            // 背景色
+            if ((e.State & DrawItemState.Selected) == DrawItemState.Selected)
+            {
+                e.DrawBackground();
+            }
+            else
+            {
+                e.Graphics.FillRectangle(SystemBrushes.Window, e.Bounds);
+            }
+
+            // 绘制文本（带序号）
+            string displayText = item.DisplayTextWithIndex(index);
+            Color textColor = e.ForeColor;
+            using (Brush textBrush = new SolidBrush(textColor))
+            {
+                e.Graphics.DrawString(displayText, this.lstSkillBooks.Font, textBrush,
+                    e.Bounds.X + 5, e.Bounds.Y + (e.Bounds.Height - TextRenderer.MeasureText(displayText, this.lstSkillBooks.Font).Height) / 2);
+            }
+
+            // 绘制焦点框
+            if ((e.State & DrawItemState.Selected) == DrawItemState.Selected)
+            {
+                ControlPaint.DrawFocusRectangle(e.Graphics, e.Bounds);
+            }
         }
 
         private sealed class SkillBookListItem
@@ -990,6 +1713,1229 @@ this.InitSendPresetPicker();
                         this.Book.LockAfter ? "（学习后锁定）" : string.Empty);
                 }
             }
+
+            public string DisplayTextWithIndex(int index)
+            {
+                return string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "[{0}] 技能 {1} ← 物品 {2}{3}",
+                    index + 1,
+                    this.Book.SkillId,
+                    this.Book.ItemId,
+                    this.Book.LockAfter ? "（学习后锁定）" : string.Empty);
+            }
+        }
+
+        #endregion
+
+        #region//坐骑目标技能预设编辑（本地配置与只读预演）
+
+        private void InitMountSpeedLayout()
+        {
+            try
+            {
+                TabPage mountTab = this.tcRobotInstruction.Controls
+                    .OfType<TabPage>()
+                    .FirstOrDefault(item => item.Name == "tpInstruction_MountSpeed");
+                if (mountTab == null)
+                {
+                    mountTab = new TabPage();
+                    mountTab.Name = "tpInstruction_MountSpeed";
+                    this.tcRobotInstruction.Controls.Add(mountTab);
+                }
+
+                mountTab.Text = "坐骑目标";
+                mountTab.Padding = new Padding(4);
+                mountTab.UseVisualStyleBackColor = true;
+                mountTab.Controls.Clear();
+
+                TableLayoutPanel layout = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    ColumnCount = 1,
+                    RowCount = 4,
+                    AutoScroll = true,
+                    Padding = new Padding(4)
+                };
+                layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 190F));
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+                GroupBox gbBasic = new GroupBox
+                {
+                    Text = "坐骑炼化目标（本地保存）",
+                    Dock = DockStyle.Top,
+                    AutoSize = true
+                };
+                FlowLayoutPanel basic = new FlowLayoutPanel
+                {
+                    Dock = DockStyle.Top,
+                    AutoSize = true,
+                    WrapContents = true
+                };
+                basic.Controls.Add(new Label
+                {
+                    Text = "预设名称",
+                    AutoSize = true,
+                    Padding = new Padding(0, 6, 4, 0)
+                });
+                this.txtMountPresetName = new TextBox { Width = 180 };
+                basic.Controls.Add(this.txtMountPresetName);
+                basic.Controls.Add(new Label
+                {
+                    Text = "目标成长率",
+                    AutoSize = true,
+                    Padding = new Padding(12, 6, 4, 0)
+                });
+                this.txtMountTargetGrowthRate = new TextBox
+                {
+                    Width = 80,
+                    AccessibleName = "目标成长率"
+                };
+                basic.Controls.Add(this.txtMountTargetGrowthRate);
+                basic.Controls.Add(new Label
+                {
+                    Text = "启动时重新读取当前坐骑；这里填写 3 个技能和成长率，不执行洗炼。",
+                    AutoSize = true,
+                    ForeColor = Color.DarkOrange,
+                    Padding = new Padding(12, 6, 4, 0)
+                });
+                gbBasic.Controls.Add(basic);
+                layout.Controls.Add(gbBasic, 0, 0);
+
+                GroupBox gbTargets = new GroupBox
+                {
+                    Text = "目标技能（必须 3 项，顺序不区分；ID、名称至少填写一项）",
+                    Dock = DockStyle.Fill,
+                    AutoSize = false
+                };
+                TableLayoutPanel targetLayout = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    ColumnCount = 2,
+                    RowCount = 2,
+                    Padding = new Padding(4)
+                };
+                targetLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+                targetLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+                targetLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                targetLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+                this.lstMountTargetSkills = new ListBox
+                {
+                    Dock = DockStyle.Fill,
+                    IntegralHeight = false
+                };
+                this.lstMountTargetSkills.SelectedIndexChanged +=
+                    this.lstMountTargetSkills_SelectedIndexChanged;
+                targetLayout.Controls.Add(this.lstMountTargetSkills, 0, 0);
+
+                FlowLayoutPanel targetButtons = new FlowLayoutPanel
+                {
+                    FlowDirection = FlowDirection.TopDown,
+                    Dock = DockStyle.Fill,
+                    AutoSize = true,
+                    WrapContents = false
+                };
+                this.bAddMountSkill = new Button
+                {
+                    Text = "添加或更新",
+                    Width = 105,
+                    AccessibleRole = AccessibleRole.PushButton
+                };
+                this.bRemoveMountSkill = new Button
+                {
+                    Text = "删除选中",
+                    Width = 105,
+                    AccessibleRole = AccessibleRole.PushButton
+                };
+                this.bAddMountSkill.Click += this.bAddMountSkill_Click;
+                this.bRemoveMountSkill.Click += this.bRemoveMountSkill_Click;
+                targetButtons.Controls.Add(this.bAddMountSkill);
+                targetButtons.Controls.Add(this.bRemoveMountSkill);
+                targetLayout.Controls.Add(targetButtons, 1, 0);
+
+                FlowLayoutPanel targetEditor = new FlowLayoutPanel
+                {
+                    Dock = DockStyle.Top,
+                    AutoSize = true,
+                    WrapContents = true
+                };
+                targetEditor.Controls.Add(new Label
+                {
+                    Text = "技能 ID",
+                    AutoSize = true,
+                    Padding = new Padding(0, 6, 4, 0)
+                });
+                this.txtMountSkillId = new TextBox { Width = 90 };
+                targetEditor.Controls.Add(this.txtMountSkillId);
+                targetEditor.Controls.Add(new Label
+                {
+                    Text = "技能名称",
+                    AutoSize = true,
+                    Padding = new Padding(10, 6, 4, 0)
+                });
+                this.txtMountSkillName = new TextBox { Width = 180 };
+                targetEditor.Controls.Add(this.txtMountSkillName);
+                targetLayout.Controls.Add(targetEditor, 0, 1);
+                targetLayout.SetColumnSpan(targetEditor, 2);
+                gbTargets.Controls.Add(targetLayout);
+                layout.Controls.Add(gbTargets, 0, 1);
+
+                GroupBox gbSnapshot = new GroupBox
+                {
+                    Text = "当前坐骑与目标预演（只读）",
+                    Dock = DockStyle.Top,
+                    AutoSize = true
+                };
+                TableLayoutPanel snapshotLayout = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Top,
+                    AutoSize = true,
+                    ColumnCount = 1,
+                    RowCount = 2
+                };
+                snapshotLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+                snapshotLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                snapshotLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 140F));
+
+                FlowLayoutPanel snapshotActions = new FlowLayoutPanel
+                {
+                    Dock = DockStyle.Top,
+                    AutoSize = true,
+                    WrapContents = true
+                };
+                this.bRefreshMountSnapshot = new Button
+                {
+                    Text = "刷新只读快照",
+                    Width = 110,
+                    AccessibleRole = AccessibleRole.PushButton
+                };
+                this.bRefreshMountSnapshot.Click += this.bRefreshMountSnapshot_Click;
+                snapshotActions.Controls.Add(this.bRefreshMountSnapshot);
+                this.lblMountSnapshotStatus = new Label
+                {
+                    Text = "未读取；不会写入游戏或执行操作",
+                    AutoSize = true,
+                    ForeColor = Color.Gray,
+                    Padding = new Padding(8, 6, 4, 0)
+                };
+                snapshotActions.Controls.Add(this.lblMountSnapshotStatus);
+                snapshotLayout.Controls.Add(snapshotActions, 0, 0);
+
+                this.txtMountSnapshot = new TextBox
+                {
+                    Dock = DockStyle.Fill,
+                    Multiline = true,
+                    ReadOnly = true,
+                    ScrollBars = ScrollBars.Vertical,
+                    WordWrap = false,
+                    Font = new Font(FontFamily.GenericMonospace, 8.5F),
+                    Text = "保持游戏打开后点击“刷新只读快照”。此区域仅显示当前读取结果。"
+                };
+                snapshotLayout.Controls.Add(this.txtMountSnapshot, 0, 1);
+                gbSnapshot.Controls.Add(snapshotLayout);
+                layout.Controls.Add(gbSnapshot, 0, 2);
+
+                GroupBox gbActions = new GroupBox
+                {
+                    Text = "预设保存",
+                    Dock = DockStyle.Top,
+                    AutoSize = true
+                };
+                FlowLayoutPanel actions = new FlowLayoutPanel
+                {
+                    Dock = DockStyle.Top,
+                    AutoSize = true,
+                    WrapContents = true
+                };
+                this.bSaveMountPreset = new Button
+                {
+                    Text = "应用到助手",
+                    Width = 100,
+                    AccessibleRole = AccessibleRole.PushButton
+                };
+                this.bLoadMountPreset = new Button
+                {
+                    Text = "从助手读取",
+                    Width = 100,
+                    AccessibleRole = AccessibleRole.PushButton
+                };
+                this.bClearMountPreset = new Button
+                {
+                    Text = "清空目标",
+                    Width = 90,
+                    AccessibleRole = AccessibleRole.PushButton
+                };
+                this.bSaveMountPreset.Click += this.bSaveMountPreset_Click;
+                this.bLoadMountPreset.Click += (s, ev) => this.LoadMountPresetFromRobot();
+                this.bClearMountPreset.Click += (s, ev) =>
+                {
+                    this.mountSpeedPresetEditing =
+                        new WPELibrary.Lib.MountSpeed.MountSpeedPreset();
+                    this.LoadMountSpeedPresetToControls();
+                };
+                actions.Controls.Add(this.bSaveMountPreset);
+                actions.Controls.Add(this.bLoadMountPreset);
+                actions.Controls.Add(this.bClearMountPreset);
+                this.lblMountPresetStatus = new Label
+                {
+                    Text = "状态：目标技能仅本地保存；真实洗炼未启用",
+                    AutoSize = true,
+                    ForeColor = Color.DarkOrange,
+                    Padding = new Padding(8, 8, 0, 0)
+                };
+                actions.Controls.Add(this.lblMountPresetStatus);
+                gbActions.Controls.Add(actions);
+                layout.Controls.Add(gbActions, 0, 3);
+
+                mountTab.Controls.Add(layout);
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
+        private void LoadMountSpeedPresetToControls()
+        {
+            if (this.txtMountPresetName == null || this.lstMountTargetSkills == null)
+            {
+                return;
+            }
+
+            WPELibrary.Lib.MountSpeed.MountSpeedPreset preset =
+                this.mountSpeedPresetEditing ??
+                WPELibrary.Lib.MountSpeed.MountSpeedPreset.CreateDefaultFirstRideRefinePreset();
+            this.txtMountPresetName.Text = string.IsNullOrWhiteSpace(preset.Name)
+                ? "坐骑速度"
+                : preset.Name;
+            this.txtMountTargetGrowthRate.Text = preset.TargetGrowthRate.HasValue
+                ? preset.TargetGrowthRate.Value.ToString(
+                    "0.000",
+                    CultureInfo.InvariantCulture)
+                : string.Empty;
+            this.lstMountTargetSkills.Items.Clear();
+            foreach (WPELibrary.Lib.MountSpeed.MountSkillTarget target in
+                preset.TargetSkills ?? new List<WPELibrary.Lib.MountSpeed.MountSkillTarget>())
+            {
+                if (target != null)
+                {
+                    this.lstMountTargetSkills.Items.Add(new MountTargetListItem(
+                        new WPELibrary.Lib.MountSpeed.MountSkillTarget
+                        {
+                            SkillId = target.SkillId,
+                            SkillName = target.SkillName
+                        }));
+                }
+            }
+            this.txtMountSkillId.Clear();
+            this.txtMountSkillName.Clear();
+            this.lblMountPresetStatus.Text = string.Format(
+                CultureInfo.InvariantCulture,
+                "状态：已加载 {0}/3 个目标技能，成长率 {1}；尚未写入助手",
+                this.lstMountTargetSkills.Items.Count,
+                preset.TargetGrowthRate.HasValue
+                    ? preset.TargetGrowthRate.Value.ToString(
+                        "0.000",
+                        CultureInfo.InvariantCulture)
+                    : "未填写");
+        }
+
+        private void LoadMountPresetFromRobot()
+        {
+            if (this.sriSelect == null || this.sriSelect.MountSpeedPreset == null)
+            {
+                this.mountSpeedPresetEditing =
+                    WPELibrary.Lib.MountSpeed.MountSpeedPreset.CreateDefaultFirstRideRefinePreset();
+            }
+            else
+            {
+                this.mountSpeedPresetEditing =
+                    WPELibrary.Lib.MountSpeed.MountSpeedPresetSerializer.DeserializeClone(
+                        this.sriSelect.MountSpeedPreset);
+            }
+            this.LoadMountSpeedPresetToControls();
+        }
+
+        private WPELibrary.Lib.MountSpeed.MountSpeedPreset ReadMountSpeedPresetFromControls()
+        {
+            string ignoredError;
+            return this.ReadMountSpeedPresetFromControls(out ignoredError);
+        }
+
+        private WPELibrary.Lib.MountSpeed.MountSpeedPreset ReadMountSpeedPresetFromControls(
+            out string inputError)
+        {
+            inputError = string.Empty;
+            WPELibrary.Lib.MountSpeed.MountSpeedPreset preset =
+                this.mountSpeedPresetEditing == null
+                    ? WPELibrary.Lib.MountSpeed.MountSpeedPreset.CreateDefaultFirstRideRefinePreset()
+                    : WPELibrary.Lib.MountSpeed.MountSpeedPresetSerializer.DeserializeClone(
+                        this.mountSpeedPresetEditing);
+            if (this.txtMountPresetName != null &&
+                !string.IsNullOrWhiteSpace(this.txtMountPresetName.Text))
+            {
+                preset.Name = this.txtMountPresetName.Text.Trim();
+            }
+
+            preset.TargetSkills = new List<WPELibrary.Lib.MountSpeed.MountSkillTarget>();
+            if (this.lstMountTargetSkills != null)
+            {
+                foreach (object item in this.lstMountTargetSkills.Items)
+                {
+                    MountTargetListItem targetItem = item as MountTargetListItem;
+                    if (targetItem != null && targetItem.Target != null)
+                    {
+                        preset.TargetSkills.Add(new WPELibrary.Lib.MountSpeed.MountSkillTarget
+                        {
+                            SkillId = targetItem.Target.SkillId,
+                            SkillName = targetItem.Target.SkillName
+                        });
+                    }
+                }
+            }
+
+            double? targetGrowthRate;
+            if (!this.TryReadMountTargetGrowthRate(out targetGrowthRate, out inputError))
+            {
+                preset.TargetGrowthRate = null;
+                return preset;
+            }
+            preset.TargetGrowthRate = targetGrowthRate;
+            return preset;
+        }
+
+        private bool TryReadMountTargetGrowthRate(
+            out double? targetGrowthRate,
+            out string error)
+        {
+            targetGrowthRate = null;
+            error = string.Empty;
+            string raw = this.txtMountTargetGrowthRate == null
+                ? string.Empty
+                : this.txtMountTargetGrowthRate.Text.Trim();
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return true;
+            }
+
+            double parsed;
+            if (!double.TryParse(
+                    raw,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out parsed) &&
+                !double.TryParse(
+                    raw,
+                    NumberStyles.Float,
+                    CultureInfo.CurrentCulture,
+                    out parsed))
+            {
+                error = "目标成长率必须是数字，例如 1.175。";
+                return false;
+            }
+            if (double.IsNaN(parsed) || double.IsInfinity(parsed) || parsed < 0)
+            {
+                error = "目标成长率必须是非负的有效数字。";
+                return false;
+            }
+
+            targetGrowthRate = parsed;
+            return true;
+        }
+
+        private bool TryReadMountSkillTarget(
+            out WPELibrary.Lib.MountSpeed.MountSkillTarget target,
+            out string error)
+        {
+            target = null;
+            error = string.Empty;
+            string rawId = this.txtMountSkillId == null
+                ? string.Empty
+                : this.txtMountSkillId.Text.Trim();
+            int skillId = 0;
+            if (!string.IsNullOrWhiteSpace(rawId) &&
+                (!int.TryParse(rawId, out skillId) || skillId <= 0))
+            {
+                error = "技能 ID 必须是正整数。";
+                return false;
+            }
+
+            target = new WPELibrary.Lib.MountSpeed.MountSkillTarget
+            {
+                SkillId = skillId,
+                SkillName = this.txtMountSkillName == null
+                    ? string.Empty
+                    : this.txtMountSkillName.Text.Trim()
+            };
+            if (!target.IsValid(out error))
+            {
+                return false;
+            }
+            return true;
+        }
+
+        private void bAddMountSkill_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                WPELibrary.Lib.MountSpeed.MountSkillTarget target;
+                string error;
+                if (!this.TryReadMountSkillTarget(out target, out error))
+                {
+                    Socket_Operation.ShowMessageBox("目标坐骑技能无效：" + error);
+                    return;
+                }
+
+                int selectedIndex = this.lstMountTargetSkills.SelectedIndex;
+                if (selectedIndex < 0 && this.lstMountTargetSkills.Items.Count >= 3)
+                {
+                    Socket_Operation.ShowMessageBox("坐骑炼化目标最多填写 3 个技能。\n");
+                    return;
+                }
+                MountTargetListItem item = new MountTargetListItem(target);
+                if (selectedIndex >= 0 && selectedIndex < this.lstMountTargetSkills.Items.Count)
+                {
+                    this.lstMountTargetSkills.Items[selectedIndex] = item;
+                    this.lstMountTargetSkills.SelectedIndex = selectedIndex;
+                }
+                else
+                {
+                    this.lstMountTargetSkills.Items.Add(item);
+                }
+                // 添加后清除选中状态，下一次点击“添加或更新”继续录入下一项；
+                // 需要修改已有项时重新点击该项即可进入更新模式。
+                this.lstMountTargetSkills.SelectedIndex = -1;
+                this.txtMountSkillId.Clear();
+                this.txtMountSkillName.Clear();
+                this.lblMountPresetStatus.Text = "状态：目标技能列表已修改，点击“应用到助手”保存";
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
+        private void bRemoveMountSkill_Click(object sender, EventArgs e)
+        {
+            int selectedIndex = this.lstMountTargetSkills == null
+                ? -1
+                : this.lstMountTargetSkills.SelectedIndex;
+            if (selectedIndex < 0 || selectedIndex >= this.lstMountTargetSkills.Items.Count)
+            {
+                return;
+            }
+
+            MountTargetListItem selected =
+                this.lstMountTargetSkills.Items[selectedIndex] as MountTargetListItem;
+            if (selected == null)
+            {
+                return;
+            }
+
+            if (MessageBox.Show(
+                    this,
+                    "确认删除目标技能：" + selected.DisplayText + "？",
+                    "确认删除",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question) != DialogResult.Yes)
+            {
+                return;
+            }
+
+            this.lstMountTargetSkills.Items.RemoveAt(selectedIndex);
+            this.txtMountSkillId.Clear();
+            this.txtMountSkillName.Clear();
+            this.lblMountPresetStatus.Text = "状态：目标技能列表已修改，点击“应用到助手”保存";
+        }
+
+        private void lstMountTargetSkills_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            MountTargetListItem selected = this.lstMountTargetSkills == null
+                ? null
+                : this.lstMountTargetSkills.SelectedItem as MountTargetListItem;
+            if (selected == null || selected.Target == null)
+            {
+                return;
+            }
+
+            this.txtMountSkillId.Text = selected.Target.SkillId > 0
+                ? selected.Target.SkillId.ToString(CultureInfo.InvariantCulture)
+                : string.Empty;
+            this.txtMountSkillName.Text = selected.Target.SkillName ?? string.Empty;
+        }
+
+        private void bSaveMountPreset_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                if (this.sriSelect == null)
+                {
+                    Socket_Operation.ShowMessageBox("请先选择助手预设。\n");
+                    return;
+                }
+
+                string inputError;
+                WPELibrary.Lib.MountSpeed.MountSpeedPreset preset =
+                    this.ReadMountSpeedPresetFromControls(out inputError);
+                if (!string.IsNullOrWhiteSpace(inputError))
+                {
+                    Socket_Operation.ShowMessageBox("坐骑炼化目标无效：" + inputError);
+                    return;
+                }
+                string error;
+                if (!preset.IsValid(out error))
+                {
+                    Socket_Operation.ShowMessageBox("坐骑预设无效：" + error);
+                    return;
+                }
+                if (!preset.IsCompleteMountRefineTarget(out error))
+                {
+                    Socket_Operation.ShowMessageBox("坐骑炼化目标未填写完整：" + error);
+                    return;
+                }
+
+                WPELibrary.Lib.MountSpeed.MountSpeedPreset original =
+                    this.sriSelect.MountSpeedPreset == null
+                        ? null
+                        : WPELibrary.Lib.MountSpeed.MountSpeedPresetSerializer.DeserializeClone(
+                            this.sriSelect.MountSpeedPreset);
+                this.sriSelect.MountSpeedPreset = preset;
+                if (!Socket_Cache.RobotList.SaveRobotList_ToDB())
+                {
+                    this.sriSelect.MountSpeedPreset = original;
+                    Socket_Operation.ShowMessageBox(
+                        Socket_Operation.GetUiText("UI_AssistantSaveFailed"));
+                    return;
+                }
+
+                this.mountSpeedPresetEditing =
+                    WPELibrary.Lib.MountSpeed.MountSpeedPresetSerializer.DeserializeClone(preset);
+                this.lblMountPresetStatus.Text = "状态：坐骑目标技能预设已保存；未连接游戏执行操作";
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
+        private async void bRefreshMountSnapshot_Click(object sender, EventArgs e)
+        {
+            if (this.mountSnapshotCancellation != null || this.bRefreshMountSnapshot == null)
+            {
+                return;
+            }
+
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            this.mountSnapshotCancellation = cancellation;
+            this.bRefreshMountSnapshot.Enabled = false;
+            this.lblMountSnapshotStatus.Text = "正在读取 Android 客户端（只读）...";
+            this.lblMountSnapshotStatus.ForeColor = Color.DarkOrange;
+            this.txtMountSnapshot.Text = string.Empty;
+
+            try
+            {
+                WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader reader =
+                    this.mountSnapshotReader;
+                if (reader == null)
+                {
+                    reader = new WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader();
+                    this.mountSnapshotReader = reader;
+                }
+                WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReadResult result =
+                    await reader.ReadSnapshotAsync(cancellation.Token);
+                if (this.IsDisposed || this.mountSnapshotClosing)
+                {
+                    return;
+                }
+
+                if (result == null || !result.Succeeded || result.Snapshot == null)
+                {
+                    string error = result == null || string.IsNullOrWhiteSpace(result.Error)
+                        ? "未返回有效坐骑快照。"
+                        : result.Error;
+                    this.lblMountSnapshotStatus.Text = "读取失败：" + error;
+                    this.lblMountSnapshotStatus.ForeColor = Color.Firebrick;
+                    this.txtMountSnapshot.Text =
+                        "读取失败。未执行任何游戏操作。\r\n" + error;
+                    return;
+                }
+
+                string inputError;
+                WPELibrary.Lib.MountSpeed.MountSpeedPreset preset =
+                    this.ReadMountSpeedPresetFromControls(out inputError);
+                if (!string.IsNullOrWhiteSpace(inputError))
+                {
+                    this.lblMountSnapshotStatus.Text = "预设无效：" + inputError;
+                    this.lblMountSnapshotStatus.ForeColor = Color.Firebrick;
+                    this.txtMountSnapshot.Text = "请先修正目标成长率。\r\n" + inputError;
+                    return;
+                }
+                string presetError;
+                if (!preset.IsValid(out presetError))
+                {
+                    this.lblMountSnapshotStatus.Text = "预设无效：" + presetError;
+                    this.lblMountSnapshotStatus.ForeColor = Color.Firebrick;
+                    this.txtMountSnapshot.Text = "请先修正目标技能配置。\r\n" + presetError;
+                    return;
+                }
+                if (!preset.IsCompleteMountRefineTarget(out presetError))
+                {
+                    this.lblMountSnapshotStatus.Text = "预设未填写完整：" + presetError;
+                    this.lblMountSnapshotStatus.ForeColor = Color.Firebrick;
+                    this.txtMountSnapshot.Text = "请填写 3 个技能和成长率。\r\n" + presetError;
+                    return;
+                }
+
+                WPELibrary.Lib.MountSpeed.MountSkillPresetPreviewResult preview;
+                string previewError;
+                if (!WPELibrary.Lib.MountSpeed.MountSkillPresetPreview.TryEvaluate(
+                        result.Snapshot,
+                        preset,
+                        out preview,
+                        out previewError))
+                {
+                    this.lblMountSnapshotStatus.Text = "预演失败：" + previewError;
+                    this.lblMountSnapshotStatus.ForeColor = Color.Firebrick;
+                    this.txtMountSnapshot.Text = "只读预演失败。\r\n" + previewError;
+                    return;
+                }
+
+                WPELibrary.Lib.MountSpeed.MountRideRefineTargetPreviewResult refinePreview;
+                string refinePreviewError;
+                if (!WPELibrary.Lib.MountSpeed.MountRideRefineTargetMatcher.TryEvaluate(
+                        result.Snapshot,
+                        preset,
+                        out refinePreview,
+                        out refinePreviewError))
+                {
+                    this.lblMountSnapshotStatus.Text = "炼化目标预演失败：" + refinePreviewError;
+                    this.lblMountSnapshotStatus.ForeColor = Color.Firebrick;
+                    this.txtMountSnapshot.Text = "炼化目标预演失败。\r\n" + refinePreviewError;
+                    return;
+                }
+
+                WPELibrary.Lib.MountSpeed.MountRideRefineCardComparison cardComparison =
+                    WPELibrary.Lib.MountSpeed.MountRideRefineCardComparer.Compare(
+                        this.latestMountSnapshot,
+                        result.Snapshot);
+                this.RenderMountSnapshot(
+                    result.Snapshot,
+                    preview,
+                    refinePreview,
+                    cardComparison);
+                this.latestMountSnapshot = result.Snapshot;
+                this.lblMountSnapshotStatus.Text = refinePreview.IsSatisfied
+                    ? "读取成功：炼化目标已命中，当前仅显示结果"
+                    : "读取成功：尚未命中炼化目标，当前仅显示结果";
+                this.lblMountSnapshotStatus.ForeColor = refinePreview.IsSatisfied
+                    ? Color.DarkGreen
+                    : Color.DarkOrange;
+            }
+            catch (OperationCanceledException)
+            {
+                if (!this.IsDisposed && !this.mountSnapshotClosing)
+                {
+                    this.lblMountSnapshotStatus.Text = "读取已取消";
+                    this.lblMountSnapshotStatus.ForeColor = Color.Gray;
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!this.IsDisposed && !this.mountSnapshotClosing)
+                {
+                    this.lblMountSnapshotStatus.Text = "读取失败：" + ex.Message;
+                    this.lblMountSnapshotStatus.ForeColor = Color.Firebrick;
+                    this.txtMountSnapshot.Text = "读取失败。未执行任何游戏操作。\r\n" + ex.Message;
+                }
+            }
+            finally
+            {
+                if (object.ReferenceEquals(this.mountSnapshotCancellation, cancellation))
+                {
+                    this.mountSnapshotCancellation = null;
+                }
+                cancellation.Dispose();
+                if (!this.IsDisposed && this.bRefreshMountSnapshot != null)
+                {
+                    this.bRefreshMountSnapshot.Enabled = true;
+                }
+            }
+        }
+
+        private void RenderMountSnapshot(
+            WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot snapshot,
+            WPELibrary.Lib.MountSpeed.MountSkillPresetPreviewResult preview,
+            WPELibrary.Lib.MountSpeed.MountRideRefineTargetPreviewResult refinePreview,
+            WPELibrary.Lib.MountSpeed.MountRideRefineCardComparison cardComparison)
+        {
+            List<string> lines = new List<string>();
+            lines.Add("快照：" + snapshot);
+            lines.Add("绑定：" + (snapshot.RideBindingStatus ?? "<未绑定>") +
+                "，实例：" + (snapshot.ActiveRideInstanceId ?? "<无>"));
+            lines.Add("当前成长率：" +
+                (snapshot.GrowthRate.HasValue
+                    ? snapshot.GrowthRate.Value.ToString(CultureInfo.InvariantCulture)
+                    : "<未读取>") +
+                (string.IsNullOrWhiteSpace(snapshot.GrowthRateSource)
+                    ? string.Empty
+                    : "，来源：" + snapshot.GrowthRateSource));
+
+            lines.Add("坐骑实例当前成长率：");
+            IList<WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot> rideInstances =
+                snapshot.RideInstances ??
+                new List<WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot>();
+            foreach (WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot instance in
+                rideInstances.OrderBy(item => item == null || !item.RideShapeId.HasValue
+                    ? long.MaxValue
+                    : item.RideShapeId.Value))
+            {
+                if (instance == null)
+                {
+                    continue;
+                }
+                lines.Add(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "  Shape {0} / 实例 {1}：{2}",
+                    instance.RideShapeId.HasValue
+                        ? instance.RideShapeId.Value.ToString(CultureInfo.InvariantCulture)
+                        : "<未知>",
+                    string.IsNullOrWhiteSpace(instance.RideInstanceId)
+                        ? "<未知>"
+                        : instance.RideInstanceId,
+                    instance.GrowthRate.HasValue
+                        ? instance.GrowthRate.Value.ToString(CultureInfo.InvariantCulture)
+                        : "<未读取>"));
+            }
+
+            WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot current =
+                GetCurrentMountRide(snapshot);
+            if (current == null || current.Skills == null || current.Skills.Count == 0)
+            {
+                lines.Add("当前坐骑技能：<未读取或未上马>");
+            }
+            else
+            {
+                lines.Add("当前坐骑技能：");
+                foreach (WPELibrary.Lib.MountSpeed.MountRideSkillSnapshot skill in
+                    current.Skills.OrderBy(item => item.SlotIndex))
+                {
+                    lines.Add(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "  槽{0}：{1}（ID {2}）",
+                        skill.SlotIndex,
+                        string.IsNullOrWhiteSpace(skill.SkillName)
+                            ? "未映射名称"
+                            : skill.SkillName,
+                        skill.SkillId));
+                }
+            }
+
+            IList<WPELibrary.Lib.MountSpeed.MountRideRefineCardSnapshot> refineCards =
+                snapshot.RideRefineCards ??
+                new List<WPELibrary.Lib.MountSpeed.MountRideRefineCardSnapshot>();
+            if (refineCards.Count == 0)
+            {
+                lines.Add("坐骑炼化技能卡片：<未读取或未打开炼化页面>");
+            }
+            else
+            {
+                lines.Add(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "坐骑炼化技能卡片：{0} 张（当前卡 1 + 候选卡 {1}）",
+                    refineCards.Count,
+                    Math.Max(0, refineCards.Count - 1)));
+                lines.Add("卡片变化：" +
+                    (cardComparison == null
+                        ? "未比较"
+                        : cardComparison.Describe()));
+                if (cardComparison != null && cardComparison.Changes != null)
+                {
+                    foreach (WPELibrary.Lib.MountSpeed.MountRideRefineCardChange change in
+                        cardComparison.Changes)
+                    {
+                        if (change == null)
+                        {
+                            continue;
+                        }
+                        lines.Add(string.Format(
+                            CultureInfo.InvariantCulture,
+                            "  变化卡片 {0}：{1}",
+                            change.CardIndex,
+                            change.Summary));
+                    }
+                }
+                foreach (WPELibrary.Lib.MountSpeed.MountRideRefineCardSnapshot card in
+                    refineCards.OrderBy(item => item == null ? int.MaxValue : item.CardIndex))
+                {
+                    if (card == null)
+                    {
+                        continue;
+                    }
+                    string skillText = string.Join(
+                        "、",
+                        (card.Skills ??
+                            new List<WPELibrary.Lib.MountSpeed.MountRideRefineSkillSnapshot>())
+                        .OrderBy(item => item.SlotIndex)
+                        .Select(item => string.IsNullOrWhiteSpace(item.SkillName)
+                            ? "未映射名称(ID " + item.SkillId + ")"
+                            : item.SkillName));
+                    lines.Add(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "  卡片 {0}{1}：成长率 {2}，速度 {3}，评分 {4}，技能：{5}",
+                        card.CardIndex,
+                        card.IsCurrent == true ? "（当前）" : string.Empty,
+                        card.GrowthRate.HasValue
+                            ? card.GrowthRate.Value.ToString(CultureInfo.InvariantCulture)
+                            : "<未读取>",
+                        card.Speed.HasValue
+                            ? card.Speed.Value.ToString(CultureInfo.InvariantCulture)
+                            : "<未读取>",
+                        card.Score.HasValue
+                            ? card.Score.Value.ToString(CultureInfo.InvariantCulture)
+                            : "<未读取>",
+                        string.IsNullOrWhiteSpace(skillText) ? "<未读取>" : skillText));
+                }
+            }
+            lines.Add(string.Empty);
+            lines.Add("预设预演：" + preview.Describe());
+            lines.Add("炼化目标：" + refinePreview.Describe());
+            this.txtMountSnapshot.Text = string.Join(Environment.NewLine, lines);
+        }
+
+        private static WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot GetCurrentMountRide(
+            WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot snapshot)
+        {
+            if (snapshot == null)
+            {
+                return null;
+            }
+
+            return (snapshot.RideInstances ??
+                    new List<WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot>())
+                .FirstOrDefault(instance => instance != null &&
+                    instance.IsCurrent == true &&
+                    string.Equals(
+                        instance.RideInstanceId,
+                        snapshot.ActiveRideInstanceId,
+                        StringComparison.Ordinal));
+        }
+
+        private sealed class MountTargetListItem
+        {
+            internal readonly WPELibrary.Lib.MountSpeed.MountSkillTarget Target;
+
+            internal MountTargetListItem(
+                WPELibrary.Lib.MountSpeed.MountSkillTarget target)
+            {
+                this.Target = target;
+            }
+
+            public string DisplayText
+            {
+                get
+                {
+                    return this.Target == null
+                        ? "<无效目标>"
+                        : this.Target.GetDisplayName();
+                }
+            }
+
+            public override string ToString()
+            {
+                return this.DisplayText;
+            }
+        }
+
+        #endregion
+
+        #region//装备炼化预设编辑（助手页，仅配置）
+
+        private void InitEquipmentRefineLayout()
+        {
+            try
+            {
+                TabPage refineTab = new TabPage
+                {
+                    Name = "tpInstruction_EquipmentRefine",
+                    Text = "装备炼化预设",
+                    Padding = new Padding(4),
+                    UseVisualStyleBackColor = true
+                };
+
+                TableLayoutPanel layout = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    ColumnCount = 1,
+                    RowCount = 4,
+                    AutoScroll = true,
+                    Padding = new Padding(4)
+                };
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+                Label hint = new Label
+                {
+                    AutoSize = true,
+                    Text = "在助手页选择一个装备炼化预设，打开总炼化设置页面进行配置。执行时先读取属性，达标立即停止且不发送；未达标只有在只读来源、已验收模板、当前连接和显式授权齐全时才允许发送。",
+                    Padding = new Padding(0, 0, 0, 6),
+                    AccessibleName = "装备炼化预设说明"
+                };
+                layout.Controls.Add(hint, 0, 0);
+
+                GroupBox presetGroup = new GroupBox
+                {
+                    Text = "装备炼化预设列表",
+                    Dock = DockStyle.Fill,
+                    Padding = new Padding(6)
+                };
+                this.lstEquipmentRefinePresets = new ListBox
+                {
+                    Dock = DockStyle.Fill,
+                    IntegralHeight = false,
+                    DisplayMember = "Name",
+                    AccessibleName = "装备炼化预设列表"
+                };
+                this.lstEquipmentRefinePresets.SelectedIndexChanged +=
+                    (s, e) => this.UpdateEquipmentRefinePresetControls();
+                this.lstEquipmentRefinePresets.MouseClick +=
+                    this.lstEquipmentRefinePresets_MouseClick;
+                presetGroup.Controls.Add(this.lstEquipmentRefinePresets);
+                layout.Controls.Add(presetGroup, 0, 1);
+
+                FlowLayoutPanel actions = new FlowLayoutPanel
+                {
+                    Dock = DockStyle.Top,
+                    AutoSize = true,
+                    WrapContents = false
+                };
+                this.bEditEquipmentRefinePreset = new Button
+                {
+                    Text = "打开总炼化设置",
+                    AutoSize = true,
+                    Enabled = false,
+                    AccessibleName = "打开总炼化设置"
+                };
+                this.bEditEquipmentRefinePreset.Click +=
+                    (s, e) => this.OpenEquipmentRefinePresetEditor();
+                this.bNewEquipmentRefinePreset = new Button
+                {
+                    Text = "新建装备炼化预设",
+                    AutoSize = true,
+                    AccessibleName = "新建装备炼化预设"
+                };
+                this.bNewEquipmentRefinePreset.Click +=
+                    (s, e) => this.OpenEquipmentRefinePresetEditor(true);
+                actions.Controls.Add(this.bEditEquipmentRefinePreset);
+                actions.Controls.Add(this.bNewEquipmentRefinePreset);
+                layout.Controls.Add(actions, 0, 2);
+
+                this.lblEquipmentRefinePresetStatus = new Label
+                {
+                    AutoSize = true,
+                    ForeColor = Color.DarkOrange,
+                    Padding = new Padding(0, 6, 0, 0),
+                    AccessibleName = "装备炼化预设状态"
+                };
+                layout.Controls.Add(this.lblEquipmentRefinePresetStatus, 0, 3);
+
+                refineTab.Controls.Add(layout);
+                this.tcRobotInstruction.Controls.Add(refineTab);
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+            }
+        }
+
+        private void LoadEquipmentRefinePresetToControls()
+        {
+            if (this.lstEquipmentRefinePresets == null)
+            {
+                return;
+            }
+
+            EquipmentRefinePreset savedPreset = this.sriSelect == null
+                ? null
+                : this.sriSelect.EquipmentRefinePreset;
+            this.equipmentRefinePresetEditing = savedPreset == null
+                ? EquipmentRefinePreset.CreateDefault()
+                : EquipmentRefinePresetSerializer.DeserializeClone(savedPreset);
+
+            this.lstEquipmentRefinePresets.Items.Clear();
+            this.lstEquipmentRefinePresets.Items.Add(this.equipmentRefinePresetEditing);
+            this.lstEquipmentRefinePresets.SelectedIndex = 0;
+            this.UpdateEquipmentRefinePresetControls();
+        }
+
+        private void UpdateEquipmentRefinePresetControls()
+        {
+            if (this.bEditEquipmentRefinePreset == null ||
+                this.lblEquipmentRefinePresetStatus == null)
+            {
+                return;
+            }
+
+            this.bEditEquipmentRefinePreset.Enabled =
+                this.lstEquipmentRefinePresets != null &&
+                this.lstEquipmentRefinePresets.SelectedItem is EquipmentRefinePreset;
+            string assistantName = this.sriSelect == null ? string.Empty : this.sriSelect.RName;
+            bool saved = this.sriSelect != null && this.sriSelect.EquipmentRefinePreset != null;
+            string presetName = this.equipmentRefinePresetEditing == null
+                ? "装备炼化"
+                : this.equipmentRefinePresetEditing.Name;
+            this.lblEquipmentRefinePresetStatus.Text = saved
+                ? string.Format("当前助手“{0}”：已加载预设“{1}”；点击预设打开总炼化设置。", assistantName, presetName)
+                : string.Format("当前助手“{0}”：尚未保存装备炼化预设；可点击列表项新建并打开总炼化设置。", assistantName);
+        }
+
+        private void lstEquipmentRefinePresets_MouseClick(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left &&
+                this.lstEquipmentRefinePresets != null &&
+                this.lstEquipmentRefinePresets.SelectedIndex >= 0)
+            {
+                this.OpenEquipmentRefinePresetEditor();
+            }
+        }
+
+        private void OpenEquipmentRefinePresetEditor(bool createNew = false)
+        {
+            if (this.sriSelect == null)
+            {
+                Socket_Operation.ShowMessageBox("请先选择助手预设。\n");
+                return;
+            }
+
+            EquipmentRefinePreset source = createNew
+                ? EquipmentRefinePreset.CreateDefault()
+                : this.lstEquipmentRefinePresets == null
+                    ? this.equipmentRefinePresetEditing
+                    : this.lstEquipmentRefinePresets.SelectedItem as EquipmentRefinePreset;
+            EquipmentRefinePreset editorPreset = source == null
+                ? EquipmentRefinePreset.CreateDefault()
+                : EquipmentRefinePresetSerializer.DeserializeClone(source);
+            EquipmentRefinePreset savedPreset = null;
+            Func<CancellationToken, Task<EquipmentRefineDetector.EquipmentInventory>> bagInventoryProvider =
+                this.ResolveEquipmentRefineBagInventoryProvider(editorPreset);
+
+            using (EquipmentRefinePresetEditor editor = new EquipmentRefinePresetEditor(
+                editorPreset,
+                this.equipmentRefineBagOptions,
+                bagInventoryProvider))
+            {
+                editor.Text = "装备炼化总设置";
+                editor.PresetSaved += preset => savedPreset = preset;
+                if (editor.ShowDialog(this) != DialogResult.OK || savedPreset == null)
+                {
+                    return;
+                }
+            }
+
+            EquipmentRefinePreset previousPreset = this.sriSelect.EquipmentRefinePreset == null
+                ? null
+                : EquipmentRefinePresetSerializer.DeserializeClone(
+                    this.sriSelect.EquipmentRefinePreset);
+            this.sriSelect.EquipmentRefinePreset =
+                EquipmentRefinePresetSerializer.DeserializeClone(savedPreset);
+            if (!Socket_Cache.RobotList.SaveRobotList_ToDB())
+            {
+                this.sriSelect.EquipmentRefinePreset = previousPreset;
+                this.LoadEquipmentRefinePresetToControls();
+                Socket_Operation.ShowMessageBox(
+                    Socket_Operation.GetUiText("UI_AssistantSaveFailed"));
+                return;
+            }
+
+            this.equipmentRefinePresetEditing =
+                EquipmentRefinePresetSerializer.DeserializeClone(savedPreset);
+            this.LoadEquipmentRefinePresetToControls();
+            this.lblEquipmentRefinePresetStatus.Text = "装备炼化预设已回写当前助手并保存；未启动炼化，未发送封包。";
+        }
+
+        /// <summary>
+        /// 解析编辑器使用的只读背包来源。宿主注入优先；否则只接受预设或环境中
+        /// 明确配置的 state 文件；没有文件时才使用已验证的 inventory-only
+        /// reader bridge。它只在用户点击读取/启动时运行一次，不扫描目录、不猜历史快照。
+        /// </summary>
+        private Func<CancellationToken, Task<EquipmentRefineDetector.EquipmentInventory>>
+            ResolveEquipmentRefineBagInventoryProvider(EquipmentRefinePreset preset)
+        {
+            if (this.equipmentRefineBagInventoryProvider != null)
+            {
+                return this.equipmentRefineBagInventoryProvider;
+            }
+
+            string stateFilePath = preset == null ? string.Empty : preset.MemoryResultPath;
+            if (string.IsNullOrWhiteSpace(stateFilePath))
+            {
+                stateFilePath = Environment.GetEnvironmentVariable("WPE_EQUIPMENT_STATE_FILE");
+            }
+            if (string.IsNullOrWhiteSpace(stateFilePath))
+            {
+                EquipmentInventoryAndroidSnapshotReader reader =
+                    new EquipmentInventoryAndroidSnapshotReader();
+                if (!reader.IsConfigured)
+                {
+                    return null;
+                }
+
+                return token => reader.ReadInventoryAsync(token);
+            }
+
+            string configuredPath = stateFilePath.Trim();
+            return token => EquipmentRefineDetector.ReadBagInventoryAsync(configuredPath, token);
+        }
+
+        public void OpenEquipmentRefinePresetEditorFromHost()
+        {
+            TabPage refineTab = this.tcRobotInstruction == null
+                ? null
+                : this.tcRobotInstruction.TabPages["tpInstruction_EquipmentRefine"];
+            if (refineTab != null)
+            {
+                this.tcRobotInstruction.SelectedTab = refineTab;
+            }
+            this.OpenEquipmentRefinePresetEditor(true);
+        }
+
+        /// <summary>由外部只读 reader 注入当前背包装备下拉选项。</summary>
+        public void SetEquipmentRefineBagOptions(
+            IEnumerable<EquipmentRefineBagOption> options)
+        {
+            this.equipmentRefineBagOptions = options == null
+                ? new List<EquipmentRefineBagOption>()
+                : options
+                    .Where(option => option != null &&
+                        !string.IsNullOrWhiteSpace(option.Slot) &&
+                        !string.IsNullOrWhiteSpace(option.MemberIdentity))
+                    .GroupBy(option => option.Slot + "\u001f" + option.MemberIdentity,
+                        StringComparer.Ordinal)
+                    .Select(group => group.First())
+                    .ToList();
+        }
+
+        /// <summary>由外部只读 reader 注入当前背包快照，不执行发送。</summary>
+        public void SetEquipmentRefineBagOptionsFromInventory(
+            EquipmentRefineDetector.EquipmentInventory inventory)
+        {
+            this.equipmentRefineBagOptions =
+                EquipmentRefinePresetEditor.BuildBagEquipmentOptions(inventory);
+        }
+
+        /// <summary>
+        /// 注入一次性的只读背包读取委托。编辑器点击“读取背包”时调用；
+        /// 委托为空时不会读取、导航、发送或猜测任何装备。
+        /// </summary>
+        public void SetEquipmentRefineBagInventoryProvider(
+            Func<CancellationToken, Task<EquipmentRefineDetector.EquipmentInventory>> provider)
+        {
+            this.equipmentRefineBagInventoryProvider = provider;
         }
 
         #endregion
@@ -5610,6 +7556,23 @@ this.InitSendPresetPicker();
         private void Socket_RobotForm_FormClosed(object sender, FormClosedEventArgs e)
         {
             this.visionRobotClosing = true;
+            this.petSnapshotClosing = true;
+            this.mountSnapshotClosing = true;
+            if (this.petSnapshotCancellation != null)
+            {
+                this.petSnapshotCancellation.Cancel();
+            }
+            if (this.mountSnapshotCancellation != null)
+            {
+                this.mountSnapshotCancellation.Cancel();
+            }
+            WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader mountReader =
+                this.mountSnapshotReader;
+            this.mountSnapshotReader = null;
+            if (mountReader != null)
+            {
+                mountReader.Dispose();
+            }
             if (this.sr.Worker.IsBusy)
             {
                 this.sr.StopRobot();
@@ -5884,6 +7847,21 @@ this.InitSendPresetPicker();
                 ? new DataTable()
                 : originalRobotInstructions.Copy();
             this.sriSelect.VisionProfile = originalProfile;
+            this.sriSelect.SummonedPetSkillBookPreset =
+                this.originalSummonedPetSkillBookPreset == null
+                    ? null
+                    : SummonedPetSkillBookPresetSerializer.DeserializeClone(
+                        this.originalSummonedPetSkillBookPreset);
+            this.sriSelect.MountSpeedPreset =
+                this.originalMountSpeedPreset == null
+                    ? null
+                    : WPELibrary.Lib.MountSpeed.MountSpeedPresetSerializer.DeserializeClone(
+                        this.originalMountSpeedPreset);
+            this.sriSelect.EquipmentRefinePreset =
+                this.originalEquipmentRefinePreset == null
+                    ? null
+                    : EquipmentRefinePresetSerializer.DeserializeClone(
+                        this.originalEquipmentRefinePreset);
             if (this.chkTreasureLiveSend != null)
             {
                 this.chkTreasureLiveSend.Checked = this.sriSelect.TreasureLiveSendAuthorized;
@@ -5905,6 +7883,12 @@ this.InitSendPresetPicker();
             this.InitVisionProfile();
             this.SyncTreasureMapModeFromInstructions();
             this.UpdateRobotInstructionPanel();
+            this.mountSpeedPresetEditing = this.sriSelect.MountSpeedPreset == null
+                ? WPELibrary.Lib.MountSpeed.MountSpeedPreset.CreateDefaultFirstRideRefinePreset()
+                : WPELibrary.Lib.MountSpeed.MountSpeedPresetSerializer.DeserializeClone(
+                    this.sriSelect.MountSpeedPreset);
+            this.LoadMountSpeedPresetToControls();
+            this.LoadEquipmentRefinePresetToControls();
         }
 
         private static DataTable CopyInstructions(DataTable source)
@@ -5948,8 +7932,37 @@ this.InitSendPresetPicker();
                     this.sriSelect.VisionProfile == null
                     ? null
                     : this.sriSelect.VisionProfile.Clone();
+                this.originalMountSpeedPreset = this.sriSelect == null ||
+                    this.sriSelect.MountSpeedPreset == null
+                    ? null
+                    : WPELibrary.Lib.MountSpeed.MountSpeedPresetSerializer.DeserializeClone(
+                        this.sriSelect.MountSpeedPreset);
+                this.originalEquipmentRefinePreset = this.sriSelect == null ||
+                    this.sriSelect.EquipmentRefinePreset == null
+                    ? null
+                    : EquipmentRefinePresetSerializer.DeserializeClone(
+                        this.sriSelect.EquipmentRefinePreset);
                 bool originalTreasureLiveSendAuthorized = this.sriSelect != null &&
                     this.sriSelect.TreasureLiveSendAuthorized;
+                WPELibrary.Lib.MountSpeed.MountSpeedPreset pendingMountSpeedPreset = null;
+                if (this.HasMountSpeedInstructionRows())
+                {
+                    string mountPresetInputError;
+                    pendingMountSpeedPreset =
+                        this.ReadMountSpeedPresetFromControls(out mountPresetInputError);
+                    if (!string.IsNullOrWhiteSpace(mountPresetInputError))
+                    {
+                        Socket_Operation.ShowMessageBox(
+                            "坐骑预设无效：" + mountPresetInputError);
+                        return;
+                    }
+                    string mountPresetError;
+                    if (!pendingMountSpeedPreset.IsValid(out mountPresetError))
+                    {
+                        Socket_Operation.ShowMessageBox("坐骑预设无效：" + mountPresetError);
+                        return;
+                    }
+                }
                 bool hasVisionConfiguration = this.HasVisionInstructionRows() ||
                     (this.cbbVisionWindows != null && this.cbbVisionWindows.SelectedItem != null);
                 if (hasVisionConfiguration && !this.TryApplyVisionProfile())
@@ -5968,7 +7981,15 @@ this.InitSendPresetPicker();
                     this.chkTreasureLiveSend.Checked;
 
                 // 保存召唤兽技能书预设（本地数据，不读取游戏进程）
+                this.originalSummonedPetSkillBookPreset = this.sriSelect.SummonedPetSkillBookPreset;
                 this.sriSelect.SummonedPetSkillBookPreset = this.presetEditing;
+                if (pendingMountSpeedPreset != null)
+                {
+                    this.sriSelect.MountSpeedPreset = pendingMountSpeedPreset;
+                    this.mountSpeedPresetEditing =
+                        WPELibrary.Lib.MountSpeed.MountSpeedPresetSerializer.DeserializeClone(
+                            pendingMountSpeedPreset);
+                }
 
                 if (!Socket_Cache.RobotList.SaveRobotList_ToDB())
                 {
@@ -5985,7 +8006,21 @@ this.InitSendPresetPicker();
 
                 this.DisposeVisionProfileTemplates(originalProfile);
 
-                this.Close();
+                // 保存/更新后保持编辑页打开，便于继续调整或再次保存；
+                // 用户通过“关闭”按钮离开，届时父窗体再刷新预设列表。
+                this.Text = string.Format(
+                    MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_93),
+                    RName_New);
+                if (this.lblPresetStatus != null)
+                {
+                    string folder = this.sriSelect == null
+                        ? string.Empty
+                        : this.sriSelect.RFolder;
+                    this.lblPresetStatus.Text = string.Format(
+                        Socket_Operation.GetUiText("UI_PresetSaved"),
+                        string.IsNullOrWhiteSpace(folder) ? RName_New : folder,
+                        RName_New);
+                }
             }
             catch (Exception ex)
             {
@@ -6012,6 +8047,22 @@ this.InitSendPresetPicker();
             {
                 if (this.dtRobotInstruction.Rows.Count > 0)
                 {
+                    // 装备炼化预设是执行前置配置：首次点击执行时先打开总设置，
+                    // 避免直接落入运行链后才报告“预设未配置”。保存后再次点击才执行。
+                    if (this.HasEquipmentRefineInstructionRows() &&
+                        (this.sriSelect == null || this.sriSelect.EquipmentRefinePreset == null))
+                    {
+                        TabPage refineTab = this.tcRobotInstruction == null
+                            ? null
+                            : this.tcRobotInstruction.TabPages["tpInstruction_EquipmentRefine"];
+                        if (refineTab != null)
+                        {
+                            this.tcRobotInstruction.SelectedTab = refineTab;
+                        }
+                        this.OpenEquipmentRefinePresetEditor(true);
+                        return;
+                    }
+
                     if (this.HasVisionInstructionRows() && !this.TryApplyVisionProfile())
                     {
                         return;
@@ -6064,7 +8115,30 @@ this.InitSendPresetPicker();
                             return;
                         }
 
-                        this.SetTreasureStatus("运行中", Color.DarkOrange);
+                        if (this.sr.ReadOnlyPetSkillSnapshot != null &&
+                            this.sr.ReadOnlyPetSkillState != null)
+                        {
+                            this.latestPetSkillSnapshot = this.sr.ReadOnlyPetSkillSnapshot;
+                            this.latestPetSkillReadOnlyState = this.sr.ReadOnlyPetSkillState;
+                            this.RenderPetSnapshot(this.latestPetSkillSnapshot);
+                            this.AppendPetSkillPreflight(this.latestPetSkillReadOnlyState);
+                            this.UpdateInventoryDisplay();
+                            this.lblPetSnapshotStatus.Text = "启动前只读预演完成：未执行游戏操作";
+                            this.lblPetSnapshotStatus.ForeColor = Color.DarkGreen;
+                            this.lblPresetStatus.Text = "状态：只读预演完成（未执行游戏操作）";
+                            this.bExecute.Enabled = true;
+                            this.bStop.Enabled = false;
+                            this.tcRobotInstruction.Enabled = true;
+                            if (this.dgvRobotInstruction.ContextMenuStrip != null)
+                            {
+                                this.dgvRobotInstruction.ContextMenuStrip.Enabled = true;
+                            }
+                            this.SetTreasureStatus("只读预演完成", Color.DarkGreen);
+                        }
+                        else
+                        {
+                            this.SetTreasureStatus("运行中", Color.DarkOrange);
+                        }
                     }
                 }                
             }
@@ -6082,6 +8156,95 @@ this.InitSendPresetPicker();
                 this.chkTreasureLiveSend.Checked;
             parameters["TreasureExecutionMode"] = this.treasureExecutionMode;
             parameters["TreasureInstructionVersion"] = TreasureMapInstructionVersion.V2;
+            parameters["EquipmentRefinePreset"] = this.sriSelect == null
+                ? null
+                : this.sriSelect.EquipmentRefinePreset;
+            if (this.HasEquipmentRefineInstructionRows())
+            {
+                EquipmentRefinePreset refinePreset = this.sriSelect == null
+                    ? null
+                    : this.sriSelect.EquipmentRefinePreset;
+                Func<CancellationToken, Task<EquipmentRefineDetector.EquipmentInventory>>
+                    inventoryProvider = this.ResolveEquipmentRefineBagInventoryProvider(refinePreset);
+                if (inventoryProvider != null)
+                {
+                    parameters["EquipmentRefineInventoryProvider"] = inventoryProvider;
+                }
+
+                EquipmentRefineSocketRouteTemplate routeTemplate;
+                string routeError;
+                if (EquipmentRefineSocketRouteTemplate.TryCreate(
+                        Socket_Cache.SocketList.spiSelect,
+                        out routeTemplate,
+                        out routeError))
+                {
+                    // 只传递发送方向/地址作为当前连接解析模板；真实发送授权
+                    // 必须由外部显式注入，助手启动不会隐式获得授权。
+                    parameters["EquipmentRefineSocketRouteTemplate"] = routeTemplate;
+
+                    if (HasVerifiedEquipmentRefineTemplate(this.sriSelect == null
+                            ? null
+                            : this.sriSelect.EquipmentRefinePreset))
+                    {
+                        EquipmentRefineLiveSendAuthorization authorization;
+                        if (!EquipmentRefineLiveSendAuthorizationDialog.TryShow(
+                            this,
+                            out authorization))
+                        {
+                            return false;
+                        }
+                        parameters["EquipmentRefineLiveSendAuthorization"] = authorization;
+                    }
+                }
+            }
+            if (this.HasSummonedPetSkillBookInstructionRows())
+            {
+                SummonedPetSkillBookPreset preset = this.ReadPresetFromControls();
+                string presetError;
+                if (!preset.IsValid(out presetError))
+                {
+                    Socket_Operation.ShowMessageBox("召唤兽技能预设无效：" + presetError);
+                    return false;
+                }
+
+                parameters["SummonedPetSkillBookPreset"] = preset;
+            }
+            WPELibrary.Lib.MountSpeed.MountSpeedPreset mountSpeedPreset =
+                this.sriSelect == null || this.sriSelect.MountSpeedPreset == null
+                    ? null
+                    : WPELibrary.Lib.MountSpeed.MountSpeedPresetSerializer.DeserializeClone(
+                        this.sriSelect.MountSpeedPreset);
+            if (this.HasMountSpeedInstructionRows() &&
+                this.sriSelect != null &&
+                string.Equals(
+                    (this.sriSelect.RName ?? string.Empty).Trim(),
+                    WPELibrary.Lib.Socket_Cache.Robot.FirstRideRefinePresetName,
+                    StringComparison.Ordinal))
+            {
+                string mountPresetError;
+                bool hasCompleteMountPreset = mountSpeedPreset != null &&
+                    mountSpeedPreset.IsCompleteMountRefineTarget(out mountPresetError);
+                if (!hasCompleteMountPreset)
+                {
+                    mountSpeedPreset =
+                        WPELibrary.Lib.MountSpeed.MountSpeedPreset
+                            .CreateDefaultFirstRideRefinePreset();
+                    Socket_Operation.DoLog(
+                        "MountRefinePreset",
+                        "一坐骑洗炼启动时未发现完整目标，已自动使用固定目标：高级秋水流弦、"
+                        + "高级百步穿杨、高级追魂夺命，成长率 1.175。无需重复填写。");
+                }
+                parameters["MountRefineAutoSendRequested"] = true;
+            }
+            parameters["MountSpeedPreset"] = mountSpeedPreset;
+            if (this.HasMountSpeedInstructionRows())
+            {
+                // The reader is created for this run only. Socket_Robot will
+                // execute a fresh read during StartRobot and will not reuse a
+                // snapshot from an earlier run.
+                parameters["MountStatusAndroidSnapshotReader"] =
+                    new WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader();
+            }
             if (!this.HasVisionInstructionRows())
             {
                 return true;
@@ -6115,12 +8278,60 @@ this.InitSendPresetPicker();
             return true;
         }
 
+        private bool HasSummonedPetSkillBookInstructionRows()
+        {
+            return this.dtRobotInstruction != null &&
+                this.dtRobotInstruction.Rows.Cast<DataRow>().Any(row =>
+                row != null &&
+                row["Type"] != null &&
+                row["Type"] != DBNull.Value &&
+                Convert.ToInt32(row["Type"]) ==
+                    (int)Socket_Cache.Robot.InstructionType.SummonedPetSkillBook);
+        }
+
+        private bool HasEquipmentRefineInstructionRows()
+        {
+            return this.dtRobotInstruction != null &&
+                this.dtRobotInstruction.Rows.Cast<DataRow>().Any(row =>
+                row != null &&
+                row["Type"] != null &&
+                row["Type"] != DBNull.Value &&
+                Convert.ToInt32(row["Type"]) ==
+                    (int)Socket_Cache.Robot.InstructionType.EquipmentRefine);
+        }
+
+        private static bool HasVerifiedEquipmentRefineTemplate(EquipmentRefinePreset preset)
+        {
+            string path = preset == null ? string.Empty : preset.PacketTemplatePath;
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                path = Environment.GetEnvironmentVariable(
+                    "WPE_EQUIPMENT_REFINE_TEMPLATE_FILE");
+            }
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            EquipmentRefineExecutor.RefinePacketTemplate template =
+                new EquipmentRefineExecutor().LoadTemplate(path);
+            return template != null && template.IsValid;
+        }
+
         private bool HasTreasureMapInstructionRows()
         {
             return this.dtRobotInstruction != null &&
                 this.dtRobotInstruction.Rows.Cast<DataRow>().Any(row =>
                 (Socket_Cache.Robot.InstructionType)row["Type"] ==
                     Socket_Cache.Robot.InstructionType.TreasureMap);
+        }
+
+        private bool HasMountSpeedInstructionRows()
+        {
+            return this.dtRobotInstruction != null &&
+                this.dtRobotInstruction.Rows.Cast<DataRow>().Any(row =>
+                (Socket_Cache.Robot.InstructionType)row["Type"] ==
+                    Socket_Cache.Robot.InstructionType.MountSpeed);
         }
 
         private void SyncTreasureMapInstructionMode()
@@ -6180,7 +8391,17 @@ this.InitSendPresetPicker();
         {
             try
             {
-                if (e.Cancelled)
+                if (this.sr.LastMountRefineResult != null)
+                {
+                    Socket_Operation.ShowMessageBox(
+                        this.sr.LastMountRefineResultMessage);
+                }
+                else if (this.sr.LastEquipmentRefineResult != null)
+                {
+                    Socket_Operation.ShowMessageBox(
+                        this.sr.LastEquipmentRefineResultMessage);
+                }
+                else if (e.Cancelled)
                 {
                     string sMsg = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_110), sriSelect.RName);
                     Socket_Operation.ShowMessageBox(sMsg);

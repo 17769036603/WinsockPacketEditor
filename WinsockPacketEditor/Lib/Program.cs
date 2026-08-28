@@ -3,6 +3,8 @@ using System.ComponentModel;
 using System.IO;
 using System.Reflection;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Security.Principal;
 using System.Windows.Forms;
 using WPELibrary;
 using WPELibrary.Lib;
@@ -88,6 +90,7 @@ namespace WinsockPacketEditor
 
         static void Main()
         {
+            WriteStartupLog("process_started", null, string.Empty, null, null);
             try
             {
                 if (Environment.OSVersion.Version.Major >= 6)
@@ -96,25 +99,37 @@ namespace WinsockPacketEditor
                 }
 
                 Application.EnableVisualStyles();
-                Application.SetCompatibleTextRenderingDefault(false);             
-               
-                System.Security.Principal.WindowsIdentity identity = System.Security.Principal.WindowsIdentity.GetCurrent();
-                System.Security.Principal.WindowsPrincipal principal = new System.Security.Principal.WindowsPrincipal(identity);
+                Application.SetCompatibleTextRenderingDefault(false);
 
-                Socket_Cache.DataBase.InitDB();
-                Socket_Cache.System.LoadSystemConfig_FromDB();
-                MultiLanguage.SetDefaultLanguage(Socket_Cache.System.DefaultLanguage);
+                bool isAdministrator = IsCurrentProcessAdministrator();
+                WriteStartupLog(
+                    "privilege_checked",
+                    isAdministrator,
+                    string.Empty,
+                    null,
+                    null);
 
-                if (principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator))
+                if (isAdministrator)
                 {
+                    // Only the elevated process opens the user database. The
+                    // ClickOnce launcher must stay read-only while handing off
+                    // to the administrator process.
+                    WriteStartupLog("database_initializing", true, string.Empty, null, null);
+                    Socket_Cache.DataBase.InitDB();
+                    Socket_Cache.System.LoadSystemConfig_FromDB();
+                    MultiLanguage.SetDefaultLanguage(Socket_Cache.System.DefaultLanguage);
+                    WriteStartupLog("database_initialized", true, string.Empty, null, null);
+
                     // 当前版本固定进入注入模式；代理模式和远程管理入口暂不展示。
+                    WriteStartupLog("main_form_starting", true, string.Empty, null, null);
                     Application.Run(new Injector_Form());
+                    WriteStartupLog("main_form_exited", true, string.Empty, null, null);
                 }
                 else
-                {                    
-                    System.Diagnostics.ProcessStartInfo startInfo = new System.Diagnostics.ProcessStartInfo();
+                {
+                    ProcessStartInfo startInfo = new ProcessStartInfo();
                     startInfo.UseShellExecute = true;
-                    startInfo.WorkingDirectory = Environment.CurrentDirectory;
+                    startInfo.WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory;
                     startInfo.FileName = Application.ExecutablePath;
                     // Preserve explicit unattended switches when the normal
                     // non-elevated launcher hands off to the administrator
@@ -143,24 +158,85 @@ namespace WinsockPacketEditor
 
                     try
                     {
-                        System.Diagnostics.Process.Start(startInfo);
+                        WriteStartupLog(
+                            "elevation_requested",
+                            false,
+                            string.Empty,
+                            null,
+                            null);
+                        using (Process elevatedProcess = Process.Start(startInfo))
+                        {
+                            if (elevatedProcess == null)
+                            {
+                                throw new InvalidOperationException(
+                                    "Windows 未返回提权进程。请查看启动日志：" +
+                                    StartupDiagnosticLogStore.LogFilePath);
+                            }
+
+                            int childProcessId = elevatedProcess.Id;
+                            WriteStartupLog(
+                                "elevation_process_started",
+                                false,
+                                string.Empty,
+                                childProcessId,
+                                null);
+
+                            // A process that exits immediately is not a valid
+                            // elevation hand-off. Keep the launcher alive just
+                            // long enough to surface this previously silent
+                            // failure while a normal administrator UI continues.
+                            if (elevatedProcess.WaitForExit(1500))
+                            {
+                                int childExitCode = elevatedProcess.ExitCode;
+                                WriteStartupLog(
+                                    "elevation_process_exited_early",
+                                    false,
+                                    "提权进程启动后立即退出。",
+                                    childProcessId,
+                                    childExitCode);
+                                throw new InvalidOperationException(
+                                    string.Format(
+                                        "提权进程启动后立即退出（退出码 {0}）。启动日志：{1}",
+                                        childExitCode,
+                                        StartupDiagnosticLogStore.LogFilePath));
+                            }
+
+                            WriteStartupLog(
+                                "elevation_handoff_completed",
+                                false,
+                                string.Empty,
+                                childProcessId,
+                                null);
+                        }
                     }
                     catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
                     {
+                        WriteStartupLog(
+                            "elevation_cancelled",
+                            false,
+                            ex.Message,
+                            null,
+                            ex.NativeErrorCode);
                         MessageBox.Show(
                             Socket_Operation.GetUiText("Startup_AdminRequired"),
-                            Socket_Cache.System.WPE,
+                            GetStartupWindowTitle(),
                             MessageBoxButtons.OK,
                             MessageBoxIcon.Warning);
                         return;
                     }
                     catch (Exception ex)
                     {
+                        WriteStartupLog(
+                            "elevation_failed",
+                            false,
+                            ex.ToString(),
+                            null,
+                            null);
                         MessageBox.Show(
                             string.Format(
                                 Socket_Operation.GetUiText("Startup_AdminRestartFailed"),
                                 ex.Message),
-                            Socket_Cache.System.WPE,
+                            GetStartupWindowTitle(),
                             MessageBoxButtons.OK,
                             MessageBoxIcon.Error);
                         return;
@@ -171,12 +247,62 @@ namespace WinsockPacketEditor
             }
             catch (Exception ex)
             {
+                WriteStartupLog(
+                    "startup_failed",
+                    TryGetAdministratorState(),
+                    ex.ToString(),
+                    null,
+                    null);
                 MessageBox.Show(
                     string.Format(Socket_Operation.GetUiText("Startup_Failed"), ex.Message),
-                    Socket_Cache.System.WPE,
+                    GetStartupWindowTitle(),
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);
-            }            
+            }
+        }
+
+        private static bool IsCurrentProcessAdministrator()
+        {
+            using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
+            {
+                WindowsPrincipal principal = new WindowsPrincipal(identity);
+                return principal.IsInRole(WindowsBuiltInRole.Administrator);
+            }
+        }
+
+        private static bool? TryGetAdministratorState()
+        {
+            try
+            {
+                return IsCurrentProcessAdministrator();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static void WriteStartupLog(
+            string eventName,
+            bool? isAdministrator,
+            string message,
+            int? childProcessId,
+            int? exitCode)
+        {
+            string ignored;
+            StartupDiagnosticLogStore.TryAppend(
+                eventName,
+                isAdministrator,
+                message,
+                childProcessId,
+                exitCode,
+                out ignored);
+        }
+
+        private static string GetStartupWindowTitle()
+        {
+            string title = Socket_Cache.System.WPE;
+            return string.IsNullOrWhiteSpace(title) ? "小黑封包助手" : title;
         }
 
         private static string QuoteProcessArgument(string argument)

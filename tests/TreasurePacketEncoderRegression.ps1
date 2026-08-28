@@ -38,6 +38,14 @@ Assert-Equal 28 $jumpBytes.Length "Jump encoded length"
 Assert-Equal "4D 5A 00 00 00 00 00 00 00 12 58 28 00 00 03 F1 00 00 00 13 00 00 00 41 00 00 00 00" (Get-Hex $jumpBytes) "Jump encoded bytes"
 Assert-True $jumpRequest.Equals($encoder::DecodeJump($jumpBytes)) "Jump encode/decode round-trip"
 
+$dynamicJumpBytes = [byte[]]$jumpBytes.Clone()
+$dynamicJumpBytes[4] = 0x00
+$dynamicJumpBytes[5] = 0x09
+$dynamicJumpBytes[6] = 0xF9
+$dynamicJumpBytes[7] = 0x31
+Assert-True $jumpRequest.Equals($encoder::DecodeJump($dynamicJumpBytes)) `
+    "Captured Jump session sequence must be accepted"
+
 $useRequest = New-Object WPELibrary.Lib.Vision.TreasureUsePacketRequest(13, 13, 1, "2")
 $useBytes = $encoder::EncodeUse($useRequest)
 Assert-Equal 26 $useBytes.Length "Use encoded length"
@@ -47,6 +55,32 @@ Assert-Equal 13 $decodedUse.PackageNum "Use pos/packageNum binding"
 Assert-Equal 13 $decodedUse.Type "Use type round-trip"
 Assert-Equal 1 $decodedUse.Num "Use num round-trip"
 Assert-Equal "2" $decodedUse.Param "Use param round-trip"
+
+$dynamicUseBytes = [byte[]]$useBytes.Clone()
+$dynamicUseBytes[4] = 0x00
+$dynamicUseBytes[5] = 0x09
+$dynamicUseBytes[6] = 0xFB
+$dynamicUseBytes[7] = 0x18
+$dynamicDecodedUse = $encoder::DecodeUse($dynamicUseBytes)
+Assert-Equal 13 $dynamicDecodedUse.PackageNum "Captured Use session sequence must be accepted"
+
+$capturedClientUseBytes = [byte[]](
+    0x4D, 0x5A, 0x00, 0x00, 0x00, 0x09, 0xFB, 0x18,
+    0x00, 0x34, 0x78, 0x3A,
+    0x00, 0x00, 0x00, 0x0E,
+    0x00, 0x00, 0x00, 0x07,
+    0x00, 0x00, 0x00, 0x01,
+    0x00, 0x24, 0x49, 0x74, 0x32, 0x56, 0x57, 0x38,
+    0x44, 0x6C, 0x64, 0x59, 0x6E, 0x5A, 0x70, 0x65,
+    0x75, 0x35, 0x59, 0x70, 0x49, 0x41, 0x77, 0x6B,
+    0x55, 0x46, 0x69, 0x39, 0x6C, 0x53, 0x30, 0x6E,
+    0x41, 0x58, 0x75, 0x76, 0x42, 0x32)
+$capturedClientUse = $encoder::DecodeUse($capturedClientUseBytes)
+Assert-Equal 14 $capturedClientUse.PackageNum "Captured client Use pos"
+Assert-Equal 7 $capturedClientUse.Type "Captured client Use type"
+Assert-Equal 1 $capturedClientUse.Num "Captured client Use count"
+Assert-Equal '$It2VW8DldYnZpeu5YpIAwkUFi9lS0nAXuvB2' $capturedClientUse.Param `
+    "Captured client Use trailing parameter"
 
 $autoDigBytes = $encoder::EncodeAutoDig()
 Assert-Equal 24 $autoDigBytes.Length "AutoDig encoded length"
@@ -123,10 +157,34 @@ try {
     Assert-Equal 1 $capturedUse.Num "Current capture Use count"
     Assert-Equal "2" $capturedUse.Param "Current capture Use parameter"
 
+    # A changed route inside the same hook session must invalidate the old
+    # Jump/Use cache instead of carrying it across a reconnect.
+    $changedRoutePacket = New-Object WPELibrary.Lib.Socket_PacketInfo
+    $changedRoutePacket.PacketType = $packetType
+    $changedRoutePacket.PacketFrom = "127.0.0.1:50001"
+    $changedRoutePacket.PacketTo = "198.51.100.25:19000"
+    $changedRoutePacket.PacketBuffer = $jumpBytes
+    $changedRoutePacket.PacketLen = $jumpBytes.Length
+    $runtime::ObserveCapturedPacket($changedRoutePacket)
+    $useCacheCleared = $false
+    try {
+        $runtime::GetCurrentSessionUseRequest(8) | Out-Null
+    } catch [System.Management.Automation.MethodInvocationException] {
+        if ($_.Exception.InnerException -is [WPELibrary.Lib.Vision.TreasurePacketRuntimeException] -and
+            $_.Exception.InnerException.Code -eq "use_template_not_found") {
+            $useCacheCleared = $true
+        } else {
+            throw
+        }
+    }
+    Assert-True $useCacheCleared "Route change must clear cached Use template"
+
     $savedAutoDigPacket = New-Object WPELibrary.Lib.Socket_PacketInfo
     $savedAutoDigPacket.PacketType = $packetType
     $savedAutoDigPacket.PacketFrom = $fallbackPacket.PacketFrom
-    $savedAutoDigPacket.PacketTo = $fallbackPacket.PacketTo
+    # A saved preset can retain the endpoint from an older connection. Even
+    # an exact closed 0xB0F4 body must not cross that route/session boundary.
+    $savedAutoDigPacket.PacketTo = "198.18.0.55:19000"
     $savedAutoDigPacket.PacketBuffer = $legacyAutoDigBytes
     $savedAutoDigPacket.PacketLen = $legacyAutoDigBytes.Length
     $savedAutoDigCollection = New-Object 'System.ComponentModel.BindingList[WPELibrary.Lib.Socket_PacketInfo]'
@@ -134,12 +192,18 @@ try {
     $savedAutoDigPreset = New-Object -TypeName WPELibrary.Lib.Socket_SendInfo -ArgumentList @($false, [Guid]::NewGuid(), "treasure-map", $false, 1, 1000, $savedAutoDigCollection, "")
     [WPELibrary.Lib.Socket_Cache+SendList]::lstSend.Add($savedAutoDigPreset)
     try {
-        $currentAutoDig = $runtime::GetCurrentAutoDigPacket($fallbackRoute)
-        $legacyAutoDigHex = Get-Hex $legacyAutoDigBytes
-        $currentAutoDigHex = Get-Hex $currentAutoDig.PacketBuffer
-        Assert-Equal $legacyAutoDigHex $currentAutoDigHex "Saved AutoDig template bytes"
-        Assert-Equal $fallbackRoute.PacketTo $currentAutoDig.PacketTo "Saved AutoDig current route destination"
-        Assert-Equal 0 $currentAutoDig.PacketSocket "Saved AutoDig template must not retain its old Socket"
+        $rejected = $false
+        try {
+            $runtime::GetCurrentAutoDigPacket($fallbackRoute) | Out-Null
+        } catch [System.Management.Automation.MethodInvocationException] {
+            if ($_.Exception.InnerException -is [WPELibrary.Lib.Vision.TreasurePacketRuntimeException] -and
+                $_.Exception.InnerException.Code -eq "auto_dig_template_not_found") {
+                $rejected = $true
+            } else {
+                throw
+            }
+        }
+        Assert-True $rejected "Saved AutoDig template from another route must be rejected"
     } finally {
         [WPELibrary.Lib.Socket_Cache+SendList]::lstSend.Remove($savedAutoDigPreset)
     }

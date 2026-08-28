@@ -23,6 +23,10 @@ namespace WPELibrary
 
         public string FolderName { get; private set; }
 
+        public bool OverwriteConfirmed { get; private set; }
+
+        public Guid? OverwriteTargetId { get; private set; }
+
         public bool SaveAsByteSweep
         {
             get
@@ -217,20 +221,29 @@ namespace WPELibrary
                 return;
             }
 
-            bool duplicate = this.SaveAsByteSweep
-                ? Socket_Cache.ByteSweepList.lstPresets.Any(item =>
-                    string.Equals(item.BFolder, folder, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(item.BName, name, StringComparison.OrdinalIgnoreCase))
-                : Socket_Cache.SendList.lstSend.Any(item =>
-                    (!this.editingPresetId.HasValue || item.SID != this.editingPresetId.Value) &&
-                    string.Equals(item.SFolder, folder, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(item.SName, name, StringComparison.OrdinalIgnoreCase));
-            if (duplicate)
+            if (!this.SaveAsByteSweep)
             {
-                MessageBox.Show(this, ResourceText("SendPreset_Duplicate"),
-                    this.Text, MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
-                return;
+                Socket_SendInfo conflicting =
+                    Socket_Cache.SendList.lstSend.FirstOrDefault(item =>
+                        (!this.editingPresetId.HasValue || item.SID != this.editingPresetId.Value) &&
+                        string.Equals(item.SFolder, folder, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(item.SName, name, StringComparison.OrdinalIgnoreCase));
+                if (conflicting != null)
+                {
+                    DialogResult result = MessageBox.Show(
+                        this,
+                        ResourceText("SendPreset_DuplicateOverwrite"),
+                        this.Text,
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Question);
+                    if (result != DialogResult.Yes)
+                    {
+                        return;
+                    }
+
+                    this.OverwriteConfirmed = true;
+                    this.OverwriteTargetId = conflicting.SID;
+                }
             }
 
             this.PresetName = name;

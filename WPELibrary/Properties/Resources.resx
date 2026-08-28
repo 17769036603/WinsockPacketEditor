@@ -425,6 +425,7 @@
   <data name="SendPreset_SweepFolder" xml:space="preserve"><value>递进分组</value></data>
   <data name="SendPreset_Required" xml:space="preserve"><value>请输入预设名称和分组。</value></data>
   <data name="SendPreset_Duplicate" xml:space="preserve"><value>当前分组中已存在同名预设。</value></data>
+  <data name="SendPreset_DuplicateOverwrite" xml:space="preserve"><value>当前分组中已存在同名预设，是否覆盖？</value></data>
   <data name="UI_SendSelected" xml:space="preserve"><value>发送选中</value></data>
   <data name="UI_SequentialSend" xml:space="preserve"><value>顺序发送</value></data>
   <data name="UI_ConcurrentSend" xml:space="preserve"><value>同时发送</value></data>
@@ -451,6 +452,8 @@
   <data name="UI_TreasureLiveSendConfirmTitle" xml:space="preserve"><value>藏宝图发送确认</value></data>
   <data name="UI_TreasureLiveSendConfirm" xml:space="preserve"><value>此助手包含藏宝图流程，启动后会发送 Jump 和自动挖宝封包。确认后会保存真实发送授权，之后不再重复提示。是否继续？</value></data>
   <data name="UI_AssistantStartFailed" xml:space="preserve"><value>助手启动失败，请检查流程是否有效。</value></data>
+  <data name="UI_AssistantRunFailed" xml:space="preserve"><value>助手运行失败：{0}</value></data>
+  <data name="UI_AssistantReadOnlySnapshotReady" xml:space="preserve"><value>召唤兽技能只读快照读取成功，未执行游戏操作。</value></data>
   <data name="UI_TreasureC6Unavailable" xml:space="preserve"><value>藏宝图助手已停止：C6 读取服务（127.0.0.1:28765）未连接或已断开。</value></data>
   <data name="UI_TreasureRunFailed" xml:space="preserve"><value>藏宝图助手已停止：{0}</value></data>
   <data name="UI_SendCount" xml:space="preserve"><value>发送次数</value></data>
@@ -535,6 +538,7 @@
   <data name="ByteSweep_Required" xml:space="preserve"><value>请输入预设名称和递进分组。</value></data>
   <data name="ByteSweep_RangeInvalid" xml:space="preserve"><value>递进范围超出封包长度。</value></data>
   <data name="ByteSweep_Duplicate" xml:space="preserve"><value>当前分组中已存在同名预设。</value></data>
+  <data name="ByteSweep_DuplicateOverwrite" xml:space="preserve"><value>当前分组中已存在同名预设，是否覆盖？</value></data>
   <data name="ByteSweep_ControlTitle" xml:space="preserve"><value>递进控制</value></data>
   <data name="ByteSweep_Mode" xml:space="preserve"><value>模式</value></data>
   <data name="ByteSweep_SequentialMode" xml:space="preserve"><value>普通递进</value></data>

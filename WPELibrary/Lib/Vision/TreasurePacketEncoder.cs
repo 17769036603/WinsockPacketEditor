@@ -122,7 +122,15 @@ namespace WPELibrary.Lib.Vision
                     "0x783A contains an unsupported pos, type, or num value.");
             }
 
-            int paramByteLength = frame[TreasureUsePacketContract.ParamLengthOffset];
+            int paramByteLength;
+            if (!TreasureUsePacketContract.TryGetParamByteLength(
+                    frame,
+                    out paramByteLength))
+            {
+                throw new TreasurePacketContractException(
+                    "use_frame_length_invalid",
+                    "0x783A frame parameter does not match the current frame boundary.");
+            }
             string param;
             try
             {
@@ -187,7 +195,15 @@ namespace WPELibrary.Lib.Vision
                     "0x783A outer length does not match the protocol-plus-body boundary.");
             }
 
-            int paramByteLength = frame[TreasureUsePacketContract.ParamLengthOffset];
+            int paramByteLength;
+            if (!TreasureUsePacketContract.TryGetParamByteLength(
+                    frame,
+                    out paramByteLength))
+            {
+                throw new TreasurePacketContractException(
+                    "use_frame_length_invalid",
+                    "0x783A frame parameter does not match the current frame boundary.");
+            }
             int expectedFrameLength = TreasureUsePacketContract.ParamOffset + paramByteLength;
             if (frame.Length != expectedFrameLength)
             {

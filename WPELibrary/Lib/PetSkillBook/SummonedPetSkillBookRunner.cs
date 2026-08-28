@@ -18,7 +18,6 @@ namespace WPELibrary.Lib.PetSkillBook
             IDLE,
             VERIFY_CURRENT_PET,
             LOAD_PET_STATE,
-            CHECK_MATERIALS,
             OPEN_SLOT_SUBMIT,
             OPEN_SLOT_WAIT,
             OPEN_SLOT_VERIFY,
@@ -63,6 +62,20 @@ namespace WPELibrary.Lib.PetSkillBook
             _operationAdapter = operationAdapter ?? throw new ArgumentNullException(nameof(operationAdapter));
             _cts = new CancellationTokenSource();
             _context = new SummonedPetSkillBookContext { Preset = preset };
+
+            // 当前流程规则固定：启动时一次性开满技能格，每本成功后立即锁定。
+            _preset.OpenAllSlots = true;
+            _preset.LockAfter = true;
+            if (_preset.Books != null)
+            {
+                foreach (var book in _preset.Books)
+                {
+                    if (book != null)
+                    {
+                        book.LockAfter = true;
+                    }
+                }
+            }
         }
 
         public async Task StartAsync()
@@ -75,7 +88,7 @@ namespace WPELibrary.Lib.PetSkillBook
             if (!_preset.IsValid(out string error))
             {
                 await LogAsync($"预设无效: {error}");
-                Pause($"预设无效: {error}");
+                await FailRunAsync($"预设无效: {error}");
                 return;
             }
 
@@ -85,7 +98,7 @@ namespace WPELibrary.Lib.PetSkillBook
             // 1. 开始执行时调用 VerifyProcessIdentityAsync
             if (!await _readOnlyAdapter.VerifyProcessIdentityAsync(_cts.Token))
             {
-                Pause("进程身份验证失败：无法验证宠物技能书操作进程身份");
+                await FailRunAsync("进程身份验证失败：无法验证宠物技能书操作进程身份");
                 return;
             }
             await LogAsync("进程身份验证通过");
@@ -97,11 +110,12 @@ namespace WPELibrary.Lib.PetSkillBook
             catch (OperationCanceledException)
             {
                 await LogAsync("执行被取消");
+                _context.RunStatus.IsCancelled = true;
             }
             catch (Exception ex)
             {
                 await LogAsync($"执行错误: {ex.Message}");
-                Pause($"执行错误: {ex.Message}");
+                await FailRunAsync($"执行错误: {ex.Message}");
             }
         }
 
@@ -122,6 +136,7 @@ namespace WPELibrary.Lib.PetSkillBook
         public void Stop()
         {
             _cts.Cancel();
+            _context.RunStatus.IsCancelled = true;
         }
 
         private async Task ExecuteStateMachineAsync(CancellationToken cancellationToken)
@@ -129,97 +144,185 @@ namespace WPELibrary.Lib.PetSkillBook
             // IDLE 状态
             SetState(State.IDLE);
 
-            // 主循环
-            while (_context.CurrentBookIndex < _preset.Books.Count && !_context.IsPaused && !cancellationToken.IsCancellationRequested)
+            // 启动阶段：验证目标进程身份 → 读取当前参战召唤兽 → 读取技能格状态
+            if (!await VerifyCurrentPetAsync(cancellationToken))
             {
-                // VERIFY_CURRENT_PET：每本书开始前重新确认当前参战宠物
-                if (!await VerifyCurrentPetAsync(cancellationToken))
-                {
-                    if (_context.IsPaused) return;
-                    continue;
-                }
+                if (_context.IsPaused) return;
+                return;
+            }
 
-                // LOAD_PET_STATE
-                if (!await LoadPetStateAsync(cancellationToken))
-                {
-                    if (_context.IsPaused) return;
-                    continue;
-                }
+            if (!await LoadPetStateAsync(cancellationToken))
+            {
+                if (_context.IsPaused) return;
+                return;
+            }
 
-                // CHECK_MATERIALS
-                if (!await CheckMaterialsAsync(cancellationToken))
+            // 一次性开格：OpenAllSlotsAsync 移到技能书循环之前
+            bool slotsOpened = true;
+            if (_preset.OpenAllSlots)
+            {
+                // 如果技能格已经全部开放，跳过开格
+                if (_context.PetState.OpenSlotCount >= _context.PetState.MaxSlotCount)
                 {
-                    if (_context.IsPaused) return;
-                    continue;
+                    await LogAsync("OPEN_SLOT_VERIFY: 技能格已全部开放，跳过开格");
                 }
-
-                // OPEN_SLOT_SUBMIT/WAIT/VERIFY
-                if (_preset.OpenAllSlots)
+                else
                 {
-                    if (!await OpenAllSlotsAsync(cancellationToken))
-                    {
-                        if (_context.IsPaused) return;
-                        continue;
-                    }
+                    slotsOpened = await OpenAllSlotsAsync(cancellationToken);
                 }
+            }
 
-                // BOOK_CHECK
-                if (!await BookCheckAsync(cancellationToken))
-                {
-                    if (_context.IsPaused) return;
-                    continue;
-                }
+            if (!slotsOpened)
+            {
+                if (_context.IsPaused) return;
+                return;
+            }
 
-                // STUDY_SUBMIT/WAIT
-                var book = _preset.Books[_context.CurrentBookIndex];
-                var openSlot = GetNextAvailableSlot();
-                if (openSlot == null)
-                {
-                    Pause("没有可用技能格");
-                    return;
-                }
+            // 主循环：处理每本技能书。单本失败记录后继续，只有全局失败才终止。
+            while (_context.CurrentBookIndex < _preset.Books.Count &&
+                   !_context.IsPaused &&
+                   !_context.RunStatus.IsFailed &&
+                   !cancellationToken.IsCancellationRequested)
+            {
+                var result = await ProcessSingleBookAsync(cancellationToken);
 
-                if (!await StudyBookAsync(book, openSlot, cancellationToken))
-                {
-                    if (_context.IsPaused) return;
-                    continue;
-                }
-
-                // SKILL_DIFF
-                if (!await VerifySkillDiffAsync(book, cancellationToken))
-                {
-                    if (_context.IsPaused) return;
-                    continue;
-                }
-
-                // LOCK_SUBMIT/WAIT/VERIFY
-                if (book.LockAfter)
-                {
-                    if (!await LockSlotAsync(_changedSlotIndex, cancellationToken))
-                    {
-                        if (_context.IsPaused) return;
-                        continue;
-                    }
-                }
-
-                // NEXT_BOOK
-                SetState(State.NEXT_BOOK);
-                await LogAsync("NEXT_BOOK: 完成当前技能书，进入下一本");
+                // 记录每本技能书的结果
+                _context.RunStatus.BookResults.Add(result);
                 _context.CurrentBookIndex++;
+
+                // 下一本之前自动刷新并确认召唤兽仍是同一个对象。
+                if (_context.CurrentBookIndex < _preset.Books.Count)
+                {
+                    SetState(State.NEXT_BOOK);
+                    if (!await VerifyPetIdConsistencyBeforeNextBookAsync(cancellationToken))
+                    {
+                        return;
+                    }
+                }
             }
 
             // 循环结束后的最终保护
-            if (_context.IsPaused || cancellationToken.IsCancellationRequested)
+            if (_context.IsPaused ||
+                _context.RunStatus.IsFailed ||
+                cancellationToken.IsCancellationRequested)
             {
-                return; // 已暂停或取消，不进入 COMPLETE
+                return; // 已暂停、失败或取消，不进入 COMPLETE
             }
 
-            // 只有所有技能书完成、未暂停、未取消时才进入 COMPLETE
-            if (_context.CurrentBookIndex == _preset.Books.Count)
+            // 决定最终结果：根据所有 BookExecutionResult 决定 SUCCESS 或 FAILED
+            int failedCount = _context.RunStatus.BookResults.Count(r => r.Status == BookExecutionStatus.FAILED);
+            if (failedCount == 0)
             {
+                _context.RunStatus.IsCompleted = true;
+                _context.RunStatus.CompletedAt = DateTime.UtcNow;
                 SetState(State.COMPLETE);
-                await LogAsync("完成预设执行");
+                await LogAsync("完成预设执行: SUCCESS");
             }
+            else
+            {
+                var failureDetails = string.Join(
+                    "；",
+                    _context.RunStatus.BookResults
+                        .Where(r => r.Status == BookExecutionStatus.FAILED)
+                        .Select(r => $"第{r.Sequence}本: {r.FailureReason}"));
+                await FailRunAsync($"部分技能书打书失败: {failedCount} 个失败，{_context.RunStatus.BookResults.Count} 本总计；原因: {failureDetails}");
+            }
+        }
+
+        private async Task<BookExecutionResult> ProcessSingleBookAsync(CancellationToken cancellationToken)
+        {
+            var book = _preset.Books[_context.CurrentBookIndex];
+            SetState(State.BOOK_CHECK);
+
+            // 每本开始前自动验证召唤兽 ID
+            if (!await VerifyPetIdAsync(cancellationToken))
+            {
+                return CreateFailedResult(book, "召唤兽 ID 不一致");
+            }
+
+            // 读取当前宠物状态
+            var pet = await _readOnlyAdapter.ReadCurrentPetAsync(cancellationToken);
+            if (pet.PetId != _context.CurrentPetId)
+            {
+                return CreateFailedResult(book, "召唤兽 ID 变化");
+            }
+
+            var state = await _readOnlyAdapter.ReadPetStateAsync(cancellationToken);
+            _context.PetState = state;
+
+            // 目标技能已经存在时无论槽位是否锁定都跳过，不再尝试覆盖。
+            var existingSlot = state.SkillSlots?.FirstOrDefault(s => s.SkillId == book.SkillId);
+            if (existingSlot != null)
+            {
+                await LogAsync($"BOOK_CHECK: 技能 {book.SkillId} 已存在于槽位 {existingSlot.SlotIndex}，跳过");
+                return CreateSkippedResult(book, existingSlot.SlotIndex);
+            }
+
+            // 寻找空、开放、未锁定的技能格
+            var availableSlot = GetNextAvailableSlot();
+            if (availableSlot == null)
+            {
+                await LogAsync("没有可用空技能格");
+                return CreateFailedResult(book, "没有可用空技能格");
+            }
+
+            // 保存打书前技能格快照（用于 VerifySkillDiffAsync 对比）
+            var stateBeforeStudy = DeepCopyPetState(state);
+
+            // 提交使用技能书
+            var studyResult = await SubmitStudyBookAsync(book, availableSlot.SlotIndex, cancellationToken);
+            if (studyResult.Status != BookExecutionStatus.SUCCESS)
+            {
+                return studyResult;
+            }
+
+            // 等待刷新并读取新状态
+            bool refreshOk = await _readOnlyAdapter.WaitForStateRefreshAsync(
+                state.StateVersion, _preset.TimeoutMs, cancellationToken);
+            if (!refreshOk)
+            {
+                return CreateFailedResult(book, "状态刷新超时");
+            }
+
+            var newPetState = await _readOnlyAdapter.ReadPetStateAsync(cancellationToken);
+            _context.PetState = newPetState;
+
+            // 验证打书成功条件
+            if (!await VerifySkillDiffAsync(book, availableSlot.SlotIndex, stateBeforeStudy, newPetState, cancellationToken))
+            {
+                return CreateFailedResult(book, "技能格变化验证失败（可能存在覆盖、非目标技能格变化或目标技能未出现）");
+            }
+
+            // 立即锁定目标技能格（LockAfter 运行时固定为 true）
+            var lockResult = await LockSlotAsync(book, availableSlot.SlotIndex, cancellationToken);
+            if (lockResult.Status != BookExecutionStatus.SUCCESS)
+            {
+                return lockResult;
+            }
+
+            return lockResult;
+        }
+
+        private async Task<bool> VerifyPetIdAsync(CancellationToken cancellationToken)
+        {
+            var pet = await _readOnlyAdapter.ReadCurrentPetAsync(cancellationToken);
+
+            if (!pet.IsCurrentParticipant || pet.PetId <= 0 || pet.PetId != _context.CurrentPetId)
+            {
+                return false;
+            }
+            return true;
+        }
+
+        private async Task<bool> VerifyPetIdConsistencyBeforeNextBookAsync(CancellationToken cancellationToken)
+        {
+            var pet = await _readOnlyAdapter.ReadCurrentPetAsync(cancellationToken);
+            if (!pet.IsCurrentParticipant || pet.PetId <= 0 || pet.PetId != _context.CurrentPetId)
+            {
+                await FailRunAsync($"VERIFY_PET_ID: 召唤兽 ID 变化或不在参战状态: 原 {_context.CurrentPetId}，现 {pet.PetId}");
+                return false;
+            }
+            return true;
         }
 
         private async Task<bool> VerifyCurrentPetAsync(CancellationToken cancellationToken)
@@ -229,16 +332,17 @@ namespace WPELibrary.Lib.PetSkillBook
 
             var pet = await _readOnlyAdapter.ReadCurrentPetAsync(cancellationToken);
 
-            if (!pet.IsCurrentParticipant)
+            // 目标进程身份验证 + 参战状态验证
+            if (!pet.IsCurrentParticipant || pet.PetId <= 0)
             {
-                Pause("当前召唤兽不在参战状态");
+                await FailRunAsync("当前召唤兽不在参战状态或 ID 无效");
                 return false;
             }
 
             // 检查宠物变化：每本书开始前重新确认
             if (_snapshotBeforeRefresh != null && _snapshotBeforeRefresh.PetId != pet.PetId)
             {
-                Pause($"VERIFY_CURRENT_PET: 宠物ID变化: 当前 {pet.PetId} != 上次 {_snapshotBeforeRefresh.PetId}");
+                await FailRunAsync($"VERIFY_CURRENT_PET: 宠物ID变化: 当前 {pet.PetId} != 上次 {_snapshotBeforeRefresh.PetId}");
                 return false;
             }
 
@@ -256,7 +360,7 @@ namespace WPELibrary.Lib.PetSkillBook
             var pet = await _readOnlyAdapter.ReadCurrentPetAsync(cancellationToken);
             if (pet.PetId != _context.CurrentPetId)
             {
-                Pause("LOAD_PET_STATE: 宠物ID变化");
+                await FailRunAsync("LOAD_PET_STATE: 宠物ID变化");
                 return false;
             }
 
@@ -268,81 +372,28 @@ namespace WPELibrary.Lib.PetSkillBook
             return true;
         }
 
-        private async Task<bool> CheckMaterialsAsync(CancellationToken cancellationToken)
-        {
-            SetState(State.CHECK_MATERIALS);
-            await LogAsync("CHECK_MATERIALS: 检查执行材料");
-
-            var inventory = await _readOnlyAdapter.ReadResourcesAsync(cancellationToken);
-            _context.Inventory = inventory;
-
-            var catalog = await _readOnlyAdapter.ReadSkillCatalogAsync(cancellationToken);
-            var book = _preset.Books[_context.CurrentBookIndex];
-
-            // 检查技能书：必须同时比对 ItemId 和 SkillId
-            var bookItem = catalog.FirstOrDefault(c => c.ItemId == book.ItemId && c.SkillId == book.SkillId);
-            if (bookItem == null)
-            {
-                Pause($"CHECK_MATERIALS: 目录中找不到匹配的技能书 (ItemId={book.ItemId}, SkillId={book.SkillId})");
-                return false;
-            }
-
-            var inventoryItem = inventory.Items.FirstOrDefault(i => i.ItemId == book.ItemId);
-            if (inventoryItem == null || inventoryItem.Count < 1)
-            {
-                Pause($"CHECK_MATERIALS: 技能书数量不足: {book.ItemId}");
-                return false;
-            }
-
-            // 检查银两：仅当成本 > 0 时才检查
-            if (_preset.StudySilverCost > 0 && inventory.Silver < _preset.StudySilverCost)
-            {
-                Pause($"CHECK_MATERIALS: 银两不足: {inventory.Silver} < {_preset.StudySilverCost}");
-                return false;
-            }
-
-            await LogAsync($"材料充足: 技能书 {book.ItemId}x{inventoryItem.Count}, 银两 {inventory.Silver}");
-            return true;
-        }
-
         private async Task<bool> OpenAllSlotsAsync(CancellationToken cancellationToken)
         {
             var petState = await _readOnlyAdapter.ReadPetStateAsync(cancellationToken);
+            if (petState == null || petState.MaxSlotCount <= 0)
+            {
+                await FailRunAsync("OPEN_SLOT_VERIFY: 无法读取有效的技能格状态");
+                return false;
+            }
 
+            // 一次性开满所有未开放技能格
             while (petState.OpenSlotCount < petState.MaxSlotCount && !_context.IsPaused && !cancellationToken.IsCancellationRequested)
             {
                 SetState(State.OPEN_SLOT_SUBMIT);
                 await LogAsync("OPEN_SLOT_SUBMIT: 提交开启技能格");
 
-                // 检查开格材料
-                if (!_preset.OpenItemId.HasValue)
-                {
-                    Pause("OPEN_SLOT_SUBMIT: 未配置开格材料物品 ID");
-                    return false;
-                }
-
-                var inventory = await _readOnlyAdapter.ReadResourcesAsync(cancellationToken);
-                var openMaterial = inventory.Items.FirstOrDefault(item => item.ItemId == _preset.OpenItemId.Value);
-                if (openMaterial == null || openMaterial.Count < 1)
-                {
-                    Pause($"OPEN_SLOT_SUBMIT: 开格材料不足: ItemId={_preset.OpenItemId.Value}");
-                    return false;
-                }
-
-                // 检查银两：仅当 OpenSlotSilverCost > 0 时才检查
-                if (_preset.OpenSlotSilverCost > 0 && inventory.Silver < _preset.OpenSlotSilverCost)
-                {
-                    Pause($"OPEN_SLOT_SUBMIT: 银两不足: {inventory.Silver} < {_preset.OpenSlotSilverCost}");
-                    return false;
-                }
-
-                // 提交开启操作
+                // 提交开启操作（无材料/银两预检，直接尝试操作）
                 var result = await _operationAdapter.SubmitOpenSlotAsync(petState.OpenSlotCount, cancellationToken);
                 await LogAsync($"OPEN_SLOT_SUBMIT: 开启操作结果 = {result}");
 
                 if (result != OperationResult.Accepted)
                 {
-                    Pause($"OPEN_SLOT_SUBMIT: 开启操作失败: {result}");
+                    await FailRunAsync($"OPEN_SLOT_SUBMIT: 开启操作失败: {result}");
                     return false;
                 }
 
@@ -353,7 +404,7 @@ namespace WPELibrary.Lib.PetSkillBook
                     petState.StateVersion, _preset.TimeoutMs, cancellationToken);
                 if (!refreshOk)
                 {
-                    Pause("OPEN_SLOT_WAIT: 状态刷新超时");
+                    await FailRunAsync("OPEN_SLOT_WAIT: 状态刷新超时");
                     return false;
                 }
 
@@ -367,13 +418,17 @@ namespace WPELibrary.Lib.PetSkillBook
 
                 // 重新读状态并验证开放格数量严格增加
                 var newPetState = await _readOnlyAdapter.ReadPetStateAsync(cancellationToken);
-                if (newPetState.OpenSlotCount <= petState.OpenSlotCount)
+                if (newPetState == null ||
+                    newPetState.PetId != _context.CurrentPetId ||
+                    newPetState.OpenSlotCount <= petState.OpenSlotCount ||
+                    newPetState.OpenSlotCount > newPetState.MaxSlotCount)
                 {
-                    Pause("OPEN_SLOT_VERIFY: 技能格数量未增加");
+                    await FailRunAsync("OPEN_SLOT_VERIFY: 技能格数量未按预期增加，或召唤兽状态已变化");
                     return false;
                 }
 
                 petState = newPetState;
+                _context.PetState = petState;
                 await LogAsync($"OPEN_SLOT_VERIFY: 槽位打开成功, 现有 {petState.OpenSlotCount}/{petState.MaxSlotCount}");
             }
 
@@ -383,6 +438,14 @@ namespace WPELibrary.Lib.PetSkillBook
                 return false;
             }
 
+            // 检查最终是否满格
+            if (petState.OpenSlotCount < petState.MaxSlotCount)
+            {
+                await FailRunAsync($"OPEN_SLOT_VERIFY: 最终技能格未满: {petState.OpenSlotCount}/{petState.MaxSlotCount}");
+                return false;
+            }
+
+            _context.PetState = petState;
             return true;
         }
 
@@ -392,124 +455,91 @@ namespace WPELibrary.Lib.PetSkillBook
             return _context.PetState.SkillSlots.FirstOrDefault(s => s.IsOpen && !s.IsLocked && s.SkillId == 0);
         }
 
-        private async Task<bool> BookCheckAsync(CancellationToken cancellationToken)
+        private BookExecutionResult CreateFailedResult(SkillBookEntry book, string reason)
         {
-            SetState(State.BOOK_CHECK);
-            await LogAsync("BOOK_CHECK: 检查当前技能书");
-
-            var pet = await _readOnlyAdapter.ReadCurrentPetAsync(cancellationToken);
-            if (pet.PetId != _context.CurrentPetId)
+            return new BookExecutionResult
             {
-                Pause("BOOK_CHECK: 宠物ID变化");
-                return false;
-            }
-
-            var state = await _readOnlyAdapter.ReadPetStateAsync(cancellationToken);
-            _context.PetState = state;
-            // 保存学习前 PetState 深拷贝快照，供 SKILL_DIFF 对比
-            _previousPetState = DeepCopyPetState(state);
-
-            await LogAsync($"BOOK_CHECK: 当前宠物 ID: {pet.PetId}, 状态版本: {state.StateVersion}");
-            return true;
+                Status = BookExecutionStatus.FAILED,
+                SkillId = book.SkillId,
+                ItemId = book.ItemId,
+                Sequence = _context.CurrentBookIndex + 1,
+                FailureReason = reason,
+                StateVersionBefore = _context.PetState?.StateVersion.ToString() ?? "0",
+                StateVersionAfter = _context.PetState?.StateVersion.ToString() ?? "0",
+                ExecutedAt = DateTime.UtcNow
+            };
         }
 
-        private async Task<bool> StudyBookAsync(SkillBookEntry book, PetSkillSlotSnapshot slot, CancellationToken cancellationToken)
+        private BookExecutionResult CreateSkippedResult(SkillBookEntry book, int slotIndex)
+        {
+            return new BookExecutionResult
+            {
+                Status = BookExecutionStatus.SKIPPED_ALREADY_PRESENT,
+                SkillId = book.SkillId,
+                ItemId = book.ItemId,
+                Sequence = _context.CurrentBookIndex + 1,
+                SkillSlotIndex = slotIndex,
+                StateVersionBefore = _context.PetState?.StateVersion.ToString() ?? "0",
+                StateVersionAfter = _context.PetState?.StateVersion.ToString() ?? "0",
+                ExecutedAt = DateTime.UtcNow
+            };
+        }
+
+        private BookExecutionResult CreateSuccessResult(SkillBookEntry book, int slotIndex)
+        {
+            return new BookExecutionResult
+            {
+                Status = BookExecutionStatus.SUCCESS,
+                SkillId = book.SkillId,
+                ItemId = book.ItemId,
+                Sequence = _context.CurrentBookIndex + 1,
+                SkillSlotIndex = slotIndex,
+                StateVersionBefore = _previousPetState?.StateVersion.ToString() ?? "0",
+                StateVersionAfter = _context.PetState?.StateVersion.ToString() ?? "0",
+                ExecutedAt = DateTime.UtcNow
+            };
+        }
+
+        private async Task<BookExecutionResult> SubmitStudyBookAsync(SkillBookEntry book, int slotIndex, CancellationToken cancellationToken)
         {
             SetState(State.STUDY_SUBMIT);
-            await LogAsync($"STUDY_SUBMIT: 使用技能书 {book.ItemId}->{book.SkillId} 在槽位 {slot.SlotIndex}");
+            await LogAsync($"STUDY_SUBMIT: 使用技能书 {book.ItemId}->{book.SkillId} 在槽位 {slotIndex}");
 
             var result = await _operationAdapter.SubmitStudyBookAsync(
-                book.ItemId, book.SkillId, slot.SlotIndex, cancellationToken);
+                book.ItemId, book.SkillId, slotIndex, cancellationToken);
             await LogAsync($"STUDY_SUBMIT: 使用技能书结果 = {result}");
 
             if (result != OperationResult.Accepted)
             {
-                Pause($"STUDY_SUBMIT: 使用技能书失败: {result}");
-                return false;
+                return CreateFailedResult(book, $"提交技能书失败: {result}");
             }
 
-            SetState(State.STUDY_WAIT);
-
-            // 等待刷新成功
-            bool refreshOk = await _readOnlyAdapter.WaitForStateRefreshAsync(
-                _context.PetState.StateVersion, _preset.TimeoutMs, cancellationToken);
-            if (!refreshOk)
+            return new BookExecutionResult
             {
-                Pause("STUDY_WAIT: 状态刷新超时");
-                return false;
-            }
-
-            // 重新读新快照（不覆盖 _previousPetState，保持学习前的快照供 SKILL_DIFF 用）
-            var newPetState = await _readOnlyAdapter.ReadPetStateAsync(cancellationToken);
-            _context.PetState = newPetState;
-
-            await LogAsync($"STUDY_WAIT: 状态刷新完成, 版本 {newPetState.StateVersion}");
-            return true;
+                Status = BookExecutionStatus.SUCCESS,
+                SkillId = book.SkillId,
+                ItemId = book.ItemId,
+                Sequence = _context.CurrentBookIndex + 1,
+                SkillSlotIndex = slotIndex,
+                StateVersionBefore = _context.PetState?.StateVersion.ToString() ?? "0",
+                StateVersionAfter = _context.PetState?.StateVersion.ToString() ?? "0",
+                ExecutedAt = DateTime.UtcNow
+            };
         }
 
-        private async Task<bool> VerifySkillDiffAsync(SkillBookEntry book, CancellationToken cancellationToken)
-        {
-            SetState(State.SKILL_DIFF);
-            await LogAsync("SKILL_DIFF: 识别变化技能格");
-
-            var expectedSkillId = book.SkillId;
-
-            // 读取新状态
-            var newState = await _readOnlyAdapter.ReadPetStateAsync(cancellationToken);
-
-            // 检查宠物 ID 未变化
-            if (newState.PetId != _context.CurrentPetId)
-            {
-                Pause("SKILL_DIFF: 宠物ID变化");
-                return false;
-            }
-
-            // 分析变化：恰好识别一个变化槽位
-            int slotChanges = 0;
-            int changedSlot = -1;
-
-            foreach (var currentSlot in newState.SkillSlots)
-            {
-                var prevSlot = _previousPetState.SkillSlots.FirstOrDefault(s => s.SlotIndex == currentSlot.SlotIndex);
-
-                if (prevSlot == null) continue;
-
-                // 变化：学习前未锁定，学习后 SkillId 等于预设 SkillId，槽位存在且开放
-                bool wasNotLocked = !prevSlot.IsLocked;
-                bool isNowOpen = currentSlot.IsOpen;
-                bool skillMatches = currentSlot.SkillId == expectedSkillId;
-                bool skillChanged = prevSlot.SkillId != currentSlot.SkillId || wasNotLocked != currentSlot.IsLocked;
-
-                if (skillChanged && isNowOpen && wasNotLocked && skillMatches)
-                {
-                    slotChanges++;
-                    changedSlot = currentSlot.SlotIndex;
-                }
-            }
-
-            if (slotChanges != 1)
-            {
-                Pause($"SKILL_DIFF: 想变的槽位数量不正确: {slotChanges} (期望为 1)");
-                return false;
-            }
-
-            _changedSlotIndex = changedSlot;
-            await LogAsync($"SKILL_DIFF: 变化槽位 {changedSlot}, SkillId: {expectedSkillId}");
-            return true;
-        }
-
-        private async Task<bool> LockSlotAsync(int slotIndex, CancellationToken cancellationToken)
+        private async Task<BookExecutionResult> LockSlotAsync(SkillBookEntry book, int slotIndex, CancellationToken cancellationToken)
         {
             SetState(State.LOCK_SUBMIT);
             await LogAsync($"LOCK_SUBMIT: 锁定技能格 {slotIndex}");
+
+            var beforeLockState = DeepCopyPetState(_context.PetState);
 
             var result = await _operationAdapter.SubmitLockSkillSlotAsync(slotIndex, cancellationToken);
             await LogAsync($"LOCK_SUBMIT: 锁定结果 = {result}");
 
             if (result != OperationResult.Accepted)
             {
-                Pause($"LOCK_SUBMIT: 锁定失败: {result}");
-                return false;
+                return CreateFailedResult(book, $"锁定失败: {result}");
             }
 
             SetState(State.LOCK_WAIT);
@@ -519,26 +549,114 @@ namespace WPELibrary.Lib.PetSkillBook
                 _context.PetState.StateVersion, _preset.TimeoutMs, cancellationToken);
             if (!refreshOk)
             {
-                Pause("LOCK_WAIT: 状态刷新超时");
-                return false;
+                return CreateFailedResult(book, "状态刷新超时");
             }
 
             SetState(State.LOCK_VERIFY);
 
             // 重新读状态并确认目标槽位 IsLocked==true
             var newPetState = await _readOnlyAdapter.ReadPetStateAsync(cancellationToken);
-            var slot = newPetState.SkillSlots.FirstOrDefault(s => s.SlotIndex == slotIndex);
+            var slot = newPetState?.SkillSlots?.FirstOrDefault(s => s.SlotIndex == slotIndex);
 
             if (slot == null || !slot.IsLocked)
             {
-                Pause("LOCK_VERIFY: 锁定未生效");
-                return false;
+                return CreateFailedResult(book, "锁定未生效");
             }
 
             _context.PetState = newPetState;
             _previousPetState = DeepCopyPetState(newPetState);
 
             await LogAsync($"LOCK_VERIFY: 锁定成功");
+            var success = CreateSuccessResult(book, slotIndex);
+            success.StateVersionBefore = beforeLockState?.StateVersion.ToString() ?? "0";
+            success.StateVersionAfter = newPetState.StateVersion.ToString();
+            return success;
+        }
+
+        private async Task<bool> VerifySkillDiffAsync(SkillBookEntry book, int slotIndex, PetStateSnapshot prevState, PetStateSnapshot newState, CancellationToken cancellationToken)
+        {
+            SetState(State.SKILL_DIFF);
+            await LogAsync("SKILL_DIFF: 识别变化技能格");
+
+            var expectedSkillId = book.SkillId;
+
+            // 检查宠物 ID、槽位集合和开放槽位总数未被替换。
+            if (prevState == null || newState == null ||
+                newState.PetId != _context.CurrentPetId ||
+                prevState.PetId != _context.CurrentPetId ||
+                prevState.OpenSlotCount != newState.OpenSlotCount ||
+                prevState.MaxSlotCount != newState.MaxSlotCount ||
+                prevState.SkillSlots == null || newState.SkillSlots == null ||
+                prevState.SkillSlots.Count != newState.SkillSlots.Count)
+            {
+                await LogAsync("SKILL_DIFF: 宠物或技能格集合发生异常变化");
+                return false;
+            }
+
+            // 目标槽位只能从开放、未锁定、空槽变成目标技能，不能覆盖已有技能。
+            var prevTargetSlot = prevState.SkillSlots.FirstOrDefault(s => s.SlotIndex == slotIndex);
+            if (prevTargetSlot == null || !prevTargetSlot.IsOpen || prevTargetSlot.IsLocked || prevTargetSlot.SkillId != 0)
+            {
+                await LogAsync("SKILL_DIFF: 目标槽位变化前不是开放、未锁定的空槽");
+                return false;
+            }
+
+            // 检查目标槽位现在是期望的技能且开放
+            var newTargetSlot = newState.SkillSlots.FirstOrDefault(s => s.SlotIndex == slotIndex);
+            if (newTargetSlot == null ||
+                !newTargetSlot.IsOpen ||
+                newTargetSlot.IsLocked ||
+                newTargetSlot.SkillId != expectedSkillId)
+            {
+                await LogAsync($"SKILL_DIFF: 目标槽位变化后不符合期望：期望 SkillId={expectedSkillId}, 实际 IsOpen={newTargetSlot?.IsOpen}, IsLocked={newTargetSlot?.IsLocked}, SkillId={newTargetSlot?.SkillId}");
+                return false;
+            }
+
+            var previousBySlot = prevState.SkillSlots.ToDictionary(s => s.SlotIndex);
+            var currentBySlot = newState.SkillSlots.ToDictionary(s => s.SlotIndex);
+            if (previousBySlot.Count != prevState.SkillSlots.Count ||
+                currentBySlot.Count != newState.SkillSlots.Count ||
+                previousBySlot.Count != currentBySlot.Count)
+            {
+                await LogAsync("SKILL_DIFF: 技能格索引集合发生变化");
+                return false;
+            }
+
+            int changedSlotCount = 0;
+            int changedSlotIndex = -1;
+            foreach (var previous in previousBySlot)
+            {
+                PetSkillSlotSnapshot current;
+                if (!currentBySlot.TryGetValue(previous.Key, out current))
+                {
+                    await LogAsync($"SKILL_DIFF: 技能格 {previous.Key} 丢失");
+                    return false;
+                }
+
+                var previousSlot = previous.Value;
+                bool changed = previousSlot.IsOpen != current.IsOpen ||
+                               previousSlot.IsLocked != current.IsLocked ||
+                               previousSlot.SkillId != current.SkillId;
+                if (changed)
+                {
+                    changedSlotCount++;
+                    changedSlotIndex = previous.Key;
+                    if (previous.Key != slotIndex)
+                    {
+                        await LogAsync($"SKILL_DIFF: 其他技能格 {previous.Key} 被覆盖或发生变化");
+                        return false;
+                    }
+                }
+            }
+
+            if (changedSlotCount != 1 || changedSlotIndex != slotIndex)
+            {
+                await LogAsync($"SKILL_DIFF: 变化技能格数量不符合要求: {changedSlotCount}");
+                return false;
+            }
+
+            _changedSlotIndex = changedSlotIndex;
+            await LogAsync($"SKILL_DIFF: 变化槽位 {slotIndex}, SkillId: {expectedSkillId}");
             return true;
         }
 
@@ -566,6 +684,21 @@ namespace WPELibrary.Lib.PetSkillBook
         {
             _currentState = newState;
             OnStateChanged?.Invoke(newState);
+        }
+
+        private async Task FailRunAsync(string reason)
+        {
+            if (_context.RunStatus.IsCancelled)
+            {
+                return;
+            }
+
+            _context.RunStatus.IsFailed = true;
+            _context.RunStatus.FailureReason = reason ?? string.Empty;
+            _context.RunStatus.CompletedAt = DateTime.UtcNow;
+            _context.IsPaused = false;
+            _context.PauseReason = string.Empty;
+            await LogAsync($"执行失败: {reason}");
         }
 
         private async Task LogAsync(string message)

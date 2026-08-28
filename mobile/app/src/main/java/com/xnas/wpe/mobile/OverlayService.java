@@ -27,6 +27,7 @@ import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.view.animation.PathInterpolator;
 import android.widget.Button;
@@ -107,6 +108,12 @@ public final class OverlayService extends Service {
     private final Map<String, Button> moduleButtons = new HashMap<>();
     private final Map<String, Boolean> expandedGroups = new HashMap<>();
     private boolean panelUpdating;
+    private WindowManager.LayoutParams collapsedParams;
+    private float dragStartRawX;
+    private float dragStartRawY;
+    private int dragStartX;
+    private int dragStartY;
+    private boolean dragging;
 
     private enum BallState {
         NORMAL, RUNNING, PAUSED
@@ -366,13 +373,87 @@ public final class OverlayService extends Service {
         collapsedView = new FloatingBallView(this);
         collapsedView.setContentDescription("展开 " + getString(R.string.app_name) + " 悬浮控制");
         collapsedView.setOnClickListener(v -> expandPanel());
-        installPressFeedback(collapsedView);
+        installDragFeedback(collapsedView);
         try {
-            windowManager.addView(collapsedView, overlayParams(dp(58), dp(58)));
+            collapsedParams = ballLayoutParams();
+            windowManager.addView(collapsedView, collapsedParams);
         } catch (RuntimeException ex) {
             collapsedView = null;
+            collapsedParams = null;
             stopSelf();
         }
+    }
+
+    /**
+     * Lets the collapsed ball be dragged to any screen position.  A simple
+     * tap still expands the panel; a drag past the touch slop moves the ball
+     * and remembers the new position.
+     */
+    private void installDragFeedback(View view) {
+        view.setOnTouchListener((dragged, event) -> {
+            int action = event.getActionMasked();
+            switch (action) {
+                case MotionEvent.ACTION_DOWN:
+                    dragged.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                    dragged.animate().cancel();
+                    dragged.animate().scaleX(0.97f).scaleY(0.97f)
+                            .setDuration(90L)
+                            .setInterpolator(UI_EASE_OUT)
+                            .start();
+                    dragStartRawX = event.getRawX();
+                    dragStartRawY = event.getRawY();
+                    dragStartX = collapsedParams == null ? 0 : collapsedParams.x;
+                    dragStartY = collapsedParams == null ? 0 : collapsedParams.y;
+                    dragging = false;
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    float dx = event.getRawX() - dragStartRawX;
+                    float dy = event.getRawY() - dragStartRawY;
+                    if (!dragging) {
+                        int slop = ViewConfiguration.get(this).getScaledTouchSlop();
+                        if (Math.abs(dx) > slop || Math.abs(dy) > slop) {
+                            dragging = true;
+                        }
+                    }
+                    if (dragging && collapsedParams != null) {
+                        int width = collapsedParams.width;
+                        int height = collapsedParams.height;
+                        collapsedParams.x = clamp(dragStartX + Math.round(dx),
+                                0, Math.max(0, displayWidth() - width));
+                        collapsedParams.y = clamp(dragStartY + Math.round(dy),
+                                0, Math.max(0, displayHeight() - height));
+                        try {
+                            windowManager.updateViewLayout(dragged, collapsedParams);
+                        } catch (RuntimeException ignored) {
+                            // Permission can be revoked mid-gesture.
+                        }
+                    }
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    dragged.animate().cancel();
+                    dragged.animate().scaleX(1f).scaleY(1f)
+                            .setDuration(140L)
+                            .setInterpolator(UI_EASE_OUT)
+                            .start();
+                    if (!dragging) {
+                        dragged.performClick();
+                    } else if (collapsedParams != null) {
+                        new SyncStore(this).saveBallPosition(collapsedParams.x, collapsedParams.y);
+                    }
+                    dragging = false;
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    dragged.animate().cancel();
+                    dragged.animate().scaleX(1f).scaleY(1f)
+                            .setDuration(140L)
+                            .setInterpolator(UI_EASE_OUT)
+                            .start();
+                    dragging = false;
+                    return true;
+                default:
+                    return false;
+            }
+        });
     }
 
     private void expandPanel() {
@@ -383,7 +464,7 @@ public final class OverlayService extends Service {
         collapsedView = null;
         panelView = buildPanelView();
         try {
-            windowManager.addView(panelView, overlayParams(dp(338), overlayPanelHeight()));
+            windowManager.addView(panelView, panelLayoutParams(dp(338), overlayPanelHeight()));
             panelView.setAlpha(0f);
             panelView.setScaleX(0.97f);
             panelView.setScaleY(0.97f);
@@ -979,7 +1060,7 @@ public final class OverlayService extends Service {
         }
     }
 
-    private WindowManager.LayoutParams overlayParams(int width, int height) {
+    private WindowManager.LayoutParams baseOverlayParams(int width, int height) {
         int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY : WindowManager.LayoutParams.TYPE_PHONE;
         int flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -988,9 +1069,57 @@ public final class OverlayService extends Service {
                 | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH;
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                 width, height, type, flags, PixelFormat.TRANSLUCENT);
-        params.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
-        params.x = dp(9);
         return params;
+    }
+
+    private WindowManager.LayoutParams ballLayoutParams() {
+        int width = dp(58);
+        int height = dp(58);
+        WindowManager.LayoutParams params = baseOverlayParams(width, height);
+        params.gravity = Gravity.TOP | Gravity.START;
+        // Preserve the historical right-edge, vertically centred default so an
+        // unchanged install still looks the same on first launch.
+        params.x = Math.max(dp(8), displayWidth() - width - dp(9));
+        params.y = overlayBallY();
+        SyncStore store = new SyncStore(this);
+        int savedX = store.ballPosX();
+        int savedY = store.ballPosY();
+        if (savedX >= 0 && savedY >= 0) {
+            params.x = clamp(savedX, 0, Math.max(0, displayWidth() - width));
+            params.y = clamp(savedY, 0, Math.max(0, displayHeight() - height));
+        }
+        return params;
+    }
+
+    private WindowManager.LayoutParams panelLayoutParams(int width, int height) {
+        WindowManager.LayoutParams params = baseOverlayParams(width, height);
+        params.gravity = Gravity.TOP | Gravity.START;
+        int screenWidth = displayWidth();
+        int screenHeight = displayHeight();
+        // Anchor the panel to the ball's current position, keeping it within
+        // the safe screen area so a dragged ball never results in an
+        // unreachable panel.
+        int ballX = collapsedParams == null ? screenWidth - width - dp(9) : collapsedParams.x;
+        int ballY = collapsedParams == null ? overlayBallY() : collapsedParams.y;
+        params.x = clamp(ballX - dp(4), dp(8), Math.max(dp(8), screenWidth - width - dp(8)));
+        params.y = clamp(ballY - dp(4), dp(8), Math.max(dp(8), screenHeight - height - dp(8)));
+        return params;
+    }
+
+    private int overlayBallY() {
+        return Math.max(dp(8), (displayHeight() - dp(58)) / 2);
+    }
+
+    private int displayWidth() {
+        return getResources().getDisplayMetrics().widthPixels;
+    }
+
+    private int displayHeight() {
+        return getResources().getDisplayMetrics().heightPixels;
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private int overlayPanelHeight() {

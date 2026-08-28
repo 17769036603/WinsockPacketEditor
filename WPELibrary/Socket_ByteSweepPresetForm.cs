@@ -15,6 +15,8 @@ namespace WPELibrary
 
         public Socket_ByteSweepPresetInfo Result { get; private set; }
         public bool EditDetailsRequested { get; private set; }
+        public bool OverwriteConfirmed { get; private set; }
+        public Guid? OverwriteTargetId { get; private set; }
 
         public Socket_ByteSweepPresetForm(Socket_ByteSweepPresetInfo preset)
             : this(preset, false)
@@ -161,15 +163,26 @@ namespace WPELibrary
                 return false;
             }
 
-            bool duplicate = Socket_Cache.ByteSweepList.lstPresets.Any(item =>
-                (this.source == null || item.BID != this.source.BID) &&
-                string.Equals(item.BFolder, folder, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(item.BName, name, StringComparison.OrdinalIgnoreCase));
-            if (duplicate)
+            Socket_ByteSweepPresetInfo conflicting =
+                Socket_Cache.ByteSweepList.lstPresets.FirstOrDefault(item =>
+                    (this.source == null || item.BID != this.source.BID) &&
+                    string.Equals(item.BFolder, folder, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(item.BName, name, StringComparison.OrdinalIgnoreCase));
+            if (conflicting != null)
             {
-                MessageBox.Show(this, ResourceText("ByteSweep_Duplicate"), ResourceText("ByteSweep_MessageTitle"),
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return false;
+                DialogResult result = MessageBox.Show(
+                    this,
+                    ResourceText("ByteSweep_DuplicateOverwrite"),
+                    ResourceText("ByteSweep_MessageTitle"),
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+                if (result != DialogResult.Yes)
+                {
+                    return false;
+                }
+
+                this.OverwriteConfirmed = true;
+                this.OverwriteTargetId = conflicting.BID;
             }
 
             this.Result = this.source == null

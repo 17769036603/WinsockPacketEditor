@@ -16,10 +16,12 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using WPELibrary.Lib.MountSpeed;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml.Linq;
 using Be.Windows.Forms;
+using WPELibrary.Lib.EquipmentRefine;
 using WPELibrary.Lib.PetSkillBook;
 using WPELibrary.Lib.Vision;
 
@@ -98,6 +100,9 @@ namespace WPELibrary.Lib
             public static Action<Action> InvokeAction { get; set; }
             public static bool SystemListLoadCompleted { get; internal set; }
             public static bool SystemListLoadFailed { get; internal set; }
+
+            public static PetSkillBook.SkillUpgradePreset CurrentSkillUpgradePreset { get; set; }
+            public static int CurrentSkillUpgradeTaskIndex { get; set; } = -1;
 
             #region//结构定义
 
@@ -6548,18 +6553,45 @@ namespace WPELibrary.Lib
                 try
                 {
                     Socket_Operation.CountSocketInfo(ptPacketType, bBuffByte.Length);
-
-                    if (!Socket_Cache.SocketPacket.SpeedMode)
+                    // A preset always sends through an outbound route. Keep
+                    // the high-speed path from querying every received packet
+                    // while still retaining every outbound route and protocol
+                    // frame needed after capture stops.
+                    if (Socket_Cache.SocketPacket.SpeedMode &&
+                        !IsOutboundPacketType(ptPacketType))
                     {
-                        string sPacketIP = Socket_Operation.GetIPString_BySocketAddr(iSocket, sAddr, ptPacketType);
+                        return;
+                    }
 
-                        if (!string.IsNullOrEmpty(sPacketIP) && sPacketIP.Contains("|"))
+                    string sPacketIP = Socket_Operation.GetIPString_BySocketAddr(
+                        iSocket,
+                        sAddr,
+                        ptPacketType);
+                    if (!string.IsNullOrEmpty(sPacketIP) && sPacketIP.Contains("|"))
+                    {
+                        string[] ipParts = sPacketIP.Split('|');
+                        string sIPFrom = ipParts[0];
+                        string sIPTo = ipParts[1];
+                        Socket_PacketInfo spi = new Socket_PacketInfo(
+                            PacketTime,
+                            iSocket,
+                            ptPacketType,
+                            sIPFrom,
+                            sIPTo,
+                            bRawBuff,
+                            bBuffByte,
+                            bBuffByte.Length,
+                            pAction);
+
+                        // Session route and protocol evidence must be observed
+                        // before SpeedMode decides whether this packet enters
+                        // the bounded UI queue. The UI list is only a display
+                        // buffer and may be bypassed or auto-cleared.
+                        SocketList.ObserveCurrentSocketRouteEvidence(spi);
+                        TreasurePacketRuntime.ObserveCapturedPacket(spi);
+                        SocketList.ObserveMountRefineA050Evidence(spi);
+                        if (!Socket_Cache.SocketPacket.SpeedMode)
                         {
-                            string[] ipParts = sPacketIP.Split('|');
-                            string sIPFrom = ipParts[0];
-                            string sIPTo = ipParts[1];                            
-
-                            Socket_PacketInfo spi = new Socket_PacketInfo(PacketTime, iSocket, ptPacketType, sIPFrom, sIPTo, bRawBuff, bBuffByte, bBuffByte.Length, pAction);
                             lock (QueueSync)
                             {
                                 while (qSocket_PacketInfo.Count >= MaxQueueCount &&
@@ -6602,6 +6634,23 @@ namespace WPELibrary.Lib
                 }
             }
 
+            private static bool IsOutboundPacketType(
+                Socket_Cache.SocketPacket.PacketType packetType)
+            {
+                switch (packetType)
+                {
+                    case Socket_Cache.SocketPacket.PacketType.WS1_Send:
+                    case Socket_Cache.SocketPacket.PacketType.WS2_Send:
+                    case Socket_Cache.SocketPacket.PacketType.WS1_SendTo:
+                    case Socket_Cache.SocketPacket.PacketType.WS2_SendTo:
+                    case Socket_Cache.SocketPacket.PacketType.WSASend:
+                    case Socket_Cache.SocketPacket.PacketType.WSASendTo:
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+
             #endregion
         }
 
@@ -6620,6 +6669,15 @@ namespace WPELibrary.Lib
             public static Socket_PacketInfo spiSelect;
             public static BindingList<Socket_PacketInfo> lstRecPacket = new BindingList<Socket_PacketInfo>();
             private static DateTime captureSessionStartedAt = DateTime.MinValue;
+            private static int captureSessionActive;
+            private const int CaptureSessionRouteEvidenceLimit = 256;
+            private const int MountRefineA050EvidenceLimit = 64;
+            private static readonly object captureSessionRouteEvidenceSync = new object();
+            private static readonly object mountRefineA050EvidenceSync = new object();
+            private static readonly List<Socket_PacketInfo> captureSessionRouteEvidence =
+                new List<Socket_PacketInfo>();
+            private static readonly List<Socket_PacketInfo> mountRefineA050Evidence =
+                new List<Socket_PacketInfo>();
 
             public enum CurrentSocketRouteStatus
             {
@@ -6738,9 +6796,211 @@ namespace WPELibrary.Lib
                 get { return captureSessionStartedAt; }
             }
 
+            public static bool CaptureSessionActive
+            {
+                get { return Volatile.Read(ref captureSessionActive) == 1; }
+            }
+
             public static void BeginCaptureSession()
             {
+                Interlocked.Exchange(ref captureSessionActive, 0);
                 captureSessionStartedAt = DateTime.Now;
+                lock (captureSessionRouteEvidenceSync)
+                {
+                    captureSessionRouteEvidence.Clear();
+                }
+                lock (mountRefineA050EvidenceSync)
+                {
+                    mountRefineA050Evidence.Clear();
+                }
+                Interlocked.Exchange(ref captureSessionActive, 1);
+            }
+
+            /// <summary>
+            /// Stops recording new packets while preserving the current
+            /// injection-session route for preset sends. A later capture start
+            /// creates a new session and clears the retained evidence.
+            /// </summary>
+            public static void StopCaptureSessionPreservingRoutes()
+            {
+                Interlocked.Exchange(ref captureSessionActive, 0);
+            }
+
+            /// <summary>
+            /// Returns lightweight route metadata retained for the current
+            /// injection session. Packet bytes are intentionally not retained;
+            /// this cache only keeps a live Socket/type/from/to route after the
+            /// bounded display list is cleared or capture is stopped.
+            /// </summary>
+            public static List<Socket_PacketInfo> CaptureCurrentSocketRouteEvidence()
+            {
+                lock (captureSessionRouteEvidenceSync)
+                {
+                    return captureSessionRouteEvidence
+                        .Select(CloneCurrentSocketRouteEvidence)
+                        .Where(item => item != null)
+                        .ToList();
+                }
+            }
+
+            internal static void ObserveCurrentSocketRouteEvidence(Socket_PacketInfo packet)
+            {
+                if (packet == null ||
+                    !CaptureSessionActive ||
+                    captureSessionStartedAt == DateTime.MinValue ||
+                    packet.PacketTime < captureSessionStartedAt ||
+                    packet.PacketSocket <= 0 ||
+                    string.IsNullOrWhiteSpace(packet.PacketFrom) ||
+                    string.IsNullOrWhiteSpace(packet.PacketTo))
+                {
+                    return;
+                }
+
+                Socket_PacketInfo snapshot = CloneCurrentSocketRouteEvidence(packet);
+                if (snapshot == null)
+                {
+                    return;
+                }
+
+                lock (captureSessionRouteEvidenceSync)
+                {
+                    for (int index = 0; index < captureSessionRouteEvidence.Count; index++)
+                    {
+                        Socket_PacketInfo existing = captureSessionRouteEvidence[index];
+                        if (existing == null ||
+                            existing.PacketSocket != snapshot.PacketSocket ||
+                            existing.PacketType != snapshot.PacketType ||
+                            !string.Equals(
+                                existing.PacketFrom,
+                                snapshot.PacketFrom,
+                                StringComparison.OrdinalIgnoreCase) ||
+                            !string.Equals(
+                                existing.PacketTo,
+                                snapshot.PacketTo,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        if (snapshot.PacketTime >= existing.PacketTime)
+                        {
+                            captureSessionRouteEvidence[index] = snapshot;
+                        }
+                        return;
+                    }
+
+                    captureSessionRouteEvidence.Add(snapshot);
+                    while (captureSessionRouteEvidence.Count > CaptureSessionRouteEvidenceLimit)
+                    {
+                        captureSessionRouteEvidence.RemoveAt(0);
+                    }
+                }
+            }
+
+            /// <summary>
+            /// Returns validated outbound A050 evidence retained for the current
+            /// injection session. This buffer is deliberately independent from
+            /// the bounded UI list, which may auto-clear while the Android
+            /// mount snapshot preflight is still running.
+            /// </summary>
+            public static List<Socket_PacketInfo> CaptureMountRefineA050Evidence()
+            {
+                lock (mountRefineA050EvidenceSync)
+                {
+                    return mountRefineA050Evidence
+                        .Select(CloneMountRefineA050Evidence)
+                        .Where(item => item != null)
+                        .ToList();
+                }
+            }
+
+            internal static void ObserveMountRefineA050Evidence(Socket_PacketInfo packet)
+            {
+                if (packet == null ||
+                    !CaptureSessionActive ||
+                    captureSessionStartedAt == DateTime.MinValue ||
+                    packet.PacketTime < captureSessionStartedAt ||
+                    !MountRefineA050RouteTemplate.IsSendPacketType(packet.PacketType))
+                {
+                    return;
+                }
+
+                MountRefineA050PacketTemplate packetTemplate;
+                MountRefineA050RouteTemplate routeTemplate;
+                string validationError;
+                if (!MountRefineA050PacketTemplate.TryCreate(
+                        packet.PacketBuffer,
+                        "current-injection-session",
+                        out packetTemplate,
+                        out validationError) ||
+                    !MountRefineA050RouteTemplate.TryCreate(
+                        packet,
+                        out routeTemplate,
+                        out validationError) ||
+                    packetTemplate == null ||
+                    routeTemplate == null)
+                {
+                    return;
+                }
+
+                Socket_PacketInfo snapshot = CloneMountRefineA050Evidence(packet);
+                if (snapshot == null)
+                {
+                    return;
+                }
+
+                lock (mountRefineA050EvidenceSync)
+                {
+                    mountRefineA050Evidence.Add(snapshot);
+                    while (mountRefineA050Evidence.Count > MountRefineA050EvidenceLimit)
+                    {
+                        mountRefineA050Evidence.RemoveAt(0);
+                    }
+                }
+            }
+
+            private static Socket_PacketInfo CloneMountRefineA050Evidence(
+                Socket_PacketInfo packet)
+            {
+                if (packet == null)
+                {
+                    return null;
+                }
+
+                return new Socket_PacketInfo
+                {
+                    PacketTime = packet.PacketTime,
+                    PacketSocket = packet.PacketSocket,
+                    PacketType = packet.PacketType,
+                    PacketFrom = packet.PacketFrom ?? string.Empty,
+                    PacketTo = packet.PacketTo ?? string.Empty,
+                    RawBuffer = packet.RawBuffer == null
+                        ? null
+                        : (byte[])packet.RawBuffer.Clone(),
+                    PacketBuffer = packet.PacketBuffer == null
+                        ? null
+                        : (byte[])packet.PacketBuffer.Clone(),
+                    PacketLen = packet.PacketLen,
+                    FilterAction = packet.FilterAction
+                };
+            }
+
+            private static Socket_PacketInfo CloneCurrentSocketRouteEvidence(
+                Socket_PacketInfo packet)
+            {
+                if (packet == null)
+                {
+                    return null;
+                }
+
+                return new Socket_PacketInfo
+                {
+                    PacketTime = packet.PacketTime,
+                    PacketSocket = packet.PacketSocket,
+                    PacketType = packet.PacketType,
+                    PacketFrom = packet.PacketFrom ?? string.Empty,
+                    PacketTo = packet.PacketTo ?? string.Empty
+                };
             }
 
             public static int FindLatestMatchingSocket(
@@ -6807,17 +7067,10 @@ namespace WPELibrary.Lib
                 Action resolve = () =>
                 {
                     matchedSocket = FindLatestMatchingSocket(
-                        Socket_Cache.SocketList.lstRecPacket,
+                        CaptureCurrentPackets(),
                         templates);
                 };
-                if (Socket_Cache.System.InvokeAction != null)
-                {
-                    Socket_Cache.System.InvokeAction(resolve);
-                }
-                else
-                {
-                    resolve();
-                }
+                resolve();
 
                 return Socket_Cache.System.ResolveSystemSocket(matchedSocket);
             }
@@ -6951,6 +7204,9 @@ namespace WPELibrary.Lib
                 {
                     Socket_Operation.DoLog(nameof(CaptureCurrentPackets), ex.Message);
                 }
+
+                capturedPackets.AddRange(CaptureCurrentSocketRouteEvidence());
+                capturedPackets.AddRange(CaptureMountRefineA050Evidence());
 
                 return capturedPackets;
             }
@@ -10337,6 +10593,12 @@ namespace WPELibrary.Lib
             public const string VisionInstructionContentPrefix = "VisionStep|";
             public const string TreasureMapPresetName = "自动藏宝图";
             public const string SummonedPetSkillBookPresetName = "召唤兽技能";
+            public static string LastStartFailureReason { get; private set; } = string.Empty;
+            public const string MountSpeedPresetName = "坐骑速度";
+            public const string FirstRideRefinePresetName = "一坐骑洗炼";
+            public const string FiveElementUpgradePresetName = "五行升级";
+            public const string SkillUpgradePresetName = "法术升级";
+            public const string EquipmentRefinePresetName = "装备炼化";
 
             #region//结构定义
 
@@ -10367,7 +10629,7 @@ namespace WPELibrary.Lib
 
             public enum InstructionType
             {
-                SendSendList = 0,                
+                SendSendList = 0,
                 Delay = 1,
                 LoopStart = 2,
                 LoopEnd = 3,
@@ -10378,6 +10640,10 @@ namespace WPELibrary.Lib
                 VisionWait = 8,
                 TreasureMap = 9,
                 SummonedPetSkillBook = 10,
+                MountSpeed = 11,
+                FiveElementUpgrade = 12,
+                SkillUpgrade = 13,
+                EquipmentRefine = 14,
             }
 
             #endregion
@@ -10443,6 +10709,12 @@ namespace WPELibrary.Lib
                 return true;
             }
 
+            /// <summary>
+            /// 确保存在内置"召唤兽技能"预设。
+            /// 内置预设默认禁用（IsEnable=false），使用新的 15 步 V2 模板。
+            /// 支持旧模板（V1, 16 步）自动迁移到新模板（V2, 15 步）。
+            /// 不覆盖非空用户自定义预设。
+            /// </summary>
             public static bool EnsureBuiltInSummonedPetSkillBookPreset()
             {
                 Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot
@@ -10455,7 +10727,91 @@ namespace WPELibrary.Lib
                 {
                     if (robot.RInstruction == null || robot.RInstruction.Rows.Count == 0)
                     {
+                        // 无指令，创建新的 15 步 V2 模板
                         robot.RInstruction = CreateSummonedPetSkillBookPresetInstructions();
+                        return true;
+                    }
+
+                    // 检查是否为旧的 V1 模板（16 步，包含 CHECK_MATERIALS）
+                    if (robot.RInstruction.Rows.Count == 16 &&
+                        IsSummonedPetSkillBookV1Template(robot.RInstruction))
+                    {
+                        // 迁移到新的 V2 模板（15 步，移除 CHECK_MATERIALS）
+                        robot.RInstruction = CreateSummonedPetSkillBookPresetInstructions();
+                        return true;
+                    }
+
+                    // 已存在的非空预设（可能是用户自定义），不覆盖
+                    return false;
+                }
+
+                // 创建新的内置预设，默认禁用（IsEnable=false）
+                Guid presetId = Guid.NewGuid();
+                AddRobot(
+                    false,
+                    presetId,
+                    SummonedPetSkillBookPresetName,
+                    CreateSummonedPetSkillBookPresetInstructions(),
+                    "常用",
+                    false);
+                return Socket_Cache.RobotList.lstRobot.Any(item =>
+                    item != null && item.RID == presetId);
+            }
+
+            /// <summary>
+            /// 检查指令表是否为旧的 V1 模板（16 步，包含 CHECK_MATERIALS）。
+            /// 使用模板匹配确保只有完全匹配的旧模板才会被迁移，避免覆盖用户自定义预设。
+            /// </summary>
+            private static bool IsSummonedPetSkillBookV1Template(DataTable dtInstruction)
+            {
+                if (dtInstruction == null || dtInstruction.Rows.Count != 16)
+                {
+                    return false;
+                }
+
+                // 提取所有 SummonedPetSkillBook 指令的内容
+                var contents = new List<string>();
+                foreach (DataRow row in dtInstruction.Rows)
+                {
+                    if ((int)row["Type"] != (int)Socket_Cache.Robot.InstructionType.SummonedPetSkillBook)
+                    {
+                        // 包含其他类型的指令，不是纯粹的构建内置预设
+                        return false;
+                    }
+                    contents.Add(row["Content"].ToString());
+                }
+
+                // 使用模板匹配检查是否匹配 V1 模板
+                return SummonedPetSkillBookPresetPlan.MatchesTemplateVersion(contents, 1);
+            }
+
+            public static DataTable CreateMountSpeedPresetInstructions()
+            {
+                DataTable instructions = Socket_Cache.Robot.InitInstructions();
+                foreach (MountSpeed.MountSpeedPresetStep step in
+                    MountSpeed.MountSpeedPresetPlan.GetSteps())
+                {
+                    DataRow row = instructions.NewRow();
+                    row["Type"] = Socket_Cache.Robot.InstructionType.MountSpeed;
+                    row["Content"] = MountSpeed.MountSpeedPresetPlan.EncodeStep(step);
+                    instructions.Rows.Add(row);
+                }
+                return instructions;
+            }
+
+            public static bool EnsureBuiltInMountSpeedPreset()
+            {
+                Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot
+                    .FirstOrDefault(item => item != null &&
+                        string.Equals(
+                            (item.RName ?? string.Empty).Trim(),
+                            MountSpeedPresetName,
+                            StringComparison.Ordinal));
+                if (robot != null)
+                {
+                    if (robot.RInstruction == null || robot.RInstruction.Rows.Count == 0)
+                    {
+                        robot.RInstruction = CreateMountSpeedPresetInstructions();
                         return true;
                     }
                     return false;
@@ -10465,8 +10821,325 @@ namespace WPELibrary.Lib
                 AddRobot(
                     false,
                     presetId,
-                    SummonedPetSkillBookPresetName,
-                    CreateSummonedPetSkillBookPresetInstructions(),
+                    MountSpeedPresetName,
+                    CreateMountSpeedPresetInstructions(),
+                    "常用",
+                    false);
+                return Socket_Cache.RobotList.lstRobot.Any(item =>
+                    item != null && item.RID == presetId);
+            }
+
+            private static bool HasMountSpeedInstruction(DataTable instructions)
+            {
+                return instructions != null && instructions.Rows.Cast<DataRow>().Any(row =>
+                    row != null &&
+                    row["Type"] != null &&
+                    row["Type"] != DBNull.Value &&
+                    Convert.ToInt32(row["Type"]) ==
+                        (int)Socket_Cache.Robot.InstructionType.MountSpeed);
+            }
+
+            private static bool IsOnlyMountSpeedInstructions(DataTable instructions)
+            {
+                return instructions != null &&
+                    instructions.Rows.Count > 0 &&
+                    instructions.Rows.Cast<DataRow>().All(row =>
+                        row != null &&
+                        row["Type"] != null &&
+                        row["Type"] != DBNull.Value &&
+                        Convert.ToInt32(row["Type"]) ==
+                            (int)Socket_Cache.Robot.InstructionType.MountSpeed);
+            }
+
+            private static bool IsCompleteMountSpeedInstructionPlan(DataTable instructions)
+            {
+                List<MountSpeed.MountSpeedPresetStep> steps =
+                    MountSpeed.MountSpeedPresetPlan.GetSteps();
+                if (instructions == null || instructions.Rows.Count != steps.Count)
+                {
+                    return false;
+                }
+
+                for (int index = 0; index < steps.Count; index++)
+                {
+                    DataRow row = instructions.Rows[index];
+                    if (row == null ||
+                        row["Type"] == null ||
+                        row["Type"] == DBNull.Value ||
+                        Convert.ToInt32(row["Type"]) !=
+                            (int)Socket_Cache.Robot.InstructionType.MountSpeed)
+                    {
+                        return false;
+                    }
+
+                    MountSpeed.MountSpeedPresetStep decodedStep;
+                    if (!MountSpeed.MountSpeedPresetPlan.TryDecodeStep(
+                            row["Content"] == null || row["Content"] == DBNull.Value
+                                ? string.Empty
+                                : row["Content"].ToString(),
+                            out decodedStep) ||
+                        decodedStep.Index != steps[index].Index ||
+                        !string.Equals(
+                            decodedStep.State,
+                            steps[index].State,
+                            StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            private static DataTable AppendMountSpeedPresetInstructions(
+                DataTable instructions)
+            {
+                DataTable merged = instructions == null
+                    ? Socket_Cache.Robot.InitInstructions()
+                    : instructions.Copy();
+                DataTable mountInstructions = CreateMountSpeedPresetInstructions();
+                foreach (DataRow sourceRow in mountInstructions.Rows)
+                {
+                    DataRow row = merged.NewRow();
+                    row["Type"] = sourceRow["Type"];
+                    row["Content"] = sourceRow["Content"];
+                    merged.Rows.Add(row);
+                }
+                return merged;
+            }
+
+            /// <summary>
+            /// 将旧“坐骑速度”完整步骤迁移到“一坐骑洗炼”。
+            /// 旧记录保留作为回退，不覆盖一坐骑中已有的非空自定义步骤；
+            /// 一坐骑始终补齐坐骑流程和固定目标，确保启动入口可直接执行。
+            /// </summary>
+            public static bool EnsureBuiltInFirstRideRefinePreset()
+            {
+                Socket_RobotInfo firstRide = Socket_Cache.RobotList.lstRobot
+                    .FirstOrDefault(item => item != null &&
+                        string.Equals(
+                            (item.RName ?? string.Empty).Trim(),
+                            FirstRideRefinePresetName,
+                            StringComparison.Ordinal));
+                Socket_RobotInfo legacyMountSpeed = Socket_Cache.RobotList.lstRobot
+                    .FirstOrDefault(item => item != null &&
+                        string.Equals(
+                            (item.RName ?? string.Empty).Trim(),
+                            MountSpeedPresetName,
+                            StringComparison.Ordinal));
+                bool changed = false;
+
+                if (firstRide == null)
+                {
+                    DataTable instructions = legacyMountSpeed != null &&
+                        IsCompleteMountSpeedInstructionPlan(legacyMountSpeed.RInstruction)
+                        ? legacyMountSpeed.RInstruction.Copy()
+                        : CreateMountSpeedPresetInstructions();
+                    Guid presetId = Guid.NewGuid();
+                    AddRobot(
+                        legacyMountSpeed != null && legacyMountSpeed.IsEnable,
+                        presetId,
+                        FirstRideRefinePresetName,
+                        instructions,
+                        legacyMountSpeed == null || string.IsNullOrWhiteSpace(legacyMountSpeed.RFolder)
+                            ? "常用"
+                            : legacyMountSpeed.RFolder,
+                        legacyMountSpeed != null && legacyMountSpeed.TreasureLiveSendAuthorized);
+                    firstRide = Socket_Cache.RobotList.lstRobot
+                        .FirstOrDefault(item => item != null && item.RID == presetId);
+                    changed = firstRide != null;
+                }
+
+                if (firstRide == null)
+                {
+                    return changed;
+                }
+
+                if (!HasMountSpeedInstruction(firstRide.RInstruction))
+                {
+                    if (firstRide.RInstruction == null ||
+                        firstRide.RInstruction.Rows.Count == 0)
+                    {
+                        firstRide.RInstruction = legacyMountSpeed != null &&
+                            IsCompleteMountSpeedInstructionPlan(legacyMountSpeed.RInstruction)
+                            ? legacyMountSpeed.RInstruction.Copy()
+                            : CreateMountSpeedPresetInstructions();
+                    }
+                    else
+                    {
+                        firstRide.RInstruction = AppendMountSpeedPresetInstructions(
+                            firstRide.RInstruction);
+                    }
+                    changed = true;
+                }
+                else if (IsOnlyMountSpeedInstructions(firstRide.RInstruction) &&
+                    !IsCompleteMountSpeedInstructionPlan(firstRide.RInstruction))
+                {
+                    firstRide.RInstruction = legacyMountSpeed != null &&
+                        IsCompleteMountSpeedInstructionPlan(legacyMountSpeed.RInstruction)
+                        ? legacyMountSpeed.RInstruction.Copy()
+                        : CreateMountSpeedPresetInstructions();
+                    changed = true;
+                }
+
+                MountSpeed.MountSpeedPreset target = firstRide.MountSpeedPreset;
+                string targetError;
+                if (target == null ||
+                    !target.IsCompleteMountRefineTarget(out targetError))
+                {
+                    firstRide.MountSpeedPreset =
+                        MountSpeed.MountSpeedPreset.CreateDefaultFirstRideRefinePreset();
+                    changed = true;
+                }
+                else if (!string.Equals(
+                        target.Name,
+                        FirstRideRefinePresetName,
+                        StringComparison.Ordinal))
+                {
+                    target.Name = FirstRideRefinePresetName;
+                    changed = true;
+                }
+
+                if (changed)
+                {
+                    Socket_Operation.DoLog(
+                        "MountRefinePreset",
+                        "已将坐骑速度完整流程迁移到一坐骑洗炼，并补齐固定目标：高级秋水流弦、"
+                        + "高级百步穿杨、高级追魂夺命，成长率 1.175；旧坐骑速度记录保留。");
+                }
+                return changed;
+            }
+
+            public static DataTable CreateFiveElementUpgradePresetInstructions()
+            {
+                DataTable instructions = Socket_Cache.Robot.InitInstructions();
+                foreach (WuxingUpgradePresetStep step in
+                    WuxingUpgradePresetPlan.GetSteps())
+                {
+                    DataRow row = instructions.NewRow();
+                    row["Type"] = Socket_Cache.Robot.InstructionType.FiveElementUpgrade;
+                    row["Content"] = WuxingUpgradePresetPlan.EncodeStep(step);
+                    instructions.Rows.Add(row);
+                }
+                return instructions;
+            }
+
+            public static bool EnsureBuiltInFiveElementUpgradePreset()
+            {
+                Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot
+                    .FirstOrDefault(item => item != null &&
+                        string.Equals(
+                            (item.RName ?? string.Empty).Trim(),
+                            FiveElementUpgradePresetName,
+                            StringComparison.Ordinal));
+                if (robot != null)
+                {
+                    if (robot.RInstruction == null || robot.RInstruction.Rows.Count == 0)
+                    {
+                        robot.RInstruction = CreateFiveElementUpgradePresetInstructions();
+                        return true;
+                    }
+                    return false;
+                }
+
+                Guid presetId = Guid.NewGuid();
+                AddRobot(
+                    false,
+                    presetId,
+                    FiveElementUpgradePresetName,
+                    CreateFiveElementUpgradePresetInstructions(),
+                    "常用",
+                    false);
+                return Socket_Cache.RobotList.lstRobot.Any(item =>
+                    item != null && item.RID == presetId);
+            }
+
+            public static DataTable CreateSkillUpgradePresetInstructions()
+            {
+                DataTable instructions = Socket_Cache.Robot.InitInstructions();
+                foreach (SkillUpgradePresetStep step in
+                    SkillUpgradePresetPlan.GetSteps())
+                {
+                    DataRow row = instructions.NewRow();
+                    row["Type"] = Socket_Cache.Robot.InstructionType.SkillUpgrade;
+                    row["Content"] = SkillUpgradePresetPlan.EncodeStep(step);
+                    instructions.Rows.Add(row);
+                }
+                return instructions;
+            }
+
+            public static bool EnsureBuiltInSkillUpgradePreset()
+            {
+                Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot
+                    .FirstOrDefault(item => item != null &&
+                        string.Equals(
+                            (item.RName ?? string.Empty).Trim(),
+                            SkillUpgradePresetName,
+                            StringComparison.Ordinal));
+                if (robot != null)
+                {
+                    if (robot.RInstruction == null || robot.RInstruction.Rows.Count == 0)
+                    {
+                        robot.RInstruction = CreateSkillUpgradePresetInstructions();
+                        return true;
+                    }
+                    return false;
+                }
+
+                Guid presetId = Guid.NewGuid();
+                AddRobot(
+                    false,
+                    presetId,
+                    SkillUpgradePresetName,
+                    CreateSkillUpgradePresetInstructions(),
+                    "常用",
+                    false);
+                return Socket_Cache.RobotList.lstRobot.Any(item =>
+                    item != null && item.RID == presetId);
+            }
+
+            public static DataTable CreateEquipmentRefinePresetInstructions()
+            {
+                DataTable instructions = Socket_Cache.Robot.InitInstructions();
+                foreach (EquipmentRefinePresetStep step in
+                    EquipmentRefinePresetPlan.GetSteps())
+                {
+                    DataRow row = instructions.NewRow();
+                    row["Type"] = Socket_Cache.Robot.InstructionType.EquipmentRefine;
+                    row["Content"] = EquipmentRefinePresetPlan.EncodeStep(step);
+                    instructions.Rows.Add(row);
+                }
+                return instructions;
+            }
+
+            /// <summary>
+            /// 创建一个默认禁用的纯发包流程模板。
+            /// 模板没有目标、字段映射或已验收协议，因此即使误启用也会 fail-closed。
+            /// </summary>
+            public static bool EnsureBuiltInEquipmentRefinePreset()
+            {
+                Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot
+                    .FirstOrDefault(item => item != null &&
+                        string.Equals(
+                            (item.RName ?? string.Empty).Trim(),
+                            EquipmentRefinePresetName,
+                            StringComparison.Ordinal));
+                if (robot != null)
+                {
+                    if (robot.RInstruction == null || robot.RInstruction.Rows.Count == 0)
+                    {
+                        robot.RInstruction = CreateEquipmentRefinePresetInstructions();
+                        return true;
+                    }
+                    return false;
+                }
+
+                Guid presetId = Guid.NewGuid();
+                AddRobot(
+                    false,
+                    presetId,
+                    EquipmentRefinePresetName,
+                    CreateEquipmentRefinePresetInstructions(),
                     "常用",
                     false);
                 return Socket_Cache.RobotList.lstRobot.Any(item =>
@@ -10578,6 +11251,12 @@ namespace WPELibrary.Lib
                     {
                         copiedRobot.VisionProfile = sri.VisionProfile.Clone();
                     }
+                    if (copiedRobot != null && sri.EquipmentRefinePreset != null)
+                    {
+                        copiedRobot.EquipmentRefinePreset =
+                            EquipmentRefinePresetSerializer.DeserializeClone(
+                                sri.EquipmentRefinePreset);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -10676,6 +11355,14 @@ namespace WPELibrary.Lib
                             sReturn = "召唤兽技能步骤";
                             break;
 
+                        case Socket_Cache.Robot.InstructionType.MountSpeed:
+                            sReturn = "坐骑速度步骤";
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.EquipmentRefine:
+                            sReturn = "装备炼化步骤";
+                            break;
+
                     }
                 }
                 catch (Exception ex)
@@ -10740,6 +11427,14 @@ namespace WPELibrary.Lib
 
                         case Socket_Cache.Robot.InstructionType.SummonedPetSkillBook:
                             cReturn = Color.CornflowerBlue;
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.MountSpeed:
+                            cReturn = Color.OrangeRed;
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.EquipmentRefine:
+                            cReturn = Color.MediumSeaGreen;
                             break;
 
                     }
@@ -10953,6 +11648,30 @@ namespace WPELibrary.Lib
                             }
                             break;
 
+                        case Socket_Cache.Robot.InstructionType.MountSpeed:
+                            MountSpeed.MountSpeedPresetStep mountStep;
+                            if (MountSpeed.MountSpeedPresetPlan.TryDecodeStep(sContent, out mountStep))
+                            {
+                                sReturn = mountStep.DisplayText;
+                            }
+                            else
+                            {
+                                sReturn = "坐骑速度：无效步骤内容（已拒绝执行）";
+                            }
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.EquipmentRefine:
+                            EquipmentRefinePresetStep refineStep;
+                            if (EquipmentRefinePresetPlan.TryDecodeStep(sContent, out refineStep))
+                            {
+                                sReturn = refineStep.DisplayText;
+                            }
+                            else
+                            {
+                                sReturn = "装备炼化：无效步骤内容（已拒绝执行）";
+                            }
+                            break;
+
                     }
                 }
                 catch (Exception ex)
@@ -11036,9 +11755,11 @@ namespace WPELibrary.Lib
                 {
                     if (dtRInstruction != null && dtRInstruction.Rows.Count > 0)
                     {
-                        List<int> listSendSendList = new List<int>();
-                        List<int> listTreasureMap = new List<int>();
-                        List<int> listSummonedPetSkillBook = new List<int>();
+List<int> listSendSendList = new List<int>();
+                            List<int> listTreasureMap = new List<int>();
+                            List<int> listSummonedPetSkillBook = new List<int>();
+                            List<int> listMountSpeed = new List<int>();
+                            List<int> listEquipmentRefine = new List<int>();
 
                         for (int i = 0; i < dtRInstruction.Rows.Count; i++)
                         {
@@ -11055,7 +11776,7 @@ namespace WPELibrary.Lib
                             {
                                 case Socket_Cache.Robot.InstructionType.SendSendList:
                                     listSendSendList.Add(i);
-                                    break;                      
+                                    break;
 
                                 case Socket_Cache.Robot.InstructionType.TreasureMap:
                                     listTreasureMap.Add(i);
@@ -11065,7 +11786,15 @@ namespace WPELibrary.Lib
                                     listSummonedPetSkillBook.Add(i);
                                     break;
 
-                            }                      
+                                case Socket_Cache.Robot.InstructionType.MountSpeed:
+                                    listMountSpeed.Add(i);
+                                    break;
+
+                                case Socket_Cache.Robot.InstructionType.EquipmentRefine:
+                                    listEquipmentRefine.Add(i);
+                                    break;
+
+                            }
                         }
 
                         #region//检测发送指令
@@ -11141,6 +11870,50 @@ namespace WPELibrary.Lib
                                 SummonedPetSkillBookPresetStep step;
                                 if (rowIndex != stepIndex ||
                                     !SummonedPetSkillBookPresetPlan.TryDecodeStep(
+                                        dtRInstruction.Rows[rowIndex]["Content"].ToString(),
+                                        out step) ||
+                                    step.Index != stepIndex + 1)
+                                {
+                                    return rowIndex;
+                                }
+                            }
+                        }
+
+                        if (listMountSpeed.Count > 0)
+                        {
+                            if (listMountSpeed.Count != dtRInstruction.Rows.Count)
+                            {
+                                return listMountSpeed[0];
+                            }
+
+                            for (int stepIndex = 0; stepIndex < listMountSpeed.Count; stepIndex++)
+                            {
+                                int rowIndex = listMountSpeed[stepIndex];
+                                MountSpeed.MountSpeedPresetStep step;
+                                if (rowIndex != stepIndex ||
+                                    !MountSpeed.MountSpeedPresetPlan.TryDecodeStep(
+                                        dtRInstruction.Rows[rowIndex]["Content"].ToString(),
+                                        out step) ||
+                                    step.Index != stepIndex + 1)
+                                {
+                                    return rowIndex;
+                                }
+                            }
+                        }
+
+                        if (listEquipmentRefine.Count > 0)
+                        {
+                            if (listEquipmentRefine.Count != dtRInstruction.Rows.Count)
+                            {
+                                return listEquipmentRefine[0];
+                            }
+
+                            for (int stepIndex = 0; stepIndex < listEquipmentRefine.Count; stepIndex++)
+                            {
+                                int rowIndex = listEquipmentRefine[stepIndex];
+                                EquipmentRefinePresetStep step;
+                                if (rowIndex != stepIndex ||
+                                    !EquipmentRefinePresetPlan.TryDecodeStep(
                                         dtRInstruction.Rows[rowIndex]["Content"].ToString(),
                                         out step) ||
                                     step.Index != stepIndex + 1)
@@ -11249,13 +12022,24 @@ namespace WPELibrary.Lib
             public static async Task<Socket_Robot> DoRobotAsync(Guid RID, Dictionary<string, object> parameters)
             {
                 Socket_Robot srReturn = null;
+                LastStartFailureReason = string.Empty;
 
                 try
                 {
-                    if (RID != Guid.Empty)
+                    if (RID == Guid.Empty)
+                    {
+                        LastStartFailureReason = "助手标识无效。";
+                    }
+                    else
                     {
                         string robotName = null;
                         DataTable instruction = null;
+                        EquipmentRefinePreset equipmentRefinePreset = null;
+                        Socket_VisionProfile visionProfile = null;
+                        SummonedPetSkillBookPreset summonedPetSkillBookPreset = null;
+                        MountSpeedPreset mountSpeedPreset = null;
+                        bool callerProvidesVisionProfile = parameters != null &&
+                            parameters.ContainsKey("VisionProfile");
                         Action capture = () =>
                         {
                             Socket_RobotInfo sri = Socket_Cache.RobotList.lstRobot
@@ -11267,6 +12051,48 @@ namespace WPELibrary.Lib
                                 instruction = sri.RInstruction == null
                                     ? null
                                     : sri.RInstruction.Copy();
+                                equipmentRefinePreset = sri.EquipmentRefinePreset;
+                                if (instruction != null &&
+                                    instruction.Rows.Cast<DataRow>().Any(row =>
+                                        row != null &&
+                                        row["Type"] != null &&
+                                        row["Type"] != DBNull.Value &&
+                                        Convert.ToInt32(row["Type"]) ==
+                                            (int)Socket_Cache.Robot.InstructionType.SummonedPetSkillBook) &&
+                                    sri.SummonedPetSkillBookPreset != null)
+                                {
+                                    summonedPetSkillBookPreset =
+                                        SummonedPetSkillBookPresetSerializer.DeserializeClone(
+                                            sri.SummonedPetSkillBookPreset);
+                                }
+                                if (sri.MountSpeedPreset != null &&
+                                    (HasMountSpeedInstruction(instruction) ||
+                                     string.Equals(
+                                         (sri.RName ?? string.Empty).Trim(),
+                                         FirstRideRefinePresetName,
+                                         StringComparison.Ordinal)))
+                                {
+                                    mountSpeedPreset =
+                                        MountSpeedPresetSerializer.DeserializeClone(
+                                            sri.MountSpeedPreset);
+                                }
+                                if (!callerProvidesVisionProfile &&
+                                    instruction != null &&
+                                    instruction.Rows.Cast<DataRow>().Any(row =>
+                                        row != null &&
+                                        row["Type"] != null &&
+                                        row["Type"] != DBNull.Value &&
+                                        Convert.ToInt32(row["Type"]) ==
+                                            (int)Socket_Cache.Robot.InstructionType.VisionWait))
+                                {
+                                    visionProfile = sri.VisionProfile == null
+                                        ? null
+                                        : sri.VisionProfile.Clone();
+                                }
+                            }
+                            else
+                            {
+                                LastStartFailureReason = "找不到对应的助手预设。";
                             }
                         };
 
@@ -11279,23 +12105,118 @@ namespace WPELibrary.Lib
                             capture();
                         }
 
+                        bool isFirstRideRefine = string.Equals(
+                            (robotName ?? string.Empty).Trim(),
+                            FirstRideRefinePresetName,
+                            StringComparison.Ordinal);
+                        if (isFirstRideRefine && !HasMountSpeedInstruction(instruction))
+                        {
+                            instruction = instruction == null || instruction.Rows.Count == 0
+                                ? CreateMountSpeedPresetInstructions()
+                                : AppendMountSpeedPresetInstructions(instruction);
+                            Socket_Operation.DoLog(
+                                "MountRefinePreset",
+                                "一坐骑洗炼启动时未发现坐骑流程，已自动迁移并补齐 11 步坐骑速度流程。无需手动配置步骤。");
+                        }
+
                         if (instruction != null)
                         {
                             if (instruction.Rows.Count > 0)
                             {
                                 srReturn = new Socket_Robot();
+                                if (parameters == null)
+                                {
+                                    parameters = new Dictionary<string, object>();
+                                }
+                                if (equipmentRefinePreset != null &&
+                                    !parameters.ContainsKey("EquipmentRefinePreset"))
+                                {
+                                    parameters["EquipmentRefinePreset"] = equipmentRefinePreset;
+                                }
+                                if (summonedPetSkillBookPreset != null &&
+                                    !parameters.ContainsKey("SummonedPetSkillBookPreset"))
+                                {
+                                    parameters["SummonedPetSkillBookPreset"] = summonedPetSkillBookPreset;
+                                }
+                                if (mountSpeedPreset != null &&
+                                    !parameters.ContainsKey("MountSpeedPreset"))
+                                {
+                                    parameters["MountSpeedPreset"] = mountSpeedPreset;
+                                }
+                                bool hasMountSpeedInstruction = instruction.Rows.Cast<DataRow>().Any(row =>
+                                    row != null &&
+                                    row["Type"] != null &&
+                                    row["Type"] != DBNull.Value &&
+                                    Convert.ToInt32(row["Type"]) ==
+                                        (int)Socket_Cache.Robot.InstructionType.MountSpeed);
+                                if (hasMountSpeedInstruction && isFirstRideRefine)
+                                {
+                                    parameters["MountRefineAutoSendRequested"] = true;
+                                    string mountPresetError;
+                                    bool hasCompleteMountPreset = mountSpeedPreset != null &&
+                                        mountSpeedPreset.IsCompleteMountRefineTarget(
+                                            out mountPresetError);
+                                    if (!hasCompleteMountPreset)
+                                    {
+                                        mountSpeedPreset =
+                                            MountSpeedPreset.CreateDefaultFirstRideRefinePreset();
+                                        Socket_Operation.DoLog(
+                                            "MountRefinePreset",
+                                            "一坐骑洗炼启动时未发现完整目标，已自动使用固定目标：高级秋水流弦、"
+                                            + "高级百步穿杨、高级追魂夺命，成长率 1.175。无需重复填写。");
+                                    }
+                                }
+                                if (mountSpeedPreset != null &&
+                                    (!parameters.ContainsKey("MountSpeedPreset") ||
+                                     parameters["MountSpeedPreset"] == null))
+                                {
+                                    parameters["MountSpeedPreset"] = mountSpeedPreset;
+                                }
+                                if (hasMountSpeedInstruction &&
+                                    !parameters.ContainsKey("MountStatusAndroidSnapshotReader"))
+                                {
+                                    parameters["MountStatusAndroidSnapshotReader"] =
+                                        new MountStatusAndroidSnapshotReader();
+                                }
+                                if (visionProfile != null &&
+                                    !parameters.ContainsKey("VisionProfile"))
+                                {
+                                    object allowSystemInput;
+                                    if (parameters.TryGetValue(
+                                            "VisionAllowSystemInput",
+                                            out allowSystemInput) &&
+                                        allowSystemInput is bool &&
+                                        (bool)allowSystemInput)
+                                    {
+                                        visionProfile.AllowSystemInput = true;
+                                    }
+                                    parameters["VisionProfile"] = visionProfile;
+                                    parameters["OwnVisionProfile"] = true;
+                                }
                                 bool started = await Task.Run(() =>
                                     srReturn.StartRobot(robotName, instruction, parameters));
                                 if (!started)
                                 {
+                                    LastStartFailureReason = string.IsNullOrWhiteSpace(srReturn.LastStartFailureReason)
+                                        ? "机器人启动校验失败。"
+                                        : srReturn.LastStartFailureReason;
                                     srReturn = null;
                                 }
                             }
+                            else
+                            {
+                                LastStartFailureReason = "助手没有可执行指令。";
+                            }
+                        }
+                        else if (string.IsNullOrWhiteSpace(LastStartFailureReason))
+                        {
+                            LastStartFailureReason = "助手指令未加载。";
                         }
                     }
                 }
                 catch (Exception ex)
                 {
+                    LastStartFailureReason = ex.Message;
                     Socket_Operation.DoLog(nameof(DoRobotAsync), ex.Message);
                 }
 
@@ -11728,6 +12649,10 @@ namespace WPELibrary.Lib
                     bool repairedTreasureMapPreset = false;
                     bool createdSummonedPetSkillBookPreset = false;
                     bool removedObsoleteMountSpeedPreset = false;
+                    bool migratedFirstRideRefinePreset = false;
+                    bool createdFiveElementUpgradePreset = false;
+                    bool createdSkillUpgradePreset = false;
+                    bool createdEquipmentRefinePreset = false;
                     foreach (DataRow dataRow in dtRobot.Rows)
                     {
                         Guid RID = Guid.Parse(dataRow["GUID"].ToString());
@@ -11878,6 +12803,58 @@ namespace WPELibrary.Lib
                             }
                         }
 
+                        // 读取坐骑速度预设 JSON
+                        if (robot != null)
+                        {
+                            DataTable dtPreset = Socket_Cache.DataBase.SelectTable_RobotMountSpeedPreset(RID);
+                            if (dtPreset != null && dtPreset.Rows.Count > 0)
+                            {
+                                string presetJson = dtPreset.Rows[0]["PresetJson"].ToString();
+                                if (!string.IsNullOrWhiteSpace(presetJson))
+                                {
+                                    MountSpeed.MountSpeedPreset loadedPreset;
+                                    string presetError;
+                                    if (MountSpeed.MountSpeedPresetSerializer.TryDeserialize(
+                                        presetJson, out loadedPreset, out presetError))
+                                    {
+                                        robot.MountSpeedPreset = loadedPreset;
+                                    }
+                                    else
+                                    {
+                                        Socket_Operation.DoLog(
+                                            nameof(LoadRobotList_FromDB),
+                                            "坐骑速度预设加载失败: " + presetError);
+                                    }
+                                }
+                            }
+                        }
+
+                        // 读取装备炼化纯发包预设 JSON
+                        if (robot != null)
+                        {
+                            DataTable dtPreset = Socket_Cache.DataBase.SelectTable_RobotEquipmentRefinePreset(RID);
+                            if (dtPreset != null && dtPreset.Rows.Count > 0)
+                            {
+                                string presetJson = dtPreset.Rows[0]["PresetJson"].ToString();
+                                if (!string.IsNullOrWhiteSpace(presetJson))
+                                {
+                                    EquipmentRefinePreset loadedPreset;
+                                    string presetError;
+                                    if (EquipmentRefinePresetSerializer.TryDeserialize(
+                                        presetJson, out loadedPreset, out presetError))
+                                    {
+                                        robot.EquipmentRefinePreset = loadedPreset;
+                                    }
+                                    else
+                                    {
+                                        Socket_Operation.DoLog(
+                                            nameof(LoadRobotList_FromDB),
+                                            "装备炼化预设加载失败: " + presetError);
+                                    }
+                                }
+                            }
+                        }
+
                         if (Socket_Cache.Robot.EnsureBuiltInTreasureMapPreset(robot))
                         {
                             repairedTreasureMapPreset = true;
@@ -11886,6 +12863,18 @@ namespace WPELibrary.Lib
 
                     createdSummonedPetSkillBookPreset =
                         Socket_Cache.Robot.EnsureBuiltInSummonedPetSkillBookPreset();
+
+                    migratedFirstRideRefinePreset =
+                        Socket_Cache.Robot.EnsureBuiltInFirstRideRefinePreset();
+
+                    createdFiveElementUpgradePreset =
+                        Socket_Cache.Robot.EnsureBuiltInFiveElementUpgradePreset();
+
+                    createdSkillUpgradePreset =
+                        Socket_Cache.Robot.EnsureBuiltInSkillUpgradePreset();
+
+                    createdEquipmentRefinePreset =
+                        Socket_Cache.Robot.EnsureBuiltInEquipmentRefinePreset();
 
                     foreach (Socket_RobotInfo robot in Socket_Cache.RobotList.lstRobot)
                     {
@@ -11896,7 +12885,11 @@ namespace WPELibrary.Lib
                     }
                     if ((repairedTreasureMapPreset ||
                          createdSummonedPetSkillBookPreset ||
-                         removedObsoleteMountSpeedPreset) &&
+                         migratedFirstRideRefinePreset ||
+                         removedObsoleteMountSpeedPreset ||
+                         createdFiveElementUpgradePreset ||
+                         createdSkillUpgradePreset ||
+                         createdEquipmentRefinePreset) &&
                         !Socket_Cache.RobotList.SaveRobotList_ToDB())
                     {
                         Socket_Operation.DoLog(
@@ -12212,6 +13205,15 @@ namespace WPELibrary.Lib
                         if (xeVisionProfile != null)
                         {
                             xeRobot.Add(xeVisionProfile);
+                        }
+
+                        if (sri.EquipmentRefinePreset != null)
+                        {
+                            xeRobot.Add(
+                                new XElement(
+                                    "EquipmentRefinePreset",
+                                    EquipmentRefinePresetSerializer.Serialize(
+                                        sri.EquipmentRefinePreset)));
                         }
 
                         xeRoot.Add(xeRobot);
@@ -12561,6 +13563,26 @@ namespace WPELibrary.Lib
                         if (importedRobot != null && xeVision != null)
                         {
                             importedRobot.VisionProfile = ParseVisionProfile(xeVision);
+                        }
+                        XElement xeEquipmentRefinePreset = xeRobot.Element("EquipmentRefinePreset");
+                        if (importedRobot != null && xeEquipmentRefinePreset != null &&
+                            !string.IsNullOrWhiteSpace(xeEquipmentRefinePreset.Value))
+                        {
+                            EquipmentRefinePreset loadedPreset;
+                            string presetError;
+                            if (EquipmentRefinePresetSerializer.TryDeserialize(
+                                xeEquipmentRefinePreset.Value,
+                                out loadedPreset,
+                                out presetError))
+                            {
+                                importedRobot.EquipmentRefinePreset = loadedPreset;
+                            }
+                            else
+                            {
+                                Socket_Operation.DoLog(
+                                    nameof(LoadRobotList_FromXDocument),
+                                    "装备炼化预设导入失败: " + presetError);
+                            }
                         }
                     }
                 }
@@ -12946,6 +13968,40 @@ namespace WPELibrary.Lib
         public static class Send
         {
             public static string AESKey = string.Empty;
+            private const string PanguIronSalePresetName = "出售盘古精铁";
+            private static readonly HashSet<string> PanguIronSaleProtectedPresetNames =
+                new HashSet<string>(StringComparer.Ordinal)
+                {
+                    PanguIronSalePresetName,
+                    "积分一",
+                    "积分二",
+                    "积分三",
+                    "积分四",
+                    "积分五",
+                    "积分六",
+                    "积分七",
+                    "百亿玉",
+                    "百亿银子",
+                    "百亿师贡献",
+                    "百亿帮贡",
+                    "百亿成就",
+                    "百亿积分",
+                    "炼星石",
+                    "积分",
+                    "嘉嘉的嫁妆",
+                    "扭转乾坤",
+                    "子虚乌有",
+                    "化无",
+                    "成仁取义",
+                    "抗性",
+                    "超级宝图"
+                };
+
+            internal static bool IsPanguIronSalePreset(string name)
+            {
+                return PanguIronSaleProtectedPresetNames.Contains(
+                    (name ?? string.Empty).Trim());
+            }
 
             #region//获取发送集
 
@@ -13539,13 +14595,21 @@ namespace WPELibrary.Lib
                         sendCollection[index].PacketTo = route.PacketTo;
                     }
 
+                    bool usePanguIronSaleTransportProtection =
+                        IsPanguIronSalePreset(sendName);
+                    int effectiveLoopInterval = usePanguIronSaleTransportProtection
+                        ? Math.Max(loopInterval, 1800)
+                        : loopInterval;
+
                     ssReturn = new Socket_Send();
                     bool started = false;
                     await Task.Run(() => started = ssReturn.StartSendWithPacketSockets(
                         sendName,
                         loopCount,
-                        loopInterval,
-                        sendCollection));
+                        effectiveLoopInterval,
+                        sendCollection,
+                        usePanguIronSaleTransportProtection,
+                        usePanguIronSaleTransportProtection));
                     if (!started)
                     {
                         return SendStartResult.Failed("发送预设未能启动。请检查发送线程状态和封包内容。", "send_start_failed");
@@ -17110,6 +18174,16 @@ sql += "GUID TEXT NOT NULL PRIMARY KEY,";
 sql += "PresetJson TEXT";
 sql += ");";
 
+                        sql += "CREATE TABLE IF NOT EXISTS RobotMountSpeedPreset (";
+                        sql += "GUID TEXT NOT NULL PRIMARY KEY,";
+                        sql += "PresetJson TEXT";
+                        sql += ");";
+
+                        sql += "CREATE TABLE IF NOT EXISTS RobotEquipmentRefinePreset (";
+                        sql += "GUID TEXT NOT NULL PRIMARY KEY,";
+                        sql += "PresetJson TEXT";
+                        sql += ");";
+
                         sql += "CREATE TABLE IF NOT EXISTS RobotVisionCondition (";
                         sql += "GUID TEXT NOT NULL PRIMARY KEY,";
                         sql += "RobotGUID TEXT NOT NULL,";
@@ -17438,6 +18512,52 @@ sql += ");";
                 return dtReturn;
             }
 
+            public static DataTable SelectTable_RobotMountSpeedPreset(Guid guid)
+            {
+                DataTable dtReturn = new DataTable();
+
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand(
+                        "SELECT PresetJson FROM RobotMountSpeedPreset WHERE GUID = @GUID;", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@GUID", guid.ToString().ToUpper());
+                        SQLiteDataAdapter adapter = new SQLiteDataAdapter(cmd);
+                        adapter.Fill(dtReturn);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+
+                return dtReturn;
+            }
+
+            public static DataTable SelectTable_RobotEquipmentRefinePreset(Guid guid)
+            {
+                DataTable dtReturn = new DataTable();
+
+                try
+                {
+                    using (SQLiteConnection conn = new SQLiteConnection(conStr))
+                    using (SQLiteCommand cmd = new SQLiteCommand(
+                        "SELECT PresetJson FROM RobotEquipmentRefinePreset WHERE GUID = @GUID;", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@GUID", guid.ToString().ToUpper());
+                        SQLiteDataAdapter adapter = new SQLiteDataAdapter(cmd);
+                        adapter.Fill(dtReturn);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                }
+
+                return dtReturn;
+            }
+
             public static DataTable SelectTable_RobotVisionCondition(Guid guid)
             {
                 DataTable dtReturn = new DataTable();
@@ -17471,6 +18591,8 @@ sql += ");";
                         sql += "DELETE FROM RobotVisionCondition;";
                         sql += "DELETE FROM RobotVisionProfile;";
                         sql += "DELETE FROM RobotSummonedPetPreset;";
+                        sql += "DELETE FROM RobotMountSpeedPreset;";
+                        sql += "DELETE FROM RobotEquipmentRefinePreset;";
                         sql += "DELETE FROM Robot;";
 
                         using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
@@ -17696,6 +18818,63 @@ sql += ");";
                         {
                             // 无预设时删除旧记录
                             sql = "DELETE FROM RobotSummonedPetPreset WHERE GUID = @GUID;";
+                            using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
+                            {
+                                cmd.Parameters.AddWithValue("@GUID", sri.RID.ToString().ToUpper());
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+
+                        // 写入坐骑速度预设 JSON
+                        if (sri.MountSpeedPreset != null)
+                        {
+                            string presetJson = MountSpeed.MountSpeedPresetSerializer.Serialize(sri.MountSpeedPreset);
+                            sql = "INSERT OR REPLACE INTO RobotMountSpeedPreset (";
+                            sql += "GUID, PresetJson";
+                            sql += ") VALUES (";
+                            sql += "@GUID, @PresetJson";
+                            sql += ");";
+
+                            using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
+                            {
+                                cmd.Parameters.AddWithValue("@GUID", sri.RID.ToString().ToUpper());
+                                cmd.Parameters.AddWithValue("@PresetJson", presetJson);
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+                        else
+                        {
+                            // 无预设时删除旧记录
+                            sql = "DELETE FROM RobotMountSpeedPreset WHERE GUID = @GUID;";
+                            using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
+                            {
+                                cmd.Parameters.AddWithValue("@GUID", sri.RID.ToString().ToUpper());
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+
+                        // 写入装备炼化纯发包预设 JSON
+                        if (sri.EquipmentRefinePreset != null)
+                        {
+                            string presetJson = EquipmentRefinePresetSerializer.Serialize(
+                                sri.EquipmentRefinePreset);
+                            sql = "INSERT OR REPLACE INTO RobotEquipmentRefinePreset (";
+                            sql += "GUID, PresetJson";
+                            sql += ") VALUES (";
+                            sql += "@GUID, @PresetJson";
+                            sql += ");";
+
+                            using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
+                            {
+                                cmd.Parameters.AddWithValue("@GUID", sri.RID.ToString().ToUpper());
+                                cmd.Parameters.AddWithValue("@PresetJson", presetJson);
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
+                        else
+                        {
+                            // 无预设时删除旧记录
+                            sql = "DELETE FROM RobotEquipmentRefinePreset WHERE GUID = @GUID;";
                             using (SQLiteCommand cmd = new SQLiteCommand(sql, conn))
                             {
                                 cmd.Parameters.AddWithValue("@GUID", sri.RID.ToString().ToUpper());

@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security;
+using System.Text;
 
 namespace WPELibrary.Lib.Memory
 {
@@ -226,6 +227,7 @@ namespace WPELibrary.Lib.Memory
         {
             reader = null;
             error = string.Empty;
+            Stopwatch sw = MemoryTraceSession.IsEnabled ? Stopwatch.StartNew() : null;
             if (identity == null)
             {
                 error = "A process identity is required.";
@@ -256,12 +258,30 @@ namespace WPELibrary.Lib.Memory
             if (handle == IntPtr.Zero)
             {
                 error = BuildWin32Error("OpenProcess");
+                if (sw != null)
+                {
+                    sw.Stop();
+                    MemoryTraceSession.Trace(
+                        "memory.reader", "reader_open", 0, 0, null, null, false, error,
+                        sw.Elapsed.TotalMilliseconds);
+                }
                 return false;
             }
 
             reader = new ReadOnlyProcessMemoryReader(
                 new SafeProcessHandle(handle),
                 identity);
+            if (sw != null)
+            {
+                sw.Stop();
+            }
+
+            // First successful open against the target process is the "connected"
+            // point for the memory trace session.
+            MemoryTraceSession.Start(identity, "memory_reader_opened");
+            MemoryTraceSession.Trace(
+                "memory.reader", "reader_open", 0, 0, null, null, true, null,
+                sw == null ? 0 : sw.Elapsed.TotalMilliseconds);
             return true;
         }
 
@@ -273,7 +293,17 @@ namespace WPELibrary.Lib.Memory
                 return false;
             }
 
-            return this.identity.MatchesCurrentProcess(out error);
+            Stopwatch sw = MemoryTraceSession.IsEnabled ? Stopwatch.StartNew() : null;
+            bool matched = this.identity.MatchesCurrentProcess(out error);
+            if (sw != null)
+            {
+                sw.Stop();
+                MemoryTraceSession.Trace(
+                    "memory.identity", "verify", 0, 0, null, null, matched, error,
+                    sw.Elapsed.TotalMilliseconds);
+            }
+
+            return matched;
         }
 
         public bool TryReadBytes(
@@ -284,6 +314,7 @@ namespace WPELibrary.Lib.Memory
         {
             value = null;
             error = string.Empty;
+            Stopwatch sw = MemoryTraceSession.IsEnabled ? Stopwatch.StartNew() : null;
             if (this.disposed)
             {
                 error = "The memory reader has been disposed.";
@@ -329,10 +360,24 @@ namespace WPELibrary.Lib.Memory
             if (!succeeded || readLength != (ulong)length)
             {
                 error = BuildWin32Error("ReadProcessMemory");
+                if (sw != null)
+                {
+                    sw.Stop();
+                    MemoryTraceSession.Trace(
+                        "memory.read", "read_bytes", address, length, null, null, false, error,
+                        sw.Elapsed.TotalMilliseconds);
+                }
                 return false;
             }
 
             value = buffer;
+            if (sw != null)
+            {
+                sw.Stop();
+                MemoryTraceSession.Trace(
+                    "memory.read", "read_bytes", address, length, ToHexPreview(buffer), null, true, null,
+                    sw.Elapsed.TotalMilliseconds);
+            }
             return true;
         }
 
@@ -435,6 +480,31 @@ namespace WPELibrary.Lib.Memory
 
             this.disposed = true;
             this.processHandle.Dispose();
+            MemoryTraceSession.Trace(
+                "memory.reader", "dispose", 0, 0, null, null, true, null, 0);
+        }
+
+        private static string ToHexPreview(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            const int MaxPreviewBytes = 64;
+            int count = bytes.Length <= MaxPreviewBytes ? bytes.Length : MaxPreviewBytes;
+            StringBuilder builder = new StringBuilder(count * 2);
+            for (int index = 0; index < count; index++)
+            {
+                builder.Append(bytes[index].ToString("X2", System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            if (bytes.Length > MaxPreviewBytes)
+            {
+                builder.Append("...");
+            }
+
+            return builder.ToString();
         }
 
         private static string BuildWin32Error(string operation)
