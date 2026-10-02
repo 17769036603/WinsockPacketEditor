@@ -29,3 +29,10 @@ files, their SHA-256 manifest, warmup, and a synthetic OCR smoke test.
 
 Worker diagnostics are written to stderr and to a bounded rotating file under
 `%LOCALAPPDATA%\XNAS\WPE\vision-worker\logs\worker.log`.
+
+LangSmith tracing is scoped to this worker and uses project `my-first-agent`.
+To enable it, create `%LOCALAPPDATA%\XNAS\WPE\vision-worker\langsmith.env`
+with a single `LANGSMITH_API_KEY=...` line. The file stays outside the Git
+checkout. Traces contain only the worker method, boolean result flags, and
+elapsed time; image data, OCR text, coordinates, and input-session tokens are
+removed.

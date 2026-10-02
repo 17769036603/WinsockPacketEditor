@@ -206,10 +206,12 @@ Assert-NotContains $socketForm "SaveProxyMapRemote_ToDB" `
     "Injection-only socket form must not save remote proxy mappings."
 
 $processList = Read-SourceFile "WinsockPacketEditor\ProcessList_Form.cs"
-Assert-Contains $processList "private bool ShowEmulatorOnly = true;" `
-    "Injection target selection must default to approved emulator processes."
+Assert-Contains $processList "private bool ShowEmulatorOnly = false;" `
+    "Injection target selection must show all local processes by default."
 Assert-Contains $processList "IsSupportedInjectionProcess" `
     "Injection target selection must validate the live process name."
+Assert-Contains $processList "return !string.IsNullOrWhiteSpace(processName);" `
+    "Injection target selection must accept non-emulator process names."
 Assert-Contains $processList "AppendDirectEmulatorRows" `
     "Injection target selection must recover when the general process snapshot is empty."
 Assert-NotContains $processList "OpenFileDialog" `
@@ -218,8 +220,16 @@ Assert-Contains $processList "PArch" `
     "Process selection must expose target architecture."
 
 $injector = Read-SourceFile "WinsockPacketEditor\Injector_Form.cs"
-Assert-Contains $injector "TrySelectSingleEmulator" `
-    "A single approved emulator must be selected without opening a redundant process chooser."
+Assert-NotContains $injector "TrySelectSingleEmulator" `
+    "Process selection must open the chooser so non-emulator targets can be selected."
+Assert-Contains $injector "plf.ShowDialog();" `
+    "Process selection must use the live process chooser."
+Assert-Contains $injector "new ProcessList_Form(true)" `
+    "The emulator shortcut must open the chooser with emulator filtering enabled."
+Assert-Contains $injector 'bShowEmulator' `
+    "The fixed injector entry must expose the emulator chooser."
+Assert-NotContains $injector 'bRemoteSettings' `
+    "The fixed injector entry must hide the remote settings shortcut."
 Assert-Contains $injector "HasAutoInjectSwitch" `
     "Unattended desktop restart must have an explicit auto-inject switch."
 Assert-Contains $injector "this.bInject.PerformClick()" `
@@ -312,6 +322,7 @@ Assert-Contains $byteSweepLog "dgvByteSweepLog" `
 Assert-Contains $byteSweepLog "ExportByteSweepLog_Click" `
     "The dedicated byte-sweep log must support CSV export."
 $mainRobotUi = $socketForm
+$assistantConcurrency = Read-SourceFile "WPELibrary\AssistantRunConcurrencyPolicy.cs"
 Assert-Contains $mainRobotUi "ConfigureRobotToolbarTextButtons" `
     "Robot toolbar actions must use the shared text-button configuration."
 Assert-Contains $mainRobotUi 'UiText("Robot_Load")' `
@@ -323,7 +334,11 @@ Assert-Contains $mainRobotUi 'UiText("UI_Assistant")' `
 Assert-Contains $mainRobotUi "InitAssistantButtonUI" `
     "The assistant page must use the grouped button layout."
 Assert-Contains $mainRobotUi "AssistantButton_Click" `
-    "Assistant buttons must run one assistant at a time."
+    "Assistant buttons must retain per-preset start and stop handling."
+Assert-Contains $mainRobotUi "AssistantRunConcurrencyPolicy.CanStart(" `
+    "Assistant starts must pass the explicit treasure-map/mount-refine concurrency gate."
+Assert-Contains $assistantConcurrency "CanRunTogether" `
+    "Assistant concurrency must remain a small auditable policy."
 Assert-Contains $mainRobotUi "this.tsRobotList_Start.Visible = false;" `
     "Assistant batch start must not be exposed in the assistant page."
 Assert-Contains $mainRobotUi "this.tsRobotList_Stop.Visible = false;" `
@@ -532,8 +547,10 @@ $mobileMain = Read-SourceFile "mobile\app\src\main\java\com\xnas\wpe\mobile\Main
 Assert-Contains $mobileMain "coordinator.detachListener(this)" `
     "Mobile Activity teardown must detach listeners while the overlay remains alive."
 $injector = Read-SourceFile "WinsockPacketEditor\Injector_Form.cs"
-Assert-Contains $injector 'bRemoteSettings' `
-    "The fixed injector entry must expose remote service settings."
+Assert-Contains $injector 'bShowEmulator' `
+    "The fixed injector entry must expose the emulator chooser."
+Assert-NotContains $injector 'bRemoteSettings' `
+    "The fixed injector entry must hide the remote settings shortcut."
 Assert-Contains $injector 'bMobileAccountSettings' `
     "The fixed injector entry must expose the dedicated mobile account manager."
 

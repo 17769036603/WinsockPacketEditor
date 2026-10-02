@@ -1,8 +1,8 @@
 """Read-only LuaJIT GC64 mount-status probe for the Android game process.
 
-This is a host-side diagnostic reader.  It uses rooted ADB to read bounded
-anonymous writable mappings, resolves the six known MapRole property names,
-and returns one JSON snapshot.  It never writes /proc/<pid>/mem, injects
+This is a host-side diagnostic reader.  It uses a permission-scoped ADB
+session to read bounded anonymous writable mappings, resolve the six known
+MapRole property names, and return one JSON snapshot.  It never writes /proc/<pid>/mem, injects
 code, pauses the process, invokes game methods, or sends packets.
 
 The probe deliberately discovers LuaJIT table nodes at runtime.  The target
@@ -29,6 +29,19 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
+
+
+def validate_run_as_package(value: str) -> str:
+    package = str(value or "")
+    if not package:
+        return ""
+    if package != package.strip() or re.fullmatch(
+        r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+",
+        package,
+        re.ASCII,
+    ) is None:
+        raise ValueError("run-as package must be a valid Android application ID")
+    return package
 
 
 PAGE_SIZE = 4096
@@ -185,6 +198,18 @@ def read_maps(
     return parse_maps(result.stdout)
 
 
+class MemoryReadTransportError(RuntimeError):
+    """The selected memory-read transport failed before returning usable data."""
+
+
+class MemoryChunkResults(list[bytes]):
+    """Chunk data with an explicit marker for individually short reads."""
+
+    def __init__(self, values: Iterable[bytes], incomplete: bool = False) -> None:
+        super().__init__(values)
+        self.incomplete = incomplete
+
+
 def read_chunks(
     adb_path: str,
     serial: str,
@@ -206,27 +231,24 @@ def read_chunks(
     ):
         return [b""] * len(chunks)
 
-    if session is not None and not session.closed:
+    if session is not None:
+        if session.closed:
+            raise MemoryReadTransportError("selected memory-read session is closed")
         try:
             session_blobs = session.read_chunks(chunks, timeout, batch_size=batch_size)
-            if (
-                session_blobs is not None
-                and len(session_blobs) == len(chunks)
-                and all(len(blob) == size for blob, (_, size) in zip(session_blobs, chunks))
-            ):
-                return session_blobs
-        except (OSError, RuntimeError, subprocess.SubprocessError):
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             session.close()
-
-        # A broker-backed session is the process-wide Root boundary. Never
-        # fall back to a new per-request `adb exec-out su` process after it
-        # fails, otherwise the permission prompt can return and the preset
-        # would no longer use the shared session contract.
-        if session.uses_root_broker:
-            return [b""] * len(chunks)
-
-    if session is not None and session.uses_root_broker:
-        return [b""] * len(chunks)
+            raise MemoryReadTransportError("selected memory-read session failed") from error
+        if session_blobs is None or len(session_blobs) != len(chunks):
+            session.close()
+            raise MemoryReadTransportError("selected memory-read session returned an incomplete batch")
+        incomplete = any(
+            len(blob) != size
+            for blob, (_, size) in zip(session_blobs, chunks)
+        )
+        if not incomplete or session.uses_root_broker or session.uses_run_as:
+            return MemoryChunkResults(session_blobs, incomplete)
+        session.close()
 
     result_blobs: list[bytes] = []
     for offset in range(0, len(chunks), batch_size):
@@ -234,7 +256,8 @@ def read_chunks(
         commands = [
             (
                 f"toybox dd if=/proc/{pid}/mem bs=4096 skip={start // PAGE_SIZE} "
-                f"count={size // PAGE_SIZE} status=none 2>/dev/null"
+                f"count={size // PAGE_SIZE} status=none 2>/dev/null "
+                "| base64 -w 0; echo"
             )
             for start, size in batch
         ]
@@ -248,20 +271,17 @@ def read_chunks(
             result_blobs.extend([b""] * len(batch))
             continue
 
-        expected = sum(size for _, size in batch)
-        raw = result.stdout
-        if len(raw) != expected:
-            normalized = raw.replace(b"\r\n", b"\n")
-            raw = normalized if len(normalized) == expected else b""
-        if len(raw) != expected:
+        lines = result.stdout.splitlines()
+        if len(lines) != len(batch):
             result_blobs.extend([b""] * len(batch))
             continue
-
-        cursor = 0
-        for _, size in batch:
-            result_blobs.append(raw[cursor : cursor + size])
-            cursor += size
-    return result_blobs
+        for line, (_, size) in zip(lines, batch):
+            blob = AdbPageMemoryReadSession._decode_line(line)
+            result_blobs.append(blob if len(blob) == size else b"")
+    return MemoryChunkResults(
+        result_blobs,
+        any(len(blob) != size for blob, (_, size) in zip(result_blobs, chunks)),
+    )
 
 
 def chunk_ranges(
@@ -441,7 +461,7 @@ class RootBrokerClient:
 
 
 class AdbPageMemoryReadSession:
-    """Keep one rooted ADB shell for many small read-only page requests."""
+    """Keep one authorized ADB shell for many small read-only page requests."""
 
     READY_MARKER = "WPE_MOUNT_READ_READY"
 
@@ -451,8 +471,13 @@ class AdbPageMemoryReadSession:
         serial: str,
         pid: int,
         root_broker: RootBrokerClient | None = None,
+        run_as_package: str = "",
     ) -> None:
+        package = validate_run_as_package(run_as_package)
+        if root_broker is not None and package:
+            raise ValueError("root broker and run-as package cannot be used together")
         self.root_broker = root_broker
+        self._run_as_package = package
         self._closed = False
         self._timing: dict[str, float] | None = None
         self.pid = pid
@@ -463,14 +488,20 @@ class AdbPageMemoryReadSession:
         command = [adb_path]
         if serial:
             command.extend(["-s", serial])
-        command.extend(["shell", "-t", "su", "-c", "sh"])
+        if package:
+            command.extend(["shell", "run-as", package, "sh"])
+        else:
+            command.extend(["shell", "-t", "su", "-c", "sh"])
         self.process = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
-        self._write_command(f"stty -echo; echo {self.READY_MARKER}\n")
+        ready_command = f"echo {self.READY_MARKER}\n"
+        if not package:
+            ready_command = f"stty -echo; {ready_command}"
+        self._write_command(ready_command)
         ready = self._read_lines(1, 10.0)
         if not ready or ready[0].decode("utf-8", "replace").strip() != self.READY_MARKER:
             self.close()
@@ -486,6 +517,10 @@ class AdbPageMemoryReadSession:
     @property
     def uses_root_broker(self) -> bool:
         return self.root_broker is not None
+
+    @property
+    def uses_run_as(self) -> bool:
+        return bool(getattr(self, "_run_as_package", ""))
 
     def set_timing(self, timing: dict[str, float] | None) -> None:
         """Attach the current request's bounded transport timing accumulator."""
@@ -541,7 +576,7 @@ class AdbPageMemoryReadSession:
             return b""
 
     def read_text(self, command: str, timeout: float) -> bytes | None:
-        """Read command output through this already-rooted shell."""
+        """Read command output through this existing ADB shell."""
         started = time.perf_counter()
         if self.root_broker is not None:
             try:
@@ -567,7 +602,7 @@ class AdbPageMemoryReadSession:
         timeout: float,
         batch_size: int = 32,
     ) -> list[bytes] | None:
-        """Read larger spans without starting another `su` process."""
+        """Read larger spans without starting another ADB shell."""
         if not chunks:
             return []
         if any(
@@ -721,16 +756,21 @@ class AdbPageMemoryReadSession:
 
 
 class ProbeRuntime:
-    """Own one rooted ADB shell for repeated probe requests."""
+    """Own one ADB shell for repeated probe requests."""
 
-    def __init__(self, root_broker_pipe: str = "") -> None:
+    def __init__(self, root_broker_pipe: str = "", run_as_package: str = "") -> None:
+        root_broker_pipe = str(root_broker_pipe or "").strip()
+        run_as_package = validate_run_as_package(run_as_package)
+        if root_broker_pipe and run_as_package:
+            raise ValueError("root broker and run-as package cannot be used together")
         self._root_broker = (
             RootBrokerClient(root_broker_pipe)
-            if str(root_broker_pipe or "").strip()
+            if root_broker_pipe
             else None
         )
+        self._run_as_package = run_as_package
         self._session: AdbPageMemoryReadSession | None = None
-        self._session_key: tuple[str, str, int] | None = None
+        self._session_key: tuple[str, str, int, str] | None = None
         self._point_identity: tuple[int, int, str] | None = None
         self._point_plan: dict | None = None
         self._request_sequence = 0
@@ -799,6 +839,7 @@ class ProbeRuntime:
         cache_payload: dict,
         point_hint: dict,
         sequence: int = 1,
+        speed_only: bool = False,
     ) -> None:
         """Keep absolute point addresses only for this verified process identity.
 
@@ -816,6 +857,7 @@ class ProbeRuntime:
             "cache": cache_payload,
             "point": dict(point_hint),
             "lastSequence": max(1, int(sequence)),
+            "speedOnly": bool(speed_only),
         }
 
     def get_point_plan(self, identity: dict) -> dict | None:
@@ -839,7 +881,7 @@ class ProbeRuntime:
         serial: str,
         pid: int,
     ) -> AdbPageMemoryReadSession:
-        key = (os.path.abspath(adb_path), serial, pid)
+        key = (os.path.abspath(adb_path), serial, pid, self._run_as_package)
         if (
             self._session is None
             or self._session.closed
@@ -851,6 +893,7 @@ class ProbeRuntime:
                 serial,
                 pid,
                 root_broker=self._root_broker,
+                run_as_package=self._run_as_package,
             )
             self._session_key = key
         self._session.set_timing(self._timing)
@@ -889,6 +932,9 @@ class BoundedPageMemoryReader:
         self._owns_adb_session = shared_session is None
         self._root_broker_mode = bool(
             shared_session is not None and shared_session.uses_root_broker
+        )
+        self._run_as_mode = bool(
+            shared_session is not None and shared_session.uses_run_as
         )
         self._adb_session_failed = False
 
@@ -937,7 +983,7 @@ class BoundedPageMemoryReader:
                     self._adb_session = None
                 self._adb_session_failed = True
         if blobs is None:
-            if self._root_broker_mode:
+            if self._root_broker_mode or self._run_as_mode:
                 return False
             blobs = read_chunks(
                 self.adb_path,
@@ -1192,6 +1238,29 @@ def unwrap_property_value(
     return value_array[1]
 
 
+def unwrap_property_value_with_address(
+    reader: BoundedPageMemoryReader,
+    value: dict,
+    direct_address: int | None = None,
+) -> tuple[dict | None, int | None]:
+    """Return a numeric property's TValue and its inner numeric cell address."""
+    if not isinstance(value, dict):
+        return None, None
+    if value.get("kind") != "tagged":
+        return value, direct_address
+    table_address = tagged_pointer_from_value(value, LJ_TTAB)
+    table = read_gc_table(reader, table_address) if table_address is not None else None
+    values = read_gc_table_array(reader, table) if table else None
+    if (
+        values is None
+        or len(values) != 3
+        or values[0].get("kind") != "nil"
+        or values[2].get("kind") != "nil"
+    ):
+        return None, None
+    return values[1], int(table["array"]) + 8
+
+
 def read_ride_binding_properties(
     reader: BoundedPageMemoryReader,
     property_reference: dict | None,
@@ -1213,8 +1282,14 @@ def read_ride_binding_properties(
     for entry in entries:
         key = entry.get("key")
         if key in RIDE_BINDING_PROPERTY_NAMES:
-            value = unwrap_property_value(reader, entry.get("value"))
+            value, address = unwrap_property_value_with_address(
+                reader,
+                entry.get("value"),
+                int(entry["nodeAddress"]),
+            )
             if value is not None:
+                if address is not None:
+                    value = {**value, "tvalueAddress": hex(address)}
                 result[key] = value
     return result
 
@@ -1354,22 +1429,15 @@ def read_ride_skill_instances(
                 invalid_skill = True
                 break
             by_key = {entry["key"]: entry["value"] for entry in skill_entries}
-            skill_id = by_key.get("skillId")
-            exp = by_key.get("exp")
-            if (
-                not isinstance(skill_id, dict)
-                or skill_id.get("kind") != "i32"
-                or int(skill_id.get("value", 0)) <= 0
-                or not isinstance(exp, dict)
-                or exp.get("kind") != "i32"
-                or int(exp.get("value", -1)) < 0
-            ):
+            skill_id = read_property_int(by_key.get("skillId"))
+            exp = read_property_int(by_key.get("exp"))
+            if skill_id is None or skill_id <= 0 or exp is None or exp < 0:
                 invalid_skill = True
                 break
             skill_record = {
                 "slotIndex": slot_index,
-                "skillId": int(skill_id["value"]),
-                "exp": int(exp["value"]),
+                "skillId": skill_id,
+                "exp": exp,
             }
             skill_name = (skill_name_map or {}).get(skill_record["skillId"])
             if skill_name is not None:
@@ -1396,6 +1464,9 @@ def read_ride_skill_instances(
         if growth_rate is not None:
             instance["growthRate"] = growth_rate
             instance["growthRateSource"] = "LocalRide.PropertyValueDict.GROWUP"
+            growth_value = binding_properties.get("GROWUP")
+            if isinstance(growth_value, dict) and growth_value.get("tvalueAddress"):
+                instance["growthRateAddress"] = growth_value["tvalueAddress"]
         if is_riding is not None:
             instance["isRiding"] = is_riding
         if binding_properties:
@@ -1748,6 +1819,59 @@ def bind_current_ride_instance(candidate: dict) -> None:
     candidate["rideBindingSource"] = "LocalRide.PropertyValueDict.SHAPE+RIDEING"
 
 
+def bind_refine_ride_instance(
+    candidate: dict,
+    preferred_ride_instance_id: str = "",
+) -> None:
+    """Bind either the mounted ride or an explicitly selected refine ride.
+
+    A preferred ID comes from an already validated preset A050 frame.  It is
+    only accepted when exactly one formal LocalRide instance carries that ID;
+    ``read_ride_refine_cards`` separately proves that the live ``m_RideIns``
+    refine-page object carries the same ID and exposes all 21 cards.
+    """
+    preferred = str(preferred_ride_instance_id or "").strip()
+    if not preferred:
+        bind_current_ride_instance(candidate)
+        return
+
+    candidate.pop("activeRideInstanceId", None)
+    candidate.pop("rideBindingSource", None)
+    candidate["rideBindingStatus"] = "unresolved"
+    instances = candidate.get("rideInstances")
+    if (
+        len(preferred) != 19
+        or not preferred.isascii()
+        or not preferred.isdigit()
+        or not isinstance(instances, list)
+    ):
+        return
+
+    for instance in instances:
+        if isinstance(instance, dict):
+            instance.pop("isCurrent", None)
+    matches = [
+        instance
+        for instance in instances
+        if isinstance(instance, dict)
+        and instance.get("rideInstanceId") == preferred
+    ]
+    if len(matches) != 1:
+        if len(matches) > 1:
+            candidate["rideBindingStatus"] = "ambiguous"
+        return
+
+    selected = matches[0]
+    skills = selected.get("skills")
+    if not isinstance(skills, list) or len(skills) != 3:
+        return
+
+    selected["isCurrent"] = True
+    candidate["activeRideInstanceId"] = preferred
+    candidate["rideBindingStatus"] = "refine_selected"
+    candidate["rideBindingSource"] = "LocalRide.m_RideIns+PresetA050"
+
+
 def copy_current_ride_growth_rate(candidate: dict) -> None:
     """Expose the bound instance GROWUP as the current player growth rate."""
     instances = candidate.get("rideInstances")
@@ -1779,20 +1903,22 @@ def discover_key_objects(
     chunk_size: int,
     timeout: float,
     session: AdbPageMemoryReadSession | None = None,
+    field_names: Iterable[str] = DISCOVERED_FIELD_NAMES,
 ) -> dict[str, list[int]]:
-    key_objects: dict[str, set[int]] = {name: set() for name in DISCOVERED_FIELD_NAMES}
-    names = [(name, name.encode("utf-8")) for name in DISCOVERED_FIELD_NAMES]
+    selected_names = tuple(field_names)
+    key_objects: dict[str, set[int]] = {name: set() for name in selected_names}
+    names = [(name, name.encode("utf-8")) for name in selected_names]
     chunks = chunk_ranges(ranges, chunk_size)
-    for (chunk_start, chunk_size_value), blob in zip(
-        chunks,
-        read_chunks(adb_path, serial, pid, chunks, timeout, session=session),
-    ):
+    blobs = read_chunks(adb_path, serial, pid, chunks, timeout, session=session)
+    for (chunk_start, chunk_size_value), blob in zip(chunks, blobs):
         if len(blob) != chunk_size_value:
             continue
         for name, needle in names:
             for offset in find_all(blob, needle, 128):
                 if verify_gcstr(blob, offset, needle):
                     key_objects[name].add(chunk_start + offset - GCSTR_SIZE)
+    if getattr(blobs, "incomplete", False):
+        raise MemoryReadTransportError("incomplete chunk read during field discovery")
     return {name: sorted(values) for name, values in key_objects.items() if values}
 
 
@@ -1813,10 +1939,8 @@ def scan_references(
     ]
     references: list[dict] = []
     chunks = chunk_ranges(ranges, chunk_size)
-    for (chunk_start, chunk_size_value), blob in zip(
-        chunks,
-        read_chunks(adb_path, serial, pid, chunks, timeout, session=session),
-    ):
+    blobs = read_chunks(adb_path, serial, pid, chunks, timeout, session=session)
+    for (chunk_start, chunk_size_value), blob in zip(chunks, blobs):
         if len(blob) != chunk_size_value:
             continue
         for name, object_address, needle in needles:
@@ -1836,8 +1960,49 @@ def scan_references(
                     }
                 )
                 if len(references) >= 4000:
+                    if getattr(blobs, "incomplete", False):
+                        raise MemoryReadTransportError(
+                            "incomplete chunk read during reference scan"
+                        )
                     return references
+    if getattr(blobs, "incomplete", False):
+        raise MemoryReadTransportError("incomplete chunk read during reference scan")
     return references
+
+
+def validated_cached_key_objects(
+    adb_path: str,
+    serial: str,
+    pid: int,
+    ranges: list[tuple[int, int]],
+    cache: dict,
+    chunk_size: int,
+    timeout: float,
+    session: AdbPageMemoryReadSession | None = None,
+) -> dict[str, list[int]] | None:
+    """Reuse cached field strings only while their GCstr contents still match."""
+    raw_references = cache.get("references")
+    if not isinstance(raw_references, list):
+        return None
+    descriptors = {
+        item.get("name"): item
+        for item in raw_references
+        if isinstance(item, dict) and item.get("name") in FIELD_NAMES
+    }
+    if any(name not in descriptors for name in FIELD_NAMES):
+        return None
+    reader = BoundedPageMemoryReader(
+        adb_path, serial, pid, ranges, timeout, shared_session=session
+    )
+    key_objects: dict[str, list[int]] = {}
+    for name in FIELD_NAMES:
+        address = parse_address(descriptors[name].get("stringObject"))
+        if address is None:
+            return None
+        if read_gcstr(reader, address) != name:
+            return None
+        key_objects[name] = [address]
+    return key_objects
 
 
 def nearest_field(references: list[dict], name: str, anchor: int, max_distance: int) -> dict | None:
@@ -1924,6 +2089,7 @@ def build_local_candidates(references: list[dict], max_distance: int) -> list[di
             name: {
                 "reference": group[name]["reference"],
                 "nodeValueAddress": group[name]["nodeValueAddress"],
+                "stringObject": group[name].get("stringObject"),
             }
             for name in FIELD_NAMES
         }
@@ -1992,6 +2158,11 @@ def reference_descriptor(reference: dict) -> dict | None:
         "name": name,
         "reference": hex(reference_address),
         "nodeValueAddress": hex(node_value_address),
+        **(
+            {"stringObject": hex(parse_address(reference.get("stringObject")))}
+            if parse_address(reference.get("stringObject")) is not None
+            else {}
+        ),
     }
 
 
@@ -2742,6 +2913,7 @@ def refresh_cached_references(
     reader: BoundedPageMemoryReader,
     descriptors: list[dict],
     warm_pages: Iterable[int] | None = None,
+    verify_reference_slots: bool = False,
 ) -> list[dict] | None:
     spans: list[tuple[int, int]] = []
     normalized: list[dict] = []
@@ -2753,6 +2925,11 @@ def refresh_cached_references(
         if node_value_address is None:
             return None
         spans.append((node_value_address, 8))
+        if verify_reference_slots:
+            reference_address = parse_address(item.get("reference"))
+            if reference_address is None:
+                return None
+            spans.append((reference_address, 8))
         normalized.append(item)
     spans.extend((page, PAGE_SIZE) for page in (warm_pages or []))
     if not reader.prefetch(spans):
@@ -2760,11 +2937,25 @@ def refresh_cached_references(
 
     refreshed: list[dict] = []
     for item in normalized:
+        if verify_reference_slots:
+            reference_address = parse_address(item["reference"])
+            string_object = parse_address(item.get("stringObject"))
+            reference_raw = reader.read(reference_address, 8) if reference_address is not None else b""
+            live_string_object = tagged_pointer(reference_raw, LJ_TSTR)
+            if (
+                len(reference_raw) != 8
+                or live_string_object is None
+                or (string_object is not None and live_string_object != string_object)
+                or read_gcstr(reader, live_string_object) != item["name"]
+            ):
+                return None
         node_value_address = parse_address(item["nodeValueAddress"])
         raw = reader.read(node_value_address, 8) if node_value_address is not None else b""
         if len(raw) != 8:
             return None
         refreshed_item = dict(item)
+        if verify_reference_slots:
+            refreshed_item["stringObject"] = hex(live_string_object)
         refreshed_item["nodeValue"] = decode_tvalue(raw)
         refreshed.append(refreshed_item)
     return refreshed
@@ -2854,12 +3045,37 @@ def read_cached_snapshot(
     point_hint: dict | None = None,
     point_capture: dict | None = None,
     card_timing: dict[str, float] | None = None,
+    preferred_ride_instance_id: str = "",
+    speed_only: bool = False,
 ) -> tuple[dict, int, int, list[int]] | None:
     ranges = cache.get("ranges")
     cached_candidate = cache.get("candidate")
     cached_references = cache.get("references")
     if not isinstance(ranges, list) or not isinstance(cached_candidate, dict) or not isinstance(cached_references, list):
         return None
+
+    if speed_only:
+        candidate_references = cached_candidate.get("references")
+        if not isinstance(candidate_references, dict):
+            return None
+        core_keys: set[tuple[str, int]] = set()
+        for name in FIELD_NAMES:
+            item = candidate_references.get(name)
+            if not isinstance(item, dict):
+                return None
+            descriptor = reference_descriptor({**item, "name": name})
+            reference_address = parse_address(descriptor.get("reference")) if descriptor else None
+            if descriptor is None or reference_address is None:
+                return None
+            core_keys.add((name, reference_address))
+
+        cached_references = [
+            reference for reference in cached_references
+            if isinstance(reference, dict)
+            and (reference.get("name"), parse_address(reference.get("reference"))) in core_keys
+        ]
+        if len({(item.get("name"), parse_address(item.get("reference"))) for item in cached_references}) != len(core_keys):
+            return None
 
     reader = BoundedPageMemoryReader(
         adb_path,
@@ -2873,12 +3089,16 @@ def read_cached_snapshot(
         reader,
         cached_references,
         warm_pages=cache.get("warmPages"),
+        verify_reference_slots=speed_only,
     )
     if refreshed_references is None:
         return None
     candidate = build_cached_candidate(cached_candidate, refreshed_references)
     if candidate is None:
         return None
+
+    if speed_only:
+        return candidate, len(ranges), len(reader.pages), sorted(reader.accessed_pages)
 
     card_started = time.perf_counter()
     candidate["rideInstances"] = read_ride_skill_instances(
@@ -2891,7 +3111,7 @@ def read_cached_snapshot(
         skill_name_map=skill_name_map,
         reader=reader,
     )
-    bind_current_ride_instance(candidate)
+    bind_refine_ride_instance(candidate, preferred_ride_instance_id)
     copy_current_ride_growth_rate(candidate)
     candidate["rideRefineCards"] = read_ride_refine_cards(
         adb_path,
@@ -3048,6 +3268,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--adb", required=True)
     parser.add_argument("--serial", default="")
     parser.add_argument("--pid", type=int, required=True)
+    access_group = parser.add_mutually_exclusive_group()
+    access_group.add_argument(
+        "--run-as-package",
+        default="",
+        help="Use Android run-as for a debuggable app instead of su.",
+    )
     parser.add_argument("--chunk-size", type=lambda value: int(value, 0), default=0x200000)
     parser.add_argument("--max-ranges", type=int, default=0)
     parser.add_argument("--min-range", type=lambda value: int(value, 0), default=0x10000)
@@ -3061,16 +3287,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use only the validated same-process read plan; never rediscover it.",
     )
     parser.add_argument(
+        "--speed-only",
+        action="store_true",
+        help="Resolve only mounted local-player speed fields; skip ride skills and refine cards.",
+    )
+    parser.add_argument(
         "--require-complete-refine-cards",
         action="store_true",
         help="Require the complete 21-card refine page before returning a snapshot.",
     )
     parser.add_argument(
-        "--server",
-        action="store_true",
-        help="Keep one read-only probe process and rooted ADB shell for JSONL requests.",
+        "--preferred-refine-ride-instance-id",
+        default="",
+        help="Bind the refine page to this validated 19-digit preset A050 ride ID.",
     )
     parser.add_argument(
+        "--server",
+        action="store_true",
+        help="Keep one read-only probe process and ADB shell for JSONL requests.",
+    )
+    access_group.add_argument(
         "--root-broker-pipe",
         default="",
         help="Use the desktop process-wide Root shell broker instead of starting adb su.",
@@ -3079,9 +3315,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) -> int:
+    preferred_ride_instance_id = str(
+        getattr(args, "preferred_refine_ride_instance_id", "") or ""
+    ).strip()
+    if preferred_ride_instance_id and (
+        len(preferred_ride_instance_id) != 19
+        or not preferred_ride_instance_id.isascii()
+        or not preferred_ride_instance_id.isdigit()
+    ):
+        raise ValueError("preferred refine ride instance ID must contain 19 ASCII digits")
+    args.preferred_refine_ride_instance_id = preferred_ride_instance_id
+    speed_only = bool(getattr(args, "speed_only", False))
+
     owns_runtime = runtime is None
     probe_runtime = runtime or ProbeRuntime(
-        getattr(args, "root_broker_pipe", "")
+        getattr(args, "root_broker_pipe", ""),
+        getattr(args, "run_as_package", ""),
     )
     request_sequence = probe_runtime.begin_request()
     read_path_override = ""
@@ -3177,9 +3426,14 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
 
         cache_path = Path(args.cache_path) if args.cache_path else None
         warm_hint_path = probe_warm_hints_path(cache_path)
-        # Absolute point addresses are process-local only.  A map, identity,
-        # binding or complete-card mismatch discards the plan immediately.
+        hold_rebind = speed_only and bool(getattr(args, "hold_rebind", False))
+        rebind_cache: dict | None = None
+        # Absolute point addresses stay process-local. Every request rechecks
+        # process identity, mappings, field keys, and core player bindings.
         point_plan = probe_runtime.get_point_plan(identity)
+        if not speed_only and isinstance(point_plan, dict) and point_plan.get("speedOnly") is True:
+            probe_runtime.clear_point_plan()
+            point_plan = None
         ranges: list[tuple[int, int]] | None = None
         if isinstance(point_plan, dict):
             ranges = filtered_ranges(session)
@@ -3208,18 +3462,21 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                     point_hint=point_hint,
                     point_capture=point_capture,
                     card_timing=probe_runtime.timing,
+                    preferred_ride_instance_id=args.preferred_refine_ride_instance_id,
+                    speed_only=speed_only,
                 )
             if point_snapshot is not None:
                 candidate, ranges_count, chunks_read, accessed_pages = point_snapshot
                 complete_cards = has_complete_ride_refine_cards(candidate)
                 if not args.require_complete_refine_cards or complete_cards:
-                    if complete_cards and point_capture:
+                    if speed_only or (complete_cards and point_capture):
                         point_cache["warmPages"] = accessed_pages
                         probe_runtime.set_point_plan(
                             identity,
                             point_cache,
-                            point_capture,
+                            {} if speed_only else point_capture,
                             sequence=request_sequence,
+                            speed_only=speed_only,
                         )
                     emit_snapshot(
                         args.pid,
@@ -3233,7 +3490,12 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                         read_path="point",
                     )
                     return 0
-            probe_runtime.clear_point_plan()
+            if hold_rebind and isinstance(point_cache, dict):
+                # Keep the last same-process keys as a validated hint while
+                # discovery searches for the moved table node.
+                rebind_cache = point_cache
+            else:
+                probe_runtime.clear_point_plan()
             read_path_override = "fallback"
 
         cached = load_probe_cache(cache_path, identity)
@@ -3257,6 +3519,8 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                 session=session,
                 point_capture=cached_capture,
                 card_timing=probe_runtime.timing,
+                preferred_ride_instance_id=args.preferred_refine_ride_instance_id,
+                speed_only=speed_only,
             )
             if cached_snapshot is not None:
                 candidate, ranges_count, chunks_read, accessed_pages = cached_snapshot
@@ -3282,18 +3546,23 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                         ranges,
                         accessed_pages,
                     )
-                    if cache_payload is not None and has_complete_ride_refine_cards(candidate) and cached_capture:
+                    if cache_payload is not None and (
+                        speed_only
+                        or (has_complete_ride_refine_cards(candidate) and cached_capture)
+                    ):
                         probe_runtime.set_point_plan(
                             identity,
                             cache_payload,
-                            cached_capture,
+                            {} if speed_only else cached_capture,
                             sequence=request_sequence,
+                            speed_only=speed_only,
                         )
-                    write_probe_cache(cache_path, cache_payload)
-                    write_probe_warm_hints(
-                        warm_hint_path,
-                        build_probe_warm_hints_from_cache(cache_payload),
-                    )
+                    if not speed_only:
+                        write_probe_cache(cache_path, cache_payload)
+                        write_probe_warm_hints(
+                            warm_hint_path,
+                            build_probe_warm_hints_from_cache(cache_payload),
+                        )
                     emit_snapshot(
                         args.pid,
                         identity,
@@ -3367,6 +3636,8 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                 session=session,
                 point_capture=warm_capture,
                 card_timing=probe_runtime.timing,
+                preferred_ride_instance_id=args.preferred_refine_ride_instance_id,
+                speed_only=speed_only,
             )
             if warm_snapshot is not None:
                 candidate, ranges_count, chunks_read, accessed_pages = warm_snapshot
@@ -3377,14 +3648,17 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                         ranges,
                         accessed_pages,
                     )
-                    if cache_payload is not None and complete_cards and warm_capture:
+                    if cache_payload is not None and (
+                        speed_only or (complete_cards and warm_capture)
+                    ):
                         probe_runtime.set_point_plan(
                             identity,
                             cache_payload,
-                            warm_capture,
+                            {} if speed_only else warm_capture,
                             sequence=request_sequence,
+                            speed_only=speed_only,
                         )
-                    if cache_payload is not None:
+                    if cache_payload is not None and not speed_only:
                         write_probe_cache(cache_path, cache_payload)
                         write_probe_warm_hints(
                             warm_hint_path,
@@ -3405,12 +3679,51 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                     return 0
             read_path_override = "fallback"
 
-        priority_ranges = select_warm_hint_priority_ranges(warm_hints, ranges)
+        rebind_key_objects = (
+            validated_cached_key_objects(
+                args.adb,
+                args.serial,
+                args.pid,
+                ranges,
+                rebind_cache,
+                args.chunk_size,
+                args.read_timeout,
+                session=session,
+            )
+            if hold_rebind and rebind_cache is not None
+            else None
+        )
+        rebind_hints = (
+            build_probe_warm_hints_from_cache(rebind_cache)
+            if rebind_key_objects is not None and rebind_cache is not None
+            else None
+        )
+        rebind_range_sizes = (
+            _normalize_warm_hint_ranges(rebind_hints.get("ranges"))
+            if rebind_hints is not None
+            else None
+        )
+        priority_hints = (
+            {"rangeSizes": rebind_range_sizes, "candidate": rebind_hints["candidate"]}
+            if rebind_hints is not None and rebind_range_sizes is not None
+            else warm_hints
+        )
+        priority_ranges = select_warm_hint_priority_ranges(priority_hints, ranges)
         cold_priority_ranges = (
             [] if priority_ranges else select_cold_priority_ranges(ranges)
         )
         discovery_plans: list[tuple[list[tuple[int, int]], bool, str]] = []
-        if priority_ranges:
+        cached_key_priority = priority_ranges or cold_priority_ranges
+        if hold_rebind and rebind_key_objects is not None and cached_key_priority:
+            discovery_plans.append((cached_key_priority, bool(priority_ranges), "warm" if priority_ranges else "cold"))
+            priority_set = set(cached_key_priority)
+            remaining_ranges = [item for item in ranges if item not in priority_set]
+            if remaining_ranges:
+                discovery_plans.append((remaining_ranges, False, "fallback"))
+        elif hold_rebind:
+            # An untrusted/missing hint must not add a partial pass before discovery.
+            discovery_plans.append((ranges, False, "fallback" if read_path_override else "cold"))
+        elif priority_ranges:
             discovery_plans.append((priority_ranges, True, "warm"))
         elif cold_priority_ranges:
             discovery_plans.append((cold_priority_ranges, False, "cold"))
@@ -3419,20 +3732,33 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
             if priority_ranges or cold_priority_ranges or read_path_override
             else "cold"
         )
-        discovery_plans.append((ranges, False, full_discover_path))
+        if not hold_rebind:
+            discovery_plans.append((ranges, False, full_discover_path))
 
+        priority_references: list[dict] = []
         for plan_index, (discovery_ranges, is_warm_priority, plan_path) in enumerate(discovery_plans):
             has_fallback = plan_index + 1 < len(discovery_plans)
+            if not hold_rebind:
+                probe_read_path = read_path_override or plan_path
+            elif rebind_key_objects is None:
+                probe_read_path = "rebind_full_discovery"
+            elif cached_key_priority and plan_index == 0:
+                probe_read_path = "rebind_priority"
+            else:
+                probe_read_path = "rebind_scan"
             discovery_chunks = chunk_ranges(discovery_ranges, args.chunk_size)
-            key_objects = discover_key_objects(
-                args.adb,
-                args.serial,
-                args.pid,
-                discovery_ranges,
-                args.chunk_size,
-                args.read_timeout,
-                session=session,
-            )
+            key_objects = rebind_key_objects
+            if key_objects is None:
+                key_objects = discover_key_objects(
+                    args.adb,
+                    args.serial,
+                    args.pid,
+                    discovery_ranges,
+                    args.chunk_size,
+                    args.read_timeout,
+                    session=session,
+                    field_names=FIELD_NAMES if speed_only else DISCOVERED_FIELD_NAMES,
+                )
             missing_fields = [name for name in FIELD_NAMES if name not in key_objects]
             if missing_fields:
                 if has_fallback:
@@ -3446,7 +3772,7 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                     len(ranges),
                     0,
                     missing_fields=missing_fields,
-                    read_path=read_path_override or plan_path,
+                    read_path=probe_read_path,
                 )
                 return 3
 
@@ -3460,6 +3786,11 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                 args.read_timeout,
                 session=session,
             )
+            if hold_rebind and rebind_key_objects is not None and cached_key_priority:
+                if plan_index == 0:
+                    priority_references = references
+                else:
+                    references = priority_references + references
             candidates = build_local_candidates(references, args.candidate_distance)
             if len(candidates) == 1:
                 rich_reader = BoundedPageMemoryReader(
@@ -3471,36 +3802,40 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                     shared_session=session,
                 )
                 point_capture: dict = {}
-                card_parse_started = time.perf_counter()
-                if all(name in key_objects for name in OPTIONAL_RIDE_SKILL_FIELD_NAMES):
-                    ride_instances = read_ride_skill_instances(
+                if not speed_only:
+                    card_parse_started = time.perf_counter()
+                    if all(name in key_objects for name in OPTIONAL_RIDE_SKILL_FIELD_NAMES):
+                        ride_instances = read_ride_skill_instances(
+                            args.adb,
+                            args.serial,
+                            args.pid,
+                            ranges,
+                            references,
+                            args.read_timeout,
+                            skill_name_map=ride_skill_name_map,
+                            reader=rich_reader,
+                        )
+                        candidates[0]["rideInstances"] = ride_instances
+                    else:
+                        candidates[0]["rideInstances"] = []
+                    bind_refine_ride_instance(
+                        candidates[0],
+                        args.preferred_refine_ride_instance_id,
+                    )
+                    copy_current_ride_growth_rate(candidates[0])
+                    candidates[0]["rideRefineCards"] = read_ride_refine_cards(
                         args.adb,
                         args.serial,
                         args.pid,
                         ranges,
                         references,
+                        candidates[0],
                         args.read_timeout,
                         skill_name_map=ride_skill_name_map,
                         reader=rich_reader,
+                        point_capture=point_capture,
                     )
-                    candidates[0]["rideInstances"] = ride_instances
-                else:
-                    candidates[0]["rideInstances"] = []
-                bind_current_ride_instance(candidates[0])
-                copy_current_ride_growth_rate(candidates[0])
-                candidates[0]["rideRefineCards"] = read_ride_refine_cards(
-                    args.adb,
-                    args.serial,
-                    args.pid,
-                    ranges,
-                    references,
-                    candidates[0],
-                    args.read_timeout,
-                    skill_name_map=ride_skill_name_map,
-                    reader=rich_reader,
-                    point_capture=point_capture,
-                )
-                probe_runtime.add_card_parse_time(card_parse_started)
+                    probe_runtime.add_card_parse_time(card_parse_started)
                 complete_cards = has_complete_ride_refine_cards(candidates[0])
                 if args.require_complete_refine_cards and not complete_cards:
                     if has_fallback:
@@ -3514,7 +3849,7 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                         len(ranges),
                         len(discovery_chunks),
                         strategy="luajit_gc64_table_nodes",
-                        read_path=read_path_override or plan_path,
+                        read_path=probe_read_path,
                     )
                     return 3
                 cache_payload = (
@@ -3529,14 +3864,17 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                     if not args.require_complete_refine_cards or complete_cards
                     else None
                 )
-                if cache_payload is not None and complete_cards and point_capture:
+                if cache_payload is not None and (
+                    speed_only or (complete_cards and point_capture)
+                ):
                     probe_runtime.set_point_plan(
                         identity,
                         cache_payload,
-                        point_capture,
+                        {} if speed_only else point_capture,
                         sequence=request_sequence,
+                        speed_only=speed_only,
                     )
-                if cache_path and cache_payload is not None:
+                if cache_path and cache_payload is not None and not speed_only:
                     write_probe_cache(cache_path, cache_payload)
                     write_probe_warm_hints(
                         warm_hint_path,
@@ -3556,7 +3894,7 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                         else "luajit_gc64_table_nodes"
                     ),
                     warm_start=is_warm_priority,
-                    read_path=read_path_override or plan_path,
+                    read_path=probe_read_path,
                 )
                 return 0
             if has_fallback:
@@ -3570,7 +3908,7 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                 candidates,
                 len(ranges),
                 len(discovery_chunks),
-                read_path=read_path_override or plan_path,
+                read_path=probe_read_path,
             )
             return 3
     finally:
@@ -3585,7 +3923,10 @@ def server_error_snapshot(pid: int, diagnostic_code: str, message: str) -> dict:
 
 
 def run_server(args: argparse.Namespace) -> int:
-    runtime = ProbeRuntime(getattr(args, "root_broker_pipe", ""))
+    runtime = ProbeRuntime(
+        getattr(args, "root_broker_pipe", ""),
+        getattr(args, "run_as_package", ""),
+    )
     try:
         print(
             json.dumps(
@@ -3626,12 +3967,25 @@ def run_server(args: argparse.Namespace) -> int:
                 request_args.cache_only = bool(
                     payload.get("cacheOnly", args.cache_only)
                 )
+                request_args.speed_only = bool(
+                    payload.get("speedOnly", getattr(args, "speed_only", False))
+                )
+                request_args.hold_rebind = bool(
+                    payload.get("holdRebind", getattr(args, "hold_rebind", False))
+                )
                 request_args.require_complete_refine_cards = bool(
                     payload.get(
                         "requireCompleteRefineCards",
                         args.require_complete_refine_cards,
                     )
                 )
+                request_args.preferred_refine_ride_instance_id = str(
+                    payload.get(
+                        "preferredRefineRideInstanceId",
+                        args.preferred_refine_ride_instance_id,
+                    )
+                    or ""
+                ).strip()
                 raw_timeout = payload.get("readTimeout", args.read_timeout)
                 request_timeout = float(raw_timeout)
                 if not math.isfinite(request_timeout) or request_timeout <= 0:
@@ -3655,6 +4009,13 @@ def run_server(args: argparse.Namespace) -> int:
             except subprocess.TimeoutExpired:
                 result = server_error_snapshot(request_pid, "adb_timeout", "ADB read timed out")
                 result["requestId"] = request_id
+            except MemoryReadTransportError as error:
+                result = server_error_snapshot(
+                    request_pid,
+                    "memory_read_transport_failed",
+                    str(error),
+                )
+                result["requestId"] = request_id
             except Exception as error:
                 result = server_error_snapshot(request_pid, "probe_server_request_failed", str(error))
                 result["requestId"] = request_id
@@ -3669,7 +4030,11 @@ def main() -> int:
     args = build_parser().parse_args()
     if args.server:
         return run_server(args)
-    return probe_once(args)
+    try:
+        return probe_once(args)
+    except MemoryReadTransportError as error:
+        print(json.dumps(server_error_snapshot(args.pid, "memory_read_transport_failed", str(error))))
+        return 2
 
 
 if __name__ == "__main__":

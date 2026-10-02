@@ -1,16 +1,10 @@
 <div align="center">
-<p><img src="https://www.wpe64.com/assets/img/wpe.ico" height="150"></p>
+# 小黑封包助手
 
-# Winsock Packet Editor（WPE x64）
+**个人开发维护**
 
-<img src="https://img.shields.io/github/license/x-nas/WinsockPacketEditor" alt="License"></img>
-[![Visitors](https://visitor-badge.laobi.icu/badge?page_id=x-nas.WinsockPacketEditor&title=Visitors)](https://github.com/x-nas/WinsockPacketEditor)
-![GitHub Repo stars](https://img.shields.io/github/stars/x-nas/WinsockPacketEditor?style=dark)
-![GitHub Repo forks](https://img.shields.io/github/forks/x-nas/WinsockPacketEditor?style=dark)
-[![Release](https://img.shields.io/github/v/release/x-nas/WinsockPacketEditor?sort=semver)](https://github.com/x-nas/WinsockPacketEditor/releases)
-
-&bull; <a href="https://www.wpe64.com">官方网站</a>
-&bull; <a href="https://www.wpe64.com">Official website</a>
+[![License](https://img.shields.io/github/license/17769036603/WinsockPacketEditor)](https://github.com/17769036603/WinsockPacketEditor/blob/master/LICENSE)
+[![Release](https://img.shields.io/github/v/release/17769036603/WinsockPacketEditor?sort=semver)](https://github.com/17769036603/WinsockPacketEditor/releases)
 
 </div>
 

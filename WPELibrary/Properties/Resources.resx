@@ -329,7 +329,7 @@
   <data name="Startup_AdminRequired" xml:space="preserve"><value>注入模式需要管理员权限才能启动。</value></data>
   <data name="Startup_AdminRestartFailed" xml:space="preserve"><value>请求管理员权限失败：{0}</value></data>
   <data name="Startup_Failed" xml:space="preserve"><value>启动失败：{0}</value></data>
-  <data name="Injector_TargetNotApproved" xml:space="preserve"><value>当前进程已不再是允许注入的目标，请刷新进程列表后重试。</value></data>
+  <data name="Injector_TargetNotApproved" xml:space="preserve"><value>当前进程已不存在或进程名已变化，请刷新进程列表后重试。</value></data>
   <data name="Injector_LibraryMissing" xml:space="preserve"><value>程序目录中缺少 WPELibrary.dll。</value></data>
   <data name="Main_Start" xml:space="preserve"><value>开始 (&amp;K)</value></data>
   <data name="Main_Stop" xml:space="preserve"><value>停止 (&amp;T)</value></data>
@@ -361,6 +361,13 @@
   <data name="Main_AdvancedTools" xml:space="preserve"><value>高级工具</value></data>
   <data name="Main_PacketList" xml:space="preserve"><value>封包列表</value></data>
   <data name="Main_PacketData" xml:space="preserve"><value>封包数据</value></data>
+  <data name="UI_JevAnalyze" xml:space="preserve"><value>JEV分析</value></data>
+  <data name="UI_JevResultTitle" xml:space="preserve"><value>JEV分析结果</value></data>
+  <data name="UI_JevSelectPacket" xml:space="preserve"><value>请先选择一个封包。</value></data>
+  <data name="UI_JevEmptyPacket" xml:space="preserve"><value>当前封包没有可分析的数据。</value></data>
+  <data name="UI_JevNoKey" xml:space="preserve"><value>未找到 TYPESAFE_API_KEY，请在当前用户或系统环境变量中配置后重启程序。</value></data>
+  <data name="UI_JevRequestFailed" xml:space="preserve"><value>JEV 请求失败，HTTP 状态码：{0}。</value></data>
+  <data name="UI_JevFailed" xml:space="preserve"><value>JEV 分析失败，请查看系统日志。</value></data>
   <data name="UI_ReadableContentTitle" xml:space="preserve"><value>可读内容（自动识别）</value></data>
   <data name="UI_ReadableContentMetaLabel" xml:space="preserve"><value>可读内容信息</value></data>
   <data name="UI_ReadableContentPreview" xml:space="preserve"><value>可读内容预览</value></data>

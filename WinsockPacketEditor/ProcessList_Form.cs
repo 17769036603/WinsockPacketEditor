@@ -12,7 +12,7 @@ namespace WinsockPacketEditor
 {
     public partial class ProcessList_Form : Form
     {
-        private bool ShowEmulatorOnly = true;
+        private bool ShowEmulatorOnly = false;
         private readonly string selectEmulatorText;
         private readonly string showAllProcessesText;
         private string processEmptyStateText;
@@ -35,8 +35,13 @@ namespace WinsockPacketEditor
 
         #region//窗体加载
 
-        public ProcessList_Form()
+        public ProcessList_Form() : this(false)
+        {
+        }
+
+        public ProcessList_Form(bool showEmulatorOnly)
         {           
+            this.ShowEmulatorOnly = showEmulatorOnly;
             InitializeComponent();
             this.Text = UiText("进程列表", "Process List");
             this.bSelected.Text = UiText("确定", "OK");
@@ -100,11 +105,11 @@ namespace WinsockPacketEditor
             this.dgvProcessList.ColumnHeadersDefaultCellStyle.SelectionForeColor = Color.White;
             this.pbLoading.AccessibleName = UiText("正在加载进程", "Loading processes");
             this.processEmptyStateText = UiText(
-                "未找到可注入的模拟器引擎，请启动模拟器后刷新",
-                "No injectable emulator engine found. Start an emulator and refresh.");
+                "未找到可注入的本机进程，请刷新",
+                "No local process found for injection. Refresh the list.");
             this.processEmptySearchText = UiText(
-                "没有匹配的模拟器进程",
-                "No emulator process matches the search.");
+                "没有匹配的进程",
+                "No process matches the search.");
             this.AddProcessInfoColumns(resources);
             this.dgvProcessList.Columns["cProcessName"].HeaderText = UiText("进程名称", "Process");
             this.dgvProcessList.Columns["cProcessID"].HeaderText = UiText("进程编号", "ID");
@@ -325,7 +330,9 @@ namespace WinsockPacketEditor
 
         internal static bool IsSupportedInjectionProcess(string processName)
         {
-            return IsEmulatorMainProcess(processName);
+            // The chooser supplies a live local process row; selection and
+            // injection separately re-check its PID and current name.
+            return !string.IsNullOrWhiteSpace(processName);
         }
 
         internal static string[] GetSupportedInjectionProcessNames()

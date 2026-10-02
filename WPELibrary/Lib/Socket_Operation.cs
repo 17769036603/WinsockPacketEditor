@@ -2742,16 +2742,25 @@ namespace WPELibrary.Lib
                 Socket_Cache.SocketPacket.SockAddr saAddr = new Socket_Cache.SocketPacket.SockAddr();
                 saAddr.sin_family = (short)AddressFamily.InterNetwork;
                 int iAddrLen = Marshal.SizeOf(saAddr);
+                int result;
 
                 switch (IPType)
                 {
                     case Socket_Cache.SocketPacket.IPType.From:
-                        WS2_32.getsockname(Socket, ref saAddr, ref iAddrLen);
+                        result = WS2_32.getsockname(Socket, ref saAddr, ref iAddrLen);
                         break;
 
                     case Socket_Cache.SocketPacket.IPType.To:
-                        WS2_32.getpeername(Socket, ref saAddr, ref iAddrLen);
-                        break;                    
+                        result = WS2_32.getpeername(Socket, ref saAddr, ref iAddrLen);
+                        break;
+
+                    default:
+                        return sReturn;
+                }
+
+                if (result != 0)
+                {
+                    return sReturn;
                 }
 
                 sReturn = GetIP_BySockAddr(saAddr);                
@@ -4989,6 +4998,36 @@ namespace WPELibrary.Lib
 
         #region//发送封包
 
+        private static bool IsReceivePacketType(Socket_Cache.SocketPacket.PacketType packetType)
+        {
+            switch (packetType)
+            {
+                case Socket_Cache.SocketPacket.PacketType.WS1_Recv:
+                case Socket_Cache.SocketPacket.PacketType.WS2_Recv:
+                case Socket_Cache.SocketPacket.PacketType.WS1_RecvFrom:
+                case Socket_Cache.SocketPacket.PacketType.WS2_RecvFrom:
+                case Socket_Cache.SocketPacket.PacketType.WSARecv:
+                case Socket_Cache.SocketPacket.PacketType.WSARecvEx:
+                case Socket_Cache.SocketPacket.PacketType.WSARecvFrom:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool IsReceiveFromPacketType(Socket_Cache.SocketPacket.PacketType packetType)
+        {
+            switch (packetType)
+            {
+                case Socket_Cache.SocketPacket.PacketType.WS1_RecvFrom:
+                case Socket_Cache.SocketPacket.PacketType.WS2_RecvFrom:
+                case Socket_Cache.SocketPacket.PacketType.WSARecvFrom:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private static int SendNativeTcp(
             int socket,
             IntPtr buffer,
@@ -5048,6 +5087,19 @@ namespace WPELibrary.Lib
 
             try
             {
+                if (IsReceivePacketType(packetType))
+                {
+                    bool receiveFrom = IsReceiveFromPacketType(packetType);
+                    bool queued = WinSockHook.EnqueueReceiveReplay(
+                        Socket,
+                        bSendBuffer,
+                        receiveFrom ? sIPTo : string.Empty,
+                        receiveFrom);
+                    bytesSent = queued && bSendBuffer != null ? bSendBuffer.Length : 0;
+                    socketError = queued ? 0 : 10004;
+                    return queued;
+                }
+
                 if (Socket > 0 && bSendBuffer != null && bSendBuffer.Length > 0)
                 {
                     ipSend = Marshal.AllocHGlobal(bSendBuffer.Length);

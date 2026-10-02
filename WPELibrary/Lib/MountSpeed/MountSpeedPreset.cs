@@ -138,6 +138,12 @@ namespace WPELibrary.Lib.MountSpeed
         public double? TargetGrowthRate { get; set; }
 
         /// <summary>
+        /// 可选的坐骑炼化发送包十六进制模板。
+        /// 仅用于预设持久化；真实发送仍必须绑定当前注入会话的 Socket 路由。
+        /// </summary>
+        public string RefinePacketHex { get; set; } = string.Empty;
+
+        /// <summary>
         /// 创建一坐骑炼化的默认目标。
         /// 只由新建/未配置目标的编辑入口调用，不改变已有保存预设。
         /// </summary>

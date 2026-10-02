@@ -4,3 +4,4 @@ onnxruntime==1.28.0
 rapidocr==3.9.2
 Pillow==12.3.0
 numpy==1.26.4
+langsmith==0.14.0

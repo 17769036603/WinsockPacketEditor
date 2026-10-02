@@ -78,6 +78,53 @@ function Assert-True([bool]$condition, [string]$message) {
     }
 }
 
+$otherAssistantKind = [WPELibrary.AssistantRunKind]::Other
+$treasureAssistantKind = [WPELibrary.AssistantRunKind]::TreasureMap
+$mountRefineAssistantKind = [WPELibrary.AssistantRunKind]::MountRefine
+Assert-True (
+    [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether(
+        $treasureAssistantKind,
+        $mountRefineAssistantKind)
+) "A treasure-map assistant must be allowed beside one mount-refine assistant."
+Assert-True (
+    [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether(
+        $mountRefineAssistantKind,
+        $treasureAssistantKind)
+) "Mount-refine and treasure-map compatibility must be symmetric."
+Assert-True (-not [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether(
+    $treasureAssistantKind,
+    $treasureAssistantKind
+)) "Two treasure-map assistants must remain mutually exclusive."
+Assert-True (-not [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether(
+    $mountRefineAssistantKind,
+    $mountRefineAssistantKind
+)) "Two mount-refine assistants must remain mutually exclusive."
+Assert-True (-not [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether(
+    $otherAssistantKind,
+    $treasureAssistantKind
+)) "Other assistants must not inherit treasure-map concurrency."
+Assert-True (
+    [WPELibrary.AssistantRunConcurrencyPolicy]::Classify($true, $true) -eq
+        $otherAssistantKind
+) "A mixed treasure-map/mount-refine preset must fail closed as Other."
+$treasureActiveKinds = [WPELibrary.AssistantRunKind[]]@($treasureAssistantKind)
+Assert-True (
+    [WPELibrary.AssistantRunConcurrencyPolicy]::CanStart(
+        $treasureActiveKinds,
+        $mountRefineAssistantKind)
+) "One active treasure-map run must admit one mount-refine run."
+Assert-True (-not [WPELibrary.AssistantRunConcurrencyPolicy]::CanStart(
+    $treasureActiveKinds,
+    $treasureAssistantKind
+)) "One active treasure-map run must reject another treasure-map run."
+$bothAssistantKinds = [WPELibrary.AssistantRunKind[]]@(
+    $treasureAssistantKind,
+    $mountRefineAssistantKind)
+Assert-True (-not [WPELibrary.AssistantRunConcurrencyPolicy]::CanStart(
+    $bothAssistantKinds,
+    $otherAssistantKind
+)) "Two occupied compatible slots must reject every additional assistant."
+
 $packetType = [WPELibrary.Lib.Socket_Cache+SocketPacket+PacketType]::WS2_Send
 $capturedSocketA = New-Object WPELibrary.Lib.Socket_PacketInfo
 $capturedSocketA.PacketType = $packetType
@@ -410,10 +457,12 @@ try {
     $selectProcess = Get-PrivateField $injector "bSelectProcess"
     $inject = Get-PrivateField $injector "bInject"
     $processDisplay = Get-PrivateField $injector "tbProcessID"
+    $showEmulator = Get-PrivateField $injector "bShowEmulator"
 
     Assert-True ($injector.ClientSize.Width -ge 580) "Injector layout must leave room for visible localized action labels."
     Assert-True (-not [string]::IsNullOrWhiteSpace($selectProcess.Text)) "Process selection must not be icon-only."
     Assert-True (-not [string]::IsNullOrWhiteSpace($selectProcess.AccessibleName)) "Process selection needs an accessible name."
+    Assert-True ($showEmulator.Text -eq $showEmulator.AccessibleName) "The emulator shortcut needs a matching accessible name."
     Assert-True (-not $processDisplay.TabStop) "Read-only process display must not interrupt keyboard navigation."
     Assert-True ([object]::ReferenceEquals($injector.AcceptButton, $inject)) "Enter must target the primary injection action."
     Assert-True ($selectProcess.TabIndex -lt $inject.TabIndex) "Keyboard order must select a process before injection."
@@ -437,6 +486,15 @@ try {
 }
 finally {
     $processList.Dispose()
+}
+
+$emulatorProcessList = [WinsockPacketEditor.ProcessList_Form]::new($true)
+try {
+    $emulatorOnly = Get-PrivateField $emulatorProcessList "ShowEmulatorOnly"
+    Assert-True $emulatorOnly "The emulator shortcut must open the process list in emulator-only mode."
+}
+finally {
+    $emulatorProcessList.Dispose()
 }
 
 $preset = New-Object WPELibrary.Lib.Socket_ByteSweepPresetInfo
@@ -1619,7 +1677,9 @@ Assert-True ($sendFormSource.Contains("this.PostSendCounterUpdate();")) "Every o
 Assert-True ($sendFormSource.Contains("Interlocked.CompareExchange(ref this.sendCounterUpdateScheduled, 1, 0)")) "Live counter refreshes must be coalesced to avoid flooding the UI queue."
 Assert-True ($sendFormSource.Contains("private void UpdateSendCounterLabels()")) "Live and final send progress must share one label update path."
 Assert-True ($cacheSource.Contains("Socket_ByteAnnotationEngine.Clone(value.ByteAnnotations)")) "Sweep updates must retain edited byte annotations."
-Assert-True ($sendFormSource.Contains("Socket_Cache.SocketList.ResolveCurrentRoute(this.SPI)")) "Saved packet editors must resolve a matching current-session route."
+Assert-True ([regex]::IsMatch(
+    $sendFormSource,
+    'Socket_Cache\.SocketList\.ResolveCurrentRoute\(\s*this\.SPI')) "Saved packet editors must resolve a matching current-session route."
 Assert-True ($sendFormSource.Contains("this.InitSendParameters();")) "Reopened packet presets must restore their saved send mode and interval."
 Assert-True ($sendFormSource.Contains("this.rbSendType_Continuously.Checked")) "Preset saving must preserve continuous-send mode instead of rewriting it as one send."
 Assert-True ($sendWorkerSource.Contains("while (this.LoopCNT == 0 || loopIndex < this.LoopCNT)")) "A zero loop count must execute continuously until stopped."
@@ -1631,7 +1691,7 @@ Assert-True ($sendWorkerSource.Contains("this.resolvedSystemSocket = Math.Max(0,
 Assert-True ($sendWorkerSource.Contains("Socket = this.resolvedSystemSocket;")) "A running send worker must keep using its own Socket snapshot."
 Assert-True (-not $sendWorkerSource.Contains("Socket = Socket_Cache.System.SystemSocket;")) "A running send worker must not reread the mutable global Socket."
 Assert-True ($cacheSource.Contains("public static int FindLatestMatchingSocket(")) "Preset sends need a shared exact type-and-destination Socket matcher."
-Assert-True ($cacheSource.Contains("Socket_Cache.SocketList.ResolveCurrentRoutes(sendCollection)")) "Hotkey and direct preset sends must refresh every packet route before sending."
+Assert-True ($cacheSource.Contains("Socket_Cache.SocketList.ResolveCurrentRoutes(")) "Hotkey and direct preset sends must refresh every packet route before sending."
 Assert-True ($cacheSource.Contains("_ = DoSendAsync(SID);")) "Hotkey sends must start asynchronously without blocking the UI dispatcher."
 Assert-True ($cacheSource.Contains("public static int ManualSystemSocket")) "Automatic matching must keep an explicit manual fallback separate from resolved state."
 Assert-True ($cacheSource.Contains("internal static int ResolveSystemSocket(int matchedSocket)")) "Manual fallback selection and resolved-state updates must remain atomic."
@@ -1663,8 +1723,9 @@ Assert-True ($sendFormEnglishResources.Contains("Save preset")) "The save action
 
 $processListSource = Read-Source "WinsockPacketEditor\ProcessList_Form.cs"
 Assert-True ($processListSource.Contains("finally")) "Process loading must restore the UI after failures."
-Assert-True ($processListSource.Contains("private bool ShowEmulatorOnly = true;")) "Injection mode must default to approved emulator processes."
+Assert-True ($processListSource.Contains("private bool ShowEmulatorOnly = false;")) "Injection mode must show all local processes by default."
 Assert-True ($processListSource.Contains("IsSupportedInjectionProcess")) "Selected processes must be revalidated before injection."
+Assert-True ($processListSource.Contains("return !string.IsNullOrWhiteSpace(processName);")) "Non-emulator process names must be accepted after live PID/name validation."
 Assert-True (-not $processListSource.Contains("OpenFileDialog")) "Injection mode must not expose arbitrary EXE selection."
 
 $programSource = Read-Source "WinsockPacketEditor\Lib\Program.cs"

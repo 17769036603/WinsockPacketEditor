@@ -265,10 +265,21 @@ namespace WPELibrary.Lib.Android
             }
 
             int timeout = Math.Max(1000, timeoutMilliseconds);
-            this.commandGate.Wait(cancellationToken);
+            DateTime deadline = DateTime.UtcNow.AddMilliseconds(timeout);
+            int gateWaitMilliseconds = (int)Math.Max(
+                0,
+                Math.Min(int.MaxValue, (deadline - DateTime.UtcNow).TotalMilliseconds));
+            if (!this.commandGate.Wait(gateWaitMilliseconds, cancellationToken))
+            {
+                throw new TimeoutException("Android Root shell 命令等待超时。");
+            }
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (DateTime.UtcNow >= deadline)
+                {
+                    throw new TimeoutException("Android Root shell 命令等待超时。");
+                }
                 Process current;
                 lock (this.processSync)
                 {
@@ -303,7 +314,6 @@ namespace WPELibrary.Lib.Android
 
                 StringBuilder output = new StringBuilder();
                 int exitCode = -1;
-                DateTime deadline = DateTime.UtcNow.AddMilliseconds(timeout);
                 while (true)
                 {
                     int remainingMilliseconds = (int)Math.Max(
@@ -417,8 +427,14 @@ namespace WPELibrary.Lib.Android
                 StartInfo = startInfo,
                 EnableRaisingEvents = true
             };
+            TaskCompletionSource<bool> stderrCompletion = new TaskCompletionSource<bool>();
             next.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs args)
             {
+                if (args.Data == null)
+                {
+                    stderrCompletion.TrySetResult(true);
+                    return;
+                }
                 if (!string.IsNullOrWhiteSpace(args.Data))
                 {
                     this.lastError = args.Data.Trim();
@@ -449,14 +465,87 @@ namespace WPELibrary.Lib.Android
                 if (!string.Equals(ready == null ? string.Empty : ready.Trim(), ReadyMarker, StringComparison.Ordinal))
                 {
                     throw new InvalidOperationException(
-                        "Android Root shell 未返回就绪标记：" + (ready ?? "<empty>"));
+                        this.FormatStartupFailure(
+                            "Android Root shell 未返回就绪标记：" + (ready ?? "<empty>"),
+                            next,
+                            true,
+                            stderrCompletion.Task));
                 }
+            }
+            catch (TimeoutException ex)
+            {
+                string message = this.FormatStartupFailure(
+                    ex.Message,
+                    next,
+                    true,
+                    stderrCompletion.Task);
+                this.ResetProcess();
+                throw new TimeoutException(message, ex);
             }
             catch
             {
                 this.ResetProcess();
                 throw;
             }
+        }
+
+        private string FormatStartupFailure(
+            string message,
+            Process current,
+            bool terminate,
+            Task stderrReadCompleted)
+        {
+            StringBuilder detail = new StringBuilder(message ?? string.Empty);
+            int? exitCode = null;
+            try
+            {
+                if (current != null && terminate && !current.HasExited)
+                {
+                    try { current.StandardInput.Close(); } catch { }
+                    try { current.Kill(); } catch { }
+                    try { current.WaitForExit(500); } catch { }
+                }
+                if (current != null && !terminate && !current.HasExited)
+                {
+                    try { current.WaitForExit(100); } catch { }
+                }
+            }
+            catch
+            {
+                // The process may exit while its diagnostics are collected.
+            }
+            try
+            {
+                if (stderrReadCompleted != null)
+                {
+                    stderrReadCompleted.Wait(250);
+                }
+            }
+            catch
+            {
+                // Startup diagnostics must not wait indefinitely on stderr.
+            }
+            try
+            {
+                if (current != null && current.HasExited)
+                {
+                    exitCode = current.ExitCode;
+                }
+            }
+            catch
+            {
+                // The process may exit while its diagnostics are collected.
+            }
+            string error = this.lastError;
+            if (!string.IsNullOrWhiteSpace(error))
+            {
+                detail.Append(" stderr: ").Append(error.Trim());
+            }
+            if (exitCode.HasValue)
+            {
+                detail.Append(" adb exit code: ").Append(exitCode.Value);
+            }
+            return detail.ToString();
         }
 
         private void StartBroker()

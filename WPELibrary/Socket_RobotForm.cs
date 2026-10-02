@@ -10,6 +10,7 @@ using System.Resources;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Newtonsoft.Json.Linq;
 using WPELibrary.Lib;
 using WPELibrary.Lib.EquipmentRefine;
 using WPELibrary.Lib.Vision;
@@ -207,11 +208,14 @@ namespace WPELibrary
         private Button bClearMountPreset;
         private Label lblMountPresetStatus;
         private Button bRefreshMountSnapshot;
+        private Button bSetMountGrowthRate;
         private Label lblMountSnapshotStatus;
         private TextBox txtMountSnapshot;
         private CancellationTokenSource mountSnapshotCancellation;
         private WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader mountSnapshotReader;
         private WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot latestMountSnapshot;
+        private bool mountGrowthWriteRequiresFreshSnapshot;
+        private bool mountGrowthWriteRunning;
         private bool mountSnapshotClosing;
 
         #endregion
@@ -295,10 +299,7 @@ namespace WPELibrary
                 this.txtRobotName.Text = sriSelect.RName;
                 this.dtRobotInstruction = sriSelect.RInstruction.Copy();
                 if (sriSelect != null &&
-                    string.Equals(
-                        (sriSelect.RName ?? string.Empty).Trim(),
-                        WPELibrary.Lib.Socket_Cache.Robot.FirstRideRefinePresetName,
-                        StringComparison.Ordinal) &&
+                    WPELibrary.Lib.Socket_Cache.Robot.IsRideRefinePresetName(sriSelect.RName) &&
                     !this.HasMountSpeedInstructionRows())
                 {
                     this.dtRobotInstruction =
@@ -1886,7 +1887,7 @@ tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Paddin
 
                 GroupBox gbSnapshot = new GroupBox
                 {
-                    Text = "当前坐骑与目标预演（只读）",
+                    Text = "当前坐骑与目标预演（快照只读）",
                     Dock = DockStyle.Top,
                     AutoSize = true
                 };
@@ -1915,9 +1916,18 @@ tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Paddin
                 };
                 this.bRefreshMountSnapshot.Click += this.bRefreshMountSnapshot_Click;
                 snapshotActions.Controls.Add(this.bRefreshMountSnapshot);
+                this.bSetMountGrowthRate = new Button
+                {
+                    Text = "写当前成长率为 100.0",
+                    Width = 160,
+                    Enabled = false,
+                    AccessibleRole = AccessibleRole.PushButton
+                };
+                this.bSetMountGrowthRate.Click += this.bSetMountGrowthRate_Click;
+                snapshotActions.Controls.Add(this.bSetMountGrowthRate);
                 this.lblMountSnapshotStatus = new Label
                 {
-                    Text = "未读取；不会写入游戏或执行操作",
+                    Text = "未读取；成长率写入需复核并确认",
                     AutoSize = true,
                     ForeColor = Color.Gray,
                     Padding = new Padding(8, 6, 4, 0)
@@ -1933,7 +1943,7 @@ tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Paddin
                     ScrollBars = ScrollBars.Vertical,
                     WordWrap = false,
                     Font = new Font(FontFamily.GenericMonospace, 8.5F),
-                    Text = "保持游戏打开后点击“刷新只读快照”。此区域仅显示当前读取结果。"
+                    Text = "刷新用于只读显示；写入按钮只处理唯一绑定且正在骑乘的当前坐骑。"
                 };
                 snapshotLayout.Controls.Add(this.txtMountSnapshot, 0, 1);
                 gbSnapshot.Controls.Add(snapshotLayout);
@@ -2332,6 +2342,7 @@ tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Paddin
             CancellationTokenSource cancellation = new CancellationTokenSource();
             this.mountSnapshotCancellation = cancellation;
             this.bRefreshMountSnapshot.Enabled = false;
+            this.bSetMountGrowthRate.Enabled = false;
             this.lblMountSnapshotStatus.Text = "正在读取 Android 客户端（只读）...";
             this.lblMountSnapshotStatus.ForeColor = Color.DarkOrange;
             this.txtMountSnapshot.Text = string.Empty;
@@ -2428,6 +2439,8 @@ tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Paddin
                     refinePreview,
                     cardComparison);
                 this.latestMountSnapshot = result.Snapshot;
+                this.mountGrowthWriteRequiresFreshSnapshot = false;
+                this.UpdateMountGrowthRateWriteButton(result.Snapshot);
                 this.lblMountSnapshotStatus.Text = refinePreview.IsSatisfied
                     ? "读取成功：炼化目标已命中，当前仅显示结果"
                     : "读取成功：尚未命中炼化目标，当前仅显示结果";
@@ -2464,6 +2477,256 @@ tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Paddin
                     this.bRefreshMountSnapshot.Enabled = true;
                 }
             }
+        }
+
+        private async void bSetMountGrowthRate_Click(object sender, EventArgs e)
+        {
+            if (this.mountSnapshotCancellation != null ||
+                this.bSetMountGrowthRate == null ||
+                this.latestMountSnapshot == null)
+            {
+                return;
+            }
+
+            WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot currentRide;
+            string validationError;
+            WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot snapshot =
+                this.latestMountSnapshot;
+            if (!TryGetWritableCurrentRide(snapshot, out currentRide, out validationError))
+            {
+                this.bSetMountGrowthRate.Enabled = false;
+                MessageBox.Show(this, validationError, "无法写入成长率", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader reader =
+                this.mountSnapshotReader;
+            WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotLaunchContext context =
+                reader == null ? null : reader.LastSuccessfulLaunchContext;
+            if (context == null || context.ProcessId != snapshot.Process.Pid)
+            {
+                this.bSetMountGrowthRate.Enabled = false;
+                MessageBox.Show(
+                    this,
+                    "缺少与当前快照匹配的 Android 进程上下文，请先刷新坐骑快照。",
+                    "无法写入成长率",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            string oldGrowthRate = currentRide.GrowthRate.Value.ToString(CultureInfo.InvariantCulture);
+            string address = "0x" + currentRide.GrowthRateMemoryAddress.Value.ToString("X", CultureInfo.InvariantCulture);
+            string confirmation = string.Format(
+                CultureInfo.InvariantCulture,
+                "将把当前 Android 客户端内存中的坐骑 GROWUP 写为 100.0。\r\n\r\n" +
+                "角色 ID：{0}\r\n坐骑 ID：{1}\r\n坐骑实例：{2}\r\n当前成长率：{3}\r\n字段地址：{4}\r\n\r\n" +
+                "写入前会再次核对进程、骑乘绑定、地址和当前值，写入后会立即读回验证。继续吗？",
+                snapshot.PlayerId,
+                snapshot.MountId.Value,
+                snapshot.ActiveRideInstanceId,
+                oldGrowthRate,
+                address);
+            if (MessageBox.Show(
+                this,
+                confirmation,
+                "确认写入当前坐骑成长率",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning) != DialogResult.Yes)
+            {
+                return;
+            }
+
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            this.mountSnapshotCancellation = cancellation;
+            this.mountGrowthWriteRunning = true;
+            this.mountGrowthWriteRequiresFreshSnapshot = true;
+            this.bRefreshMountSnapshot.Enabled = false;
+            this.bSetMountGrowthRate.Enabled = false;
+            this.lblMountSnapshotStatus.Text = "已确认；正在复核并写入当前坐骑 GROWUP...";
+            this.lblMountSnapshotStatus.ForeColor = Color.DarkOrange;
+
+            try
+            {
+                reader.ReleaseProbeWorkerForExternalClient();
+                string resultJson = await Task.Run(
+                    () => WPELibrary.Lib.MountSpeed.MountSpeedHoldProcess.WriteGrowthRateOnce(
+                        context,
+                        snapshot.Process.StartTicks,
+                        snapshot.Process.Executable,
+                        snapshot.PlayerId,
+                        snapshot.MountId.Value,
+                        currentRide.GrowthRate.Value,
+                        currentRide.GrowthRateMemoryAddress.Value,
+                        snapshot.ActiveRideInstanceId,
+                        cancellation.Token),
+                    CancellationToken.None);
+                if (this.IsDisposed || this.mountSnapshotClosing)
+                {
+                    return;
+                }
+
+                JObject result = JObject.Parse(resultJson);
+                string status = result.Value<string>("status") ?? "unknown";
+                bool writeAttempted = result.Value<bool?>("writeAttempted") == true;
+                if (writeAttempted)
+                {
+                    this.mountGrowthWriteRequiresFreshSnapshot = true;
+                }
+
+                if (string.Equals(status, "field_verified", StringComparison.Ordinal) &&
+                    result.Value<bool?>("fieldVerified") == true)
+                {
+                    this.lblMountSnapshotStatus.Text = "写入后快照已核对当前坐骑 GROWUP=100.0；请刷新快照。";
+                    this.lblMountSnapshotStatus.ForeColor = Color.DarkGreen;
+                    this.txtMountSnapshot.Text =
+                        "写入地址即时读回为 100.0，随后只读快照再次核对当前绑定坐骑 GROWUP=100.0。" +
+                        "客户端 LuaJIT GC 仍可能移动表节点；此结果不代表服务端已接受或跨刷新持久。\r\n" +
+                        result.ToString(Newtonsoft.Json.Formatting.Indented);
+                }
+                else if (string.Equals(status, "address_readback", StringComparison.Ordinal))
+                {
+                    string error = result.Value<string>("error") ?? "写入后当前坐骑字段未能确认。";
+                    this.lblMountSnapshotStatus.Text = "只确认写入地址读回 100.0；当前坐骑字段未核实。请刷新后再操作。";
+                    this.lblMountSnapshotStatus.ForeColor = Color.Firebrick;
+                    this.txtMountSnapshot.Text =
+                        "内存地址读回为 100.0，但写后快照未能确认该地址仍对应当前坐骑 GROWUP。" +
+                        "请先刷新只读快照核对，不要立即重复写入。\r\n原因：" + error + "\r\n" +
+                        result.ToString(Newtonsoft.Json.Formatting.Indented);
+                }
+                else if (string.Equals(status, "ambiguous", StringComparison.Ordinal))
+                {
+                    this.lblMountSnapshotStatus.Text = "写入结果不明确；请刷新快照核对，暂勿重复写入。";
+                    this.lblMountSnapshotStatus.ForeColor = Color.Firebrick;
+                    this.txtMountSnapshot.Text =
+                        "写入或读回遇到错误，内存可能已改变。请先刷新只读快照核对，不要立即重复写入。\r\n" +
+                        result.ToString(Newtonsoft.Json.Formatting.Indented);
+                }
+                else
+                {
+                    string error = result.Value<string>("error") ?? "写入前复核失败。";
+                    this.lblMountSnapshotStatus.Text = "未完成成长率写入：" + error;
+                    this.lblMountSnapshotStatus.ForeColor = Color.Firebrick;
+                    this.txtMountSnapshot.Text = result.ToString(Newtonsoft.Json.Formatting.Indented);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!this.IsDisposed && !this.mountSnapshotClosing)
+                {
+                    this.lblMountSnapshotStatus.Text = "操作未取得确认结果；请刷新快照核对后再操作。";
+                    this.lblMountSnapshotStatus.ForeColor = Color.Firebrick;
+                    this.txtMountSnapshot.Text =
+                        "写入结果可能不明确。请先刷新只读快照核对，不要立即重复写入。\r\n" + ex.Message;
+                }
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.ToString());
+            }
+            finally
+            {
+                this.mountGrowthWriteRunning = false;
+                if (object.ReferenceEquals(this.mountSnapshotCancellation, cancellation))
+                {
+                    this.mountSnapshotCancellation = null;
+                }
+                cancellation.Dispose();
+
+                if (this.mountSnapshotClosing)
+                {
+                    WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader closingReader =
+                        this.mountSnapshotReader;
+                    this.mountSnapshotReader = null;
+                    if (closingReader != null)
+                    {
+                        closingReader.Dispose();
+                    }
+                }
+                else if (!this.IsDisposed)
+                {
+                    this.bRefreshMountSnapshot.Enabled = true;
+                    this.UpdateMountGrowthRateWriteButton(this.latestMountSnapshot);
+                }
+            }
+        }
+
+        private void UpdateMountGrowthRateWriteButton(
+            WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot snapshot)
+        {
+            if (this.bSetMountGrowthRate == null || this.mountGrowthWriteRunning)
+            {
+                return;
+            }
+
+            WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot currentRide;
+            string error;
+            bool eligible = TryGetWritableCurrentRide(snapshot, out currentRide, out error);
+            this.bSetMountGrowthRate.Enabled =
+                eligible && !this.mountGrowthWriteRequiresFreshSnapshot;
+        }
+
+        private static bool TryGetWritableCurrentRide(
+            WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot snapshot,
+            out WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot currentRide,
+            out string error)
+        {
+            currentRide = null;
+            error = "快照未证明唯一的本地玩家、骑乘状态和当前坐骑实例；请重新刷新。";
+            if (snapshot == null ||
+                !snapshot.IsValid ||
+                snapshot.CandidateCount != 1 ||
+                !snapshot.IsLocalPlayer ||
+                snapshot.IsMounted != true ||
+                !snapshot.MountId.HasValue ||
+                snapshot.MountId.Value <= 0 ||
+                !string.Equals(snapshot.RideBindingStatus, "bound", StringComparison.Ordinal) ||
+                !IsNineteenDigitRideInstanceId(snapshot.ActiveRideInstanceId))
+            {
+                return false;
+            }
+
+            IList<WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot> instances =
+                snapshot.RideInstances ??
+                new List<WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot>();
+            List<WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot> currentInstances =
+                instances.Where(instance => instance != null && instance.IsCurrent == true).ToList();
+            if (currentInstances.Count != 1 ||
+                !string.Equals(
+                    currentInstances[0].RideInstanceId,
+                    snapshot.ActiveRideInstanceId,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            currentRide = currentInstances[0];
+            if (currentRide.GrowthRate.HasValue && currentRide.GrowthRate.Value == 100.0)
+            {
+                currentRide = null;
+                error = "当前坐骑成长率已经是 100.0。";
+                return false;
+            }
+            if (currentRide.IsRiding != true ||
+                !currentRide.GrowthRate.HasValue ||
+                double.IsNaN(currentRide.GrowthRate.Value) ||
+                double.IsInfinity(currentRide.GrowthRate.Value) ||
+                currentRide.GrowthRate.Value < 0 ||
+                !currentRide.GrowthRateMemoryAddress.HasValue ||
+                currentRide.GrowthRateMemoryAddress.Value == 0)
+            {
+                currentRide = null;
+                error = "当前骑乘实例缺少有效的 GROWUP 数值或地址；请重新刷新。";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool IsNineteenDigitRideInstanceId(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length != 19)
+            {
+                return false;
+            }
+            return value.All(character => character >= '0' && character <= '9');
         }
 
         private void RenderMountSnapshot(
@@ -7566,12 +7829,15 @@ tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Paddin
             {
                 this.mountSnapshotCancellation.Cancel();
             }
-            WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader mountReader =
-                this.mountSnapshotReader;
-            this.mountSnapshotReader = null;
-            if (mountReader != null)
+            if (!this.mountGrowthWriteRunning)
             {
-                mountReader.Dispose();
+                WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader mountReader =
+                    this.mountSnapshotReader;
+                this.mountSnapshotReader = null;
+                if (mountReader != null)
+                {
+                    mountReader.Dispose();
+                }
             }
             if (this.sr.Worker.IsBusy)
             {
@@ -8102,7 +8368,7 @@ tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Paddin
                             }
                             return;
                         }
-                        if (!sr.StartRobot(sriSelect.RName, this.dtRobotInstruction, parameters))
+                        if (!sr.StartRobot(sriSelect.RName, sriSelect.RID, this.dtRobotInstruction, parameters))
                         {
                             this.bExecute.Enabled = true;
                             this.bStop.Enabled = false;
@@ -8197,6 +8463,40 @@ tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Paddin
                     }
                 }
             }
+            if (this.HasShimenTaskInstructionRows())
+            {
+                ShimenTaskPacketTemplateSlots packetSlots =
+                    new ShimenTaskPacketTemplateSlots();
+                if (!packetSlots.IsComplete)
+                {
+                    Socket_Operation.ShowMessageBox(
+                        "师门任务封包模板不完整，已停止启动。\r\n请先补齐六项采购包以及提交、取消、领取包。\r\n"
+                        + "不会发送任何封包。");
+                    return false;
+                }
+
+                ShimenTaskSocketRouteTemplate routeTemplate;
+                string routeError;
+                if (!ShimenTaskSocketRouteTemplate.TryCreate(
+                        Socket_Cache.SocketList.spiSelect,
+                        out routeTemplate,
+                        out routeError))
+                {
+                    Socket_Operation.ShowMessageBox(
+                        "师门任务真实发送需要先在当前注入会话选择一条出站封包。\r\n"
+                        + "请确认已抓到游戏出站包，并在封包列表中选中它。\r\n"
+                        + "当前未发送任何封包。\r\n原因：" + routeError);
+                    return false;
+                }
+
+                ShimenTaskLiveSendAuthorization authorization =
+                    ShimenTaskLiveSendAuthorization.CreateForInteractiveStart();
+
+                parameters["ShimenTaskPacketTemplateSlots"] = packetSlots;
+                parameters["ShimenTaskSocketRouteTemplate"] = routeTemplate;
+                parameters["ShimenTaskLiveSendAuthorizationToken"] = authorization;
+                parameters["ShimenTaskLiveSendAuthorization"] = true;
+            }
             if (this.HasSummonedPetSkillBookInstructionRows())
             {
                 SummonedPetSkillBookPreset preset = this.ReadPresetFromControls();
@@ -8216,28 +8516,43 @@ tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Paddin
                         this.sriSelect.MountSpeedPreset);
             if (this.HasMountSpeedInstructionRows() &&
                 this.sriSelect != null &&
-                string.Equals(
-                    (this.sriSelect.RName ?? string.Empty).Trim(),
-                    WPELibrary.Lib.Socket_Cache.Robot.FirstRideRefinePresetName,
-                    StringComparison.Ordinal))
+                WPELibrary.Lib.Socket_Cache.Robot.IsRideRefinePresetName(this.sriSelect.RName))
             {
                 string mountPresetError;
                 bool hasCompleteMountPreset = mountSpeedPreset != null &&
                     mountSpeedPreset.IsCompleteMountRefineTarget(out mountPresetError);
                 if (!hasCompleteMountPreset)
                 {
-                    mountSpeedPreset =
-                        WPELibrary.Lib.MountSpeed.MountSpeedPreset
-                            .CreateDefaultFirstRideRefinePreset();
-                    Socket_Operation.DoLog(
-                        "MountRefinePreset",
-                        "一坐骑洗炼启动时未发现完整目标，已自动使用固定目标：高级秋水流弦、"
-                        + "高级百步穿杨、高级追魂夺命，成长率 1.175。无需重复填写。");
+                    bool isFirstRide = string.Equals(
+                        (this.sriSelect.RName ?? string.Empty).Trim(),
+                        WPELibrary.Lib.Socket_Cache.Robot.FirstRideRefinePresetName,
+                        StringComparison.Ordinal);
+                    if (isFirstRide)
+                    {
+                        mountSpeedPreset =
+                            WPELibrary.Lib.MountSpeed.MountSpeedPreset
+                                .CreateDefaultFirstRideRefinePreset();
+                        Socket_Operation.DoLog(
+                            "MountRefinePreset",
+                            "一坐骑洗炼启动时未发现完整目标，已自动使用固定目标：高级秋水流弦、"
+                            + "高级百步穿杨、高级追魂夺命，成长率 1.175。无需重复填写。");
+                    }
+                    else
+                    {
+                        Socket_Operation.ShowMessageBox(
+                            "坐骑洗炼预设“" +
+                            (this.sriSelect.RName ?? string.Empty).Trim() +
+                            "”必须先保存当前坐骑的 3 个目标技能和成长率。" +
+                            Environment.NewLine +
+                            "未保存完整目标时不会启动自动发送。");
+                        return false;
+                    }
                 }
                 parameters["MountRefineAutoSendRequested"] = true;
             }
             parameters["MountSpeedPreset"] = mountSpeedPreset;
-            if (this.HasMountSpeedInstructionRows())
+            if (this.HasMountSpeedInstructionRows() ||
+                this.HasMountGrowthRateHoldInstructionRows())
             {
                 // The reader is created for this run only. Socket_Robot will
                 // execute a fresh read during StartRobot and will not reuse a
@@ -8289,6 +8604,17 @@ tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Paddin
                     (int)Socket_Cache.Robot.InstructionType.SummonedPetSkillBook);
         }
 
+        private bool HasShimenTaskInstructionRows()
+        {
+            return this.dtRobotInstruction != null &&
+                this.dtRobotInstruction.Rows.Cast<DataRow>().Any(row =>
+                row != null &&
+                row["Type"] != null &&
+                row["Type"] != DBNull.Value &&
+                Convert.ToInt32(row["Type"]) ==
+                    (int)Socket_Cache.Robot.InstructionType.ShimenTask);
+        }
+
         private bool HasEquipmentRefineInstructionRows()
         {
             return this.dtRobotInstruction != null &&
@@ -8332,6 +8658,15 @@ tlpBasic.Controls.Add(new Label { Text = "宠物模式", AutoSize = true, Paddin
                 this.dtRobotInstruction.Rows.Cast<DataRow>().Any(row =>
                 (Socket_Cache.Robot.InstructionType)row["Type"] ==
                     Socket_Cache.Robot.InstructionType.MountSpeed);
+        }
+
+        private bool HasMountGrowthRateHoldInstructionRows()
+        {
+            return this.dtRobotInstruction != null &&
+                this.dtRobotInstruction.Rows.Cast<DataRow>().Any(row =>
+                row != null && row["Type"] != null && row["Type"] != DBNull.Value &&
+                Convert.ToInt32(row["Type"]) ==
+                    (int)Socket_Cache.Robot.InstructionType.MountGrowthRateHold);
         }
 
         private void SyncTreasureMapInstructionMode()

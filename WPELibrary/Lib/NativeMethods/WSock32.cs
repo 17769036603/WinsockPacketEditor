@@ -8,6 +8,38 @@ namespace WPELibrary.Lib.NativeMethods
     {
         public static string ModuleName = "WSOCK32.dll";
 
+        #region//select
+
+        [DllImport("WSOCK32.dll", CharSet = CharSet.Unicode, SetLastError = true, CallingConvention = CallingConvention.StdCall)]
+        public static extern int select(
+            [In] int nfds,
+            [In, Out] IntPtr readfds,
+            [In, Out] IntPtr writefds,
+            [In, Out] IntPtr exceptfds,
+            [In, Out] IntPtr timeout
+            );
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Auto, SetLastError = true)]
+        public delegate int DSelect(
+            [In] int nfds,
+            [In, Out] IntPtr readfds,
+            [In, Out] IntPtr writefds,
+            [In, Out] IntPtr exceptfds,
+            [In, Out] IntPtr timeout
+            );
+
+        public static int SelectHook(
+            [In] int nfds,
+            [In, Out] IntPtr readfds,
+            [In, Out] IntPtr writefds,
+            [In, Out] IntPtr exceptfds,
+            [In, Out] IntPtr timeout)
+        {
+            return WinSockHook.SelectWS1_Hook(nfds, readfds, writefds, exceptfds, timeout);
+        }
+
+        #endregion
+
         #region//Send
 
         [DllImport("WSOCK32.dll", CharSet = CharSet.Unicode, SetLastError = true, CallingConvention = CallingConvention.StdCall)]

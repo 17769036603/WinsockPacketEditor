@@ -10,7 +10,6 @@ namespace WinsockPacketEditor
     public partial class SystemMode_Form : Form
     {        
         private string SelectLanguage = string.Empty;
-        private string WebSiteURL = string.Empty;
         private string RemoteIP = string.Empty;        
 
         #region//窗体加载
@@ -21,7 +20,7 @@ namespace WinsockPacketEditor
             InitializeComponent();
         }
 
-        private async void SystemMode_Form_Load(object sender, EventArgs e)
+        private void SystemMode_Form_Load(object sender, EventArgs e)
         {
             try
             {
@@ -34,17 +33,6 @@ namespace WinsockPacketEditor
                 else
                 {
                     this.RemoteIP = "127.0.0.1";
-                }
-
-                bool bWPE64_URL = await Socket_Operation.CheckWebSite(Socket_Cache.System.WPE64_URL);
-
-                if (bWPE64_URL)
-                {
-                    this.WebSiteURL = Socket_Cache.System.WPE64_URL;
-                }
-                else
-                {
-                    this.WebSiteURL = Socket_Cache.System.WPE64_IP;
                 }
 
                 this.InitRemote();
@@ -133,7 +121,12 @@ namespace WinsockPacketEditor
 
         private void tsmiAbout_Click(object sender, EventArgs e)
         {
-            Process.Start(this.WebSiteURL);
+            Socket_Operation.ShowMessageBox(
+                MultiLanguage.GetDefaultLanguage(new[]
+                {
+                    "小黑封包助手\n个人开发维护",
+                    "Xiaohei Packet Assistant\nIndependently maintained"
+                }));
         }
 
         private void tsmiImport_Click(object sender, EventArgs e)

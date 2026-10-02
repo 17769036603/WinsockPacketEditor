@@ -28,7 +28,8 @@ function New-CapturedPacket {
         [string]$From,
         [string]$To,
         [DateTime]$CapturedAt,
-        [WPELibrary.Lib.Socket_Cache+SocketPacket+PacketType]$PacketType
+        [WPELibrary.Lib.Socket_Cache+SocketPacket+PacketType]$PacketType,
+        [byte[]]$Buffer = $null
     )
 
     $packet = [WPELibrary.Lib.Socket_PacketInfo]::new()
@@ -37,6 +38,7 @@ function New-CapturedPacket {
     $packet.PacketFrom = $From
     $packet.PacketTo = $To
     $packet.PacketTime = $CapturedAt
+    $packet.PacketBuffer = $Buffer
     return $packet
 }
 
@@ -72,6 +74,7 @@ $originalCaptureSession = $socketList::CaptureSessionStartedAt
 Assert-True ($originalCaptureSession -eq [DateTime]::MinValue) `
     "Route regression must start without an active capture-session filter."
 
+$testTcpDisposables = [System.Collections.Generic.List[object]]::new()
 try {
     $socketList::lstRecPacket.Clear()
     $baseTime = [DateTime]::Now.AddMinutes(-5)
@@ -95,6 +98,53 @@ try {
     Assert-True ($sameTargetResolution.Route.Socket -eq $newSocket.Handle.ToInt32()) `
         "A same-target reconnection must use the newest socket handle."
 
+    # The screenshot reports WS2_Send. Exercise the native local/peer endpoint
+    # refresh with real loopback TCP sockets, not only synthetic route fields.
+    $tcpListenerA = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Loopback,
+        0)
+    $tcpListenerB = [System.Net.Sockets.TcpListener]::new(
+        [System.Net.IPAddress]::Loopback,
+        0)
+    $tcpListenerA.Start()
+    $tcpListenerB.Start()
+    $tcpClientA = [System.Net.Sockets.TcpClient]::new(
+        [System.Net.Sockets.AddressFamily]::InterNetwork)
+    $tcpClientB = [System.Net.Sockets.TcpClient]::new(
+        [System.Net.Sockets.AddressFamily]::InterNetwork)
+    $testTcpDisposables.Add($tcpClientA)
+    $testTcpDisposables.Add($tcpClientB)
+    $testTcpDisposables.Add($tcpListenerA)
+    $testTcpDisposables.Add($tcpListenerB)
+    $tcpClientA.Connect(
+        [System.Net.IPAddress]::Loopback,
+        ([System.Net.IPEndPoint]$tcpListenerA.LocalEndpoint).Port)
+    $tcpClientB.Connect(
+        [System.Net.IPAddress]::Loopback,
+        ([System.Net.IPEndPoint]$tcpListenerB.LocalEndpoint).Port)
+    $tcpAcceptedA = $tcpListenerA.AcceptTcpClient()
+    $tcpAcceptedB = $tcpListenerB.AcceptTcpClient()
+    $testTcpDisposables.Add($tcpAcceptedA)
+    $testTcpDisposables.Add($tcpAcceptedB)
+    $ws2SendType = [WPELibrary.Lib.Socket_Cache+SocketPacket+PacketType]::WS2_Send
+    $tcpSourceA = $tcpClientA.Client.LocalEndPoint.ToString()
+    $tcpTargetA = $tcpClientA.Client.RemoteEndPoint.ToString()
+    $tcpSourceB = $tcpClientB.Client.LocalEndPoint.ToString()
+    $tcpTargetB = $tcpClientB.Client.RemoteEndPoint.ToString()
+    $socketList::lstRecPacket.Clear()
+    $socketList::lstRecPacket.Add((New-CapturedPacket $tcpClientA.Client.Handle.ToInt32() $tcpSourceA $tcpTargetA $baseTime.AddSeconds(2.1) $ws2SendType))
+    $socketList::lstRecPacket.Add((New-CapturedPacket $tcpClientB.Client.Handle.ToInt32() $tcpSourceB $tcpTargetB $baseTime.AddSeconds(2.2) $ws2SendType))
+    $tcpTargetTemplate = New-Template "" $tcpTargetA $ws2SendType
+    $tcpTargetResolution = $socketList::ResolveCurrentRoute($tcpTargetTemplate)
+    Assert-True $tcpTargetResolution.Succeeded `
+        "WS2_Send must resolve from the current native peer endpoint."
+    Assert-True ($tcpTargetResolution.Route.Socket -eq $tcpClientA.Client.Handle.ToInt32()) `
+        "WS2_Send target matching must select the matching live TCP socket."
+    Assert-True ($tcpTargetResolution.Route.PacketFrom -eq $tcpSourceA) `
+        "WS2_Send route resolution must refresh the current local endpoint."
+    Assert-True ($tcpTargetResolution.Route.PacketTo -eq $tcpTargetA) `
+        "WS2_Send route resolution must refresh the current peer endpoint."
+
     # A changed target is allowed only when the current capture has one candidate.
     $socketList::lstRecPacket.Clear()
     $changedSocket = New-TestUdpSocket
@@ -112,18 +162,75 @@ try {
     Assert-True ($changedTargetTemplate.PacketTo -eq "198.51.100.20:443") `
         "Runtime route resolution must not mutate the saved packet template."
 
+    # A legacy template without a destination can still be bound safely when
+    # its captured source endpoint identifies one of several current routes.
+    $socketList::lstRecPacket.Clear()
+    $sourceFirstSocket = New-TestUdpSocket
+    $sourceSecondSocket = New-TestUdpSocket
+    $testSockets.Add($sourceFirstSocket)
+    $testSockets.Add($sourceSecondSocket)
+    $sourceFirst = $sourceFirstSocket.LocalEndPoint.ToString()
+    $sourceSecond = $sourceSecondSocket.LocalEndPoint.ToString()
+    $socketList::lstRecPacket.Add((New-CapturedPacket $sourceFirstSocket.Handle.ToInt32() $sourceFirst "203.0.113.42:443" $baseTime.AddSeconds(3.5) $packetType))
+    $socketList::lstRecPacket.Add((New-CapturedPacket $sourceSecondSocket.Handle.ToInt32() $sourceSecond "203.0.113.43:443" $baseTime.AddSeconds(3.6) $packetType))
+    $sourceOnlyTemplate = New-Template $sourceFirst "" $packetType
+    $sourceOnlyResolution = $socketList::ResolveCurrentRoute($sourceOnlyTemplate)
+    Assert-True $sourceOnlyResolution.Succeeded `
+        "A missing destination with a matching source endpoint must resolve safely."
+    Assert-True ($sourceOnlyResolution.Route.Socket -eq $sourceFirstSocket.Handle.ToInt32()) `
+        "A source endpoint match must select its own current connection."
+
+    # A legacy template without either endpoint can use an exact current
+    # packet match, while a packet-type-only match must remain fail-closed.
+    $socketList::lstRecPacket.Clear()
+    $payloadFirstSocket = New-TestUdpSocket
+    $payloadSecondSocket = New-TestUdpSocket
+    $testSockets.Add($payloadFirstSocket)
+    $testSockets.Add($payloadSecondSocket)
+    $payloadFirst = $payloadFirstSocket.LocalEndPoint.ToString()
+    $payloadSecond = $payloadSecondSocket.LocalEndPoint.ToString()
+    $firstBuffer = [byte[]](0x10, 0x20, 0x30)
+    $secondBuffer = [byte[]](0x40, 0x50, 0x60)
+    $socketList::lstRecPacket.Add((New-CapturedPacket $payloadFirstSocket.Handle.ToInt32() $payloadFirst "203.0.113.44:443" $baseTime.AddSeconds(3.7) $packetType -Buffer $firstBuffer))
+    $socketList::lstRecPacket.Add((New-CapturedPacket $payloadSecondSocket.Handle.ToInt32() $payloadSecond "203.0.113.45:443" $baseTime.AddSeconds(3.8) $packetType -Buffer $secondBuffer))
+    $payloadOnlyTemplate = New-Template "" "" $packetType
+    $payloadOnlyTemplate.PacketBuffer = $firstBuffer
+    $payloadOnlyResolution = $socketList::ResolveCurrentRoute($payloadOnlyTemplate)
+    Assert-True $payloadOnlyResolution.Succeeded `
+        "An exact current packet match must bind an endpoint-free legacy template."
+    Assert-True ($payloadOnlyResolution.Route.Socket -eq $payloadFirstSocket.Handle.ToInt32()) `
+        "An exact packet match must select the route that carried the packet."
+
     # Multiple current candidates must fail closed instead of guessing.
+    $socketList::lstRecPacket.Clear()
+    $socketList::lstRecPacket.Add((New-CapturedPacket $changedSocket.Handle.ToInt32() $changedSource "203.0.113.40:443" $baseTime.AddSeconds(4) $packetType))
     $ambiguousSocket = New-TestUdpSocket
     $testSockets.Add($ambiguousSocket)
     $ambiguousSource = $ambiguousSocket.LocalEndPoint.ToString()
     $socketList::lstRecPacket.Add((New-CapturedPacket $ambiguousSocket.Handle.ToInt32() $ambiguousSource "203.0.113.41:443" $baseTime.AddSeconds(4) $packetType))
-    $ambiguousResolution = $socketList::ResolveCurrentRoute($changedTargetTemplate)
+    $ambiguousTemplate = New-Template "" "198.51.100.20:443" $packetType
+    $ambiguousResolution = $socketList::ResolveCurrentRoute($ambiguousTemplate)
     Assert-True ($ambiguousResolution.Status.ToString() -eq "Ambiguous") `
         "Multiple changed-target candidates must return Ambiguous."
     Assert-True ($ambiguousResolution.ErrorCode -eq "runtime_route_ambiguous") `
         "Ambiguous routes must expose the mobile runtime error code."
     Assert-True ($ambiguousResolution.Candidates.Count -eq 2) `
         "Ambiguous resolution must report both distinct endpoint candidates."
+
+    # An explicitly selected current system Socket may disambiguate a legacy
+    # endpoint-free preset, but an unrelated/stale handle must not do so.
+    $preferredResolution = $socketList::ResolveCurrentRoute(
+        $ambiguousTemplate,
+        $ambiguousSocket.Handle.ToInt32())
+    Assert-True $preferredResolution.Succeeded `
+        "An explicitly selected live Socket must disambiguate a legacy preset."
+    Assert-True ($preferredResolution.Route.Socket -eq $ambiguousSocket.Handle.ToInt32()) `
+        "A preferred Socket must select only its own current route."
+    $stalePreferredResolution = $socketList::ResolveCurrentRoute(
+        $ambiguousTemplate,
+        2147483647)
+    Assert-True ($stalePreferredResolution.Status.ToString() -eq "Ambiguous") `
+        "An unrelated preferred Socket must not bypass route ambiguity."
 
     # A preset containing packets from different connections must resolve each packet independently.
     $socketList::lstRecPacket.Clear()
@@ -194,6 +301,14 @@ finally {
     if ($null -ne $testSockets) {
         foreach ($testSocket in $testSockets) {
             $testSocket.Dispose()
+        }
+    }
+    foreach ($tcpDisposable in $testTcpDisposables) {
+        if ($tcpDisposable -is [System.Net.Sockets.TcpListener]) {
+            $tcpDisposable.Stop()
+        }
+        else {
+            $tcpDisposable.Dispose()
         }
     }
     $socketList::lstRecPacket.Clear()

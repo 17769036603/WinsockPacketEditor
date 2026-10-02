@@ -37,6 +37,7 @@ namespace WPELibrary.Lib.Vision
             // 新节拍默认关闭，由桌面生产入口显式启用，避免改变既有离线
             // 回归调用方的发送次数和耗时。
             this.TargetStabilityMilliseconds = 0;
+            this.TargetStabilitySampleCount = 0;
             this.MinimumJumpIntervalMilliseconds = 0;
             this.JumpRetryDelayMilliseconds = 0;
             // Jump 明确未发送时使用短间隔重试；自动挖宝包不重试。
@@ -78,6 +79,11 @@ namespace WPELibrary.Lib.Vision
         /// 首次 Jump 前要求目标在 C6 快照中保持不变的时间。
         /// </summary>
         public int TargetStabilityMilliseconds { get; set; }
+
+        /// <summary>
+        /// 稳定窗口内要求观察到的不同完整 C6 snapshotId 数量；0 表示不启用额外样本闸门。
+        /// </summary>
+        public int TargetStabilitySampleCount { get; set; }
 
         /// <summary>
         /// 同一运行器相邻两次实际 Jump 之间的最短间隔。
@@ -176,6 +182,7 @@ namespace WPELibrary.Lib.Vision
             if (this.JumpUseDelayMilliseconds < 0 ||
                 this.NextTargetDelayMilliseconds < 0 ||
                 this.TargetStabilityMilliseconds < 0 ||
+                this.TargetStabilitySampleCount < 0 ||
                 this.MinimumJumpIntervalMilliseconds < 0 ||
                 this.JumpRetryDelayMilliseconds < 0 ||
                 this.RetryDelayMilliseconds < 0 ||
@@ -914,8 +921,23 @@ namespace WPELibrary.Lib.Vision
                                 this.options.NextTargetDelayMilliseconds,
                                 externalToken);
                         }
-                        else if (this.currentState == TreasureMapState.Ambiguous ||
-                                 this.currentState == TreasureMapState.Failed)
+                        else if (this.currentState == TreasureMapState.Ambiguous)
+                        {
+                            string stopCode =
+                                this.options.StopContinuousOnTransportFailure &&
+                                this.stopAfterTransportFailure
+                                    ? "stopped_after_transport_failure:"
+                                    : "stopped_after_ambiguous:";
+                            this.Log(
+                                "run",
+                                "Control",
+                                null,
+                                stopCode + this.lastError,
+                                0,
+                                false);
+                            return;
+                        }
+                        else if (this.currentState == TreasureMapState.Failed)
                         {
                             if (this.options.StopContinuousOnTransportFailure &&
                                 this.stopAfterTransportFailure)
@@ -1613,7 +1635,17 @@ namespace WPELibrary.Lib.Vision
             TreasureMapTargetIdentity target,
             TreasureMapTargetVersion expectedVersion)
         {
-            var snapshot = this.inventoryStream.CurrentSnapshot;
+            return this.ValidateTarget(
+                this.inventoryStream.CurrentSnapshot,
+                target,
+                expectedVersion);
+        }
+
+        private bool ValidateTarget(
+            TreasureC6InventorySnapshot snapshot,
+            TreasureMapTargetIdentity target,
+            TreasureMapTargetVersion expectedVersion)
+        {
             if (snapshot == null || target == null || expectedVersion == null)
             {
                 return false;
@@ -1647,12 +1679,15 @@ namespace WPELibrary.Lib.Vision
             long attemptId)
         {
             int requiredMilliseconds = this.options.TargetStabilityMilliseconds;
+            int requiredSampleCount = this.options.TargetStabilitySampleCount;
             if (requiredMilliseconds <= 0)
             {
                 return true;
             }
 
             Stopwatch wait = Stopwatch.StartNew();
+            int stableSampleCount = 0;
+            string lastStableSnapshotId = string.Empty;
             while (wait.ElapsedMilliseconds < requiredMilliseconds)
             {
                 this.Checkpoint(externalToken);
@@ -1680,7 +1715,9 @@ namespace WPELibrary.Lib.Vision
                     return false;
                 }
 
-                if (!this.ValidateTarget(target, expectedVersion))
+                TreasureC6InventorySnapshot currentSnapshot =
+                    this.inventoryStream.CurrentSnapshot;
+                if (!this.ValidateTarget(currentSnapshot, target, expectedVersion))
                 {
                     this.Log(
                         "recognition",
@@ -1692,6 +1729,19 @@ namespace WPELibrary.Lib.Vision
                         attemptId);
                     this.currentState = TreasureMapState.Failed;
                     return false;
+                }
+
+                // 完整 snapshot 每次轮询都会产生新的 snapshotId；同一 snapshot
+                // 上的事件沿用旧 ID，因此不会被误计为新的稳定样本。
+                if (requiredSampleCount > 0 &&
+                    currentSnapshot != null &&
+                    !string.Equals(
+                        currentSnapshot.SnapshotId,
+                        lastStableSnapshotId,
+                        StringComparison.Ordinal))
+                {
+                    lastStableSnapshotId = currentSnapshot.SnapshotId;
+                    stableSampleCount++;
                 }
 
                 int remainingMilliseconds = requiredMilliseconds - (int)wait.ElapsedMilliseconds;
@@ -1714,7 +1764,10 @@ namespace WPELibrary.Lib.Vision
                 return false;
             }
 
-            if (!this.IsHookSessionStable() || !this.ValidateTarget(target, expectedVersion))
+            TreasureC6InventorySnapshot finalSnapshot =
+                this.inventoryStream.CurrentSnapshot;
+            if (!this.IsHookSessionStable() ||
+                !this.ValidateTarget(finalSnapshot, target, expectedVersion))
             {
                 this.Log(
                     "recognition",
@@ -1728,11 +1781,48 @@ namespace WPELibrary.Lib.Vision
                 return false;
             }
 
+            if (requiredSampleCount > 0 &&
+                finalSnapshot != null &&
+                !string.Equals(
+                    finalSnapshot.SnapshotId,
+                    lastStableSnapshotId,
+                    StringComparison.Ordinal))
+            {
+                lastStableSnapshotId = finalSnapshot.SnapshotId;
+                stableSampleCount++;
+            }
+
+            if (requiredSampleCount > 0 &&
+                stableSampleCount < requiredSampleCount)
+            {
+                this.Log(
+                    "recognition",
+                    "C6",
+                    this.BuildLogTarget(target, expectedVersion),
+                    "target_stability_samples_insufficient:" +
+                        stableSampleCount.ToString(CultureInfo.InvariantCulture) +
+                        "/" +
+                        requiredSampleCount.ToString(CultureInfo.InvariantCulture),
+                    0,
+                    false,
+                    attemptId);
+                this.currentState = TreasureMapState.Failed;
+                return false;
+            }
+
+            string stabilityCode =
+                "stable_for_ms:" + wait.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture);
+            if (requiredSampleCount > 0)
+            {
+                stabilityCode += ";samples:" +
+                    stableSampleCount.ToString(CultureInfo.InvariantCulture);
+            }
+
             this.Log(
                 "target_stable",
                 "C6",
                 this.BuildLogTarget(target, expectedVersion),
-                "stable_for_ms:" + wait.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture),
+                stabilityCode,
                 0,
                 true,
                 attemptId);
@@ -2401,6 +2491,12 @@ namespace WPELibrary.Lib.Vision
             string code,
             int retryCount)
         {
+            if (state == TreasureMapState.Ambiguous &&
+                !string.IsNullOrWhiteSpace(code))
+            {
+                this.lastError = code;
+            }
+
             this.actionLog.Add(new TreasureMapActionLog(
                 this.currentRunId,
                 target,

@@ -129,7 +129,7 @@
     <value>Fill</value>
   </data>
   <data name="txtIPTo.Enabled" type="System.Boolean, mscorlib">
-    <value>False</value>
+    <value>True</value>
   </data>
   <assembly alias="System.Drawing" name="System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a" />
   <data name="txtIPTo.Font" type="System.Drawing.Font, System.Drawing">
@@ -205,7 +205,7 @@
     <value>Fill</value>
   </data>
   <data name="txtIPFrom.Enabled" type="System.Boolean, mscorlib">
-    <value>False</value>
+    <value>True</value>
   </data>
   <data name="txtIPFrom.Font" type="System.Drawing.Font, System.Drawing">
     <value>Microsoft Sans Serif, 9pt</value>
@@ -2695,7 +2695,7 @@
     <value>52</value>
   </data>
   <data name="bSendStop.Text" xml:space="preserve">
-    <value>停止 (&amp;T)</value>
+    <value>停止 (空格键)</value>
   </data>
   <data name="&gt;&gt;bSendStop.Name" xml:space="preserve">
     <value>bSendStop</value>

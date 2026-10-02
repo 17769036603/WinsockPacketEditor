@@ -14,6 +14,7 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using WPELibrary.Lib.MountSpeed;
@@ -35,8 +36,6 @@ namespace WPELibrary.Lib
         {
             public static string DefaultLanguage = "zh-CN";
             public static string LastInjection = string.Empty;
-            public static string WPE64_URL = "https://www.wpe64.com";
-            public static string WPE64_IP = "http://101.132.222.195";
             public static string WPE64_DLL = "WPELibrary.dll";
             public static string WPE = "小黑封包助手";
             public static Socket_Cache.System.SystemMode StartMode = SystemMode.None;
@@ -6693,6 +6692,10 @@ namespace WPELibrary.Lib
                 public string PacketFrom { get; internal set; }
                 public string PacketTo { get; internal set; }
                 public DateTime CapturedAt { get; internal set; }
+
+                // Route evidence retained after the display list is cleared
+                // keeps only a compact packet identity, never packet bytes.
+                internal string PacketFingerprint { get; set; }
             }
 
             public sealed class CurrentSocketRouteResolution
@@ -6829,8 +6832,9 @@ namespace WPELibrary.Lib
             /// <summary>
             /// Returns lightweight route metadata retained for the current
             /// injection session. Packet bytes are intentionally not retained;
-            /// this cache only keeps a live Socket/type/from/to route after the
-            /// bounded display list is cleared or capture is stopped.
+            /// this cache keeps live Socket/type/from/to observations and a
+            /// compact packet identity after the bounded display list is
+            /// cleared or capture is stopped.
             /// </summary>
             public static List<Socket_PacketInfo> CaptureCurrentSocketRouteEvidence()
             {
@@ -6877,7 +6881,11 @@ namespace WPELibrary.Lib
                             !string.Equals(
                                 existing.PacketTo,
                                 snapshot.PacketTo,
-                                StringComparison.OrdinalIgnoreCase))
+                                StringComparison.OrdinalIgnoreCase) ||
+                            !string.Equals(
+                                existing.RouteEvidenceFingerprint,
+                                snapshot.RouteEvidenceFingerprint,
+                                StringComparison.Ordinal))
                         {
                             continue;
                         }
@@ -6999,7 +7007,8 @@ namespace WPELibrary.Lib
                     PacketSocket = packet.PacketSocket,
                     PacketType = packet.PacketType,
                     PacketFrom = packet.PacketFrom ?? string.Empty,
-                    PacketTo = packet.PacketTo ?? string.Empty
+                    PacketTo = packet.PacketTo ?? string.Empty,
+                    RouteEvidenceFingerprint = GetPacketFingerprint(packet)
                 };
             }
 
@@ -7079,11 +7088,26 @@ namespace WPELibrary.Lib
                 Socket_PacketInfo packetTemplate)
             {
                 List<Socket_PacketInfo> capturedPackets = CaptureCurrentPackets();
-                return ResolveCurrentRoute(packetTemplate, capturedPackets);
+                return ResolveCurrentRoute(packetTemplate, capturedPackets, 0);
+            }
+
+            public static CurrentSocketRouteResolution ResolveCurrentRoute(
+                Socket_PacketInfo packetTemplate,
+                int preferredSocket)
+            {
+                List<Socket_PacketInfo> capturedPackets = CaptureCurrentPackets();
+                return ResolveCurrentRoute(packetTemplate, capturedPackets, preferredSocket);
             }
 
             public static CurrentSocketRoutesResolution ResolveCurrentRoutes(
                 IEnumerable<Socket_PacketInfo> packetTemplates)
+            {
+                return ResolveCurrentRoutes(packetTemplates, 0);
+            }
+
+            public static CurrentSocketRoutesResolution ResolveCurrentRoutes(
+                IEnumerable<Socket_PacketInfo> packetTemplates,
+                int preferredSocket)
             {
                 List<Socket_PacketInfo> templates = packetTemplates == null
                     ? new List<Socket_PacketInfo>()
@@ -7095,7 +7119,8 @@ namespace WPELibrary.Lib
                 {
                     CurrentSocketRouteResolution resolution = ResolveCurrentRoute(
                         templates[index],
-                        capturedPackets);
+                        capturedPackets,
+                        preferredSocket);
                     result.Items.Add(resolution);
                     if (!resolution.Succeeded && result.FailureIndex < 0)
                     {
@@ -7108,7 +7133,8 @@ namespace WPELibrary.Lib
 
             private static CurrentSocketRouteResolution ResolveCurrentRoute(
                 Socket_PacketInfo packetTemplate,
-                IEnumerable<Socket_PacketInfo> capturedPackets)
+                IEnumerable<Socket_PacketInfo> capturedPackets,
+                int preferredSocket)
             {
                 CurrentSocketRouteResolution result = new CurrentSocketRouteResolution();
                 if (packetTemplate == null)
@@ -7118,7 +7144,7 @@ namespace WPELibrary.Lib
                     return result;
                 }
 
-                List<CurrentSocketRoute> candidates = (capturedPackets ?? Enumerable.Empty<Socket_PacketInfo>())
+                List<CurrentSocketRoute> routeEvidence = (capturedPackets ?? Enumerable.Empty<Socket_PacketInfo>())
                     .Where(item => item != null &&
                         item.PacketSocket > 0 &&
                         item.PacketType == packetTemplate.PacketType &&
@@ -7126,6 +7152,9 @@ namespace WPELibrary.Lib
                          item.PacketTime >= captureSessionStartedAt))
                     .Select(CreateCurrentSocketRoute)
                     .Where(item => item != null)
+                    .ToList();
+
+                List<CurrentSocketRoute> candidates = routeEvidence
                     .GroupBy(item => new
                     {
                         item.Socket,
@@ -7138,19 +7167,11 @@ namespace WPELibrary.Lib
                         .First())
                     .ToList();
 
-                string templateTo = (packetTemplate.PacketTo ?? string.Empty).Trim();
-                List<CurrentSocketRoute> exactCandidates = string.IsNullOrWhiteSpace(templateTo)
-                    ? new List<CurrentSocketRoute>()
-                    : candidates
-                        .Where(item => string.Equals(
-                            templateTo,
-                            (item.PacketTo ?? string.Empty).Trim(),
-                            StringComparison.OrdinalIgnoreCase))
-                        .ToList();
-                if (exactCandidates.Count > 0)
-                {
-                    candidates = exactCandidates;
-                }
+                candidates = NarrowCurrentSocketRouteCandidates(
+                    packetTemplate,
+                    candidates,
+                    routeEvidence,
+                    preferredSocket);
 
                 result.Candidates = candidates;
                 if (candidates.Count == 0)
@@ -7171,12 +7192,224 @@ namespace WPELibrary.Lib
                         "封包类型 {0} 存在 {1} 个候选连接，无法安全判断目标。",
                         packetTemplate.PacketType,
                         candidates.Count);
+                    if (!HasRouteIdentity(packetTemplate))
+                    {
+                        result.ErrorMessage +=
+                            "该预设没有保存目标/来源地址，也没有匹配到当前封包；请重新捕获目标封包后保存。";
+                    }
+                    else if (string.IsNullOrWhiteSpace(packetTemplate.PacketFrom) &&
+                        string.IsNullOrWhiteSpace(packetTemplate.PacketTo) &&
+                        !string.IsNullOrWhiteSpace(GetPacketFingerprint(packetTemplate)))
+                    {
+                        result.ErrorMessage +=
+                            "当前会话未捕获到与该预设一致的封包；请重新捕获目标封包后保存。";
+                    }
                     return result;
                 }
 
                 result.Status = CurrentSocketRouteStatus.Matched;
                 result.Route = candidates[0];
                 return result;
+            }
+
+            private static List<CurrentSocketRoute> NarrowCurrentSocketRouteCandidates(
+                Socket_PacketInfo packetTemplate,
+                List<CurrentSocketRoute> candidates,
+                List<CurrentSocketRoute> routeEvidence,
+                int preferredSocket)
+            {
+                if (packetTemplate == null || candidates == null || candidates.Count <= 1)
+                {
+                    return candidates ?? new List<CurrentSocketRoute>();
+                }
+
+                string templateTo = (packetTemplate.PacketTo ?? string.Empty).Trim();
+                if (!string.IsNullOrWhiteSpace(templateTo))
+                {
+                    List<CurrentSocketRoute> exactTargetCandidates = candidates
+                        .Where(item => string.Equals(
+                            templateTo,
+                            (item.PacketTo ?? string.Empty).Trim(),
+                            StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    if (exactTargetCandidates.Count > 0)
+                    {
+                        candidates = exactTargetCandidates;
+                    }
+                }
+
+                if (candidates.Count <= 1)
+                {
+                    return candidates;
+                }
+
+                string templateFrom = (packetTemplate.PacketFrom ?? string.Empty).Trim();
+                if (!string.IsNullOrWhiteSpace(templateFrom))
+                {
+                    // A reconnect normally changes the local ephemeral port,
+                    // so prefer the full endpoint first and the local address
+                    // as a stable second-level identity.
+                    List<CurrentSocketRoute> exactSourceCandidates = candidates
+                        .Where(item => string.Equals(
+                            templateFrom,
+                            (item.PacketFrom ?? string.Empty).Trim(),
+                            StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    if (exactSourceCandidates.Count > 0)
+                    {
+                        candidates = exactSourceCandidates;
+                    }
+                }
+
+                if (candidates.Count <= 1)
+                {
+                    return candidates;
+                }
+
+                // Older SendCollection rows may have no endpoint at all. If
+                // the same packet is visible in the current capture or was
+                // retained in the current-session evidence cache, its
+                // fingerprint is a stronger identity than packet type alone
+                // and can safely bind it to the correct Socket route.
+                string templateFingerprint = GetPacketFingerprint(packetTemplate);
+                if (!string.IsNullOrWhiteSpace(templateFingerprint))
+                {
+                    List<CurrentSocketRoute> packetMatches = (routeEvidence ?? new List<CurrentSocketRoute>())
+                        .Where(item =>
+                            item != null &&
+                            candidates.Any(candidate => IsSameCurrentSocketRoute(candidate, item)) &&
+                            string.Equals(
+                                item.PacketFingerprint,
+                                templateFingerprint,
+                                StringComparison.Ordinal))
+                        .ToList();
+                    List<CurrentSocketRoute> packetMatchedCandidates = candidates
+                        .Where(candidate => packetMatches.Any(item =>
+                            IsSameCurrentSocketRoute(candidate, item)))
+                        .ToList();
+                    if (packetMatchedCandidates.Count > 0)
+                    {
+                        candidates = packetMatchedCandidates;
+                    }
+                }
+
+                if (candidates.Count <= 1)
+                {
+                    return candidates;
+                }
+
+                if (preferredSocket > 0)
+                {
+                    // An explicitly selected system Socket is a valid
+                    // disambiguator for legacy presets without saved endpoints.
+                    // It must already be a live candidate; never use a stale
+                    // handle to manufacture a route.
+                    List<CurrentSocketRoute> preferredCandidates = candidates
+                        .Where(item => item.Socket == preferredSocket)
+                        .ToList();
+                    if (preferredCandidates.Count > 0)
+                    {
+                        candidates = preferredCandidates;
+                    }
+                }
+
+                string templateSourceHost = GetRouteHost(templateFrom);
+                if (!string.IsNullOrWhiteSpace(templateSourceHost))
+                {
+                    List<CurrentSocketRoute> sameSourceHostCandidates = candidates
+                        .Where(item => string.Equals(
+                            templateSourceHost,
+                            GetRouteHost(item.PacketFrom),
+                            StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    if (sameSourceHostCandidates.Count > 0)
+                    {
+                        candidates = sameSourceHostCandidates;
+                    }
+                }
+
+                return candidates;
+            }
+
+            private static bool HasRouteIdentity(Socket_PacketInfo packetTemplate)
+            {
+                return packetTemplate != null &&
+                    (!string.IsNullOrWhiteSpace(packetTemplate.PacketFrom) ||
+                     !string.IsNullOrWhiteSpace(packetTemplate.PacketTo) ||
+                     !string.IsNullOrWhiteSpace(GetPacketFingerprint(packetTemplate)));
+            }
+
+            private static bool HasPacketBuffer(byte[] buffer)
+            {
+                return buffer != null && buffer.Length > 0;
+            }
+
+            private static string GetPacketFingerprint(Socket_PacketInfo packet)
+            {
+                if (packet == null)
+                {
+                    return string.Empty;
+                }
+
+                if (!string.IsNullOrWhiteSpace(packet.RouteEvidenceFingerprint))
+                {
+                    return packet.RouteEvidenceFingerprint.Trim();
+                }
+
+                return ComputePacketFingerprint(packet.PacketBuffer);
+            }
+
+            private static string ComputePacketFingerprint(byte[] buffer)
+            {
+                if (!HasPacketBuffer(buffer))
+                {
+                    return string.Empty;
+                }
+
+                using (SHA256 sha256 = SHA256.Create())
+                {
+                    return Convert.ToBase64String(sha256.ComputeHash(buffer));
+                }
+            }
+
+            private static bool IsSameCurrentSocketRoute(
+                CurrentSocketRoute left,
+                CurrentSocketRoute right)
+            {
+                return left != null &&
+                    right != null &&
+                    left.Socket == right.Socket &&
+                    left.PacketType == right.PacketType &&
+                    string.Equals(
+                        (left.PacketFrom ?? string.Empty).Trim(),
+                        (right.PacketFrom ?? string.Empty).Trim(),
+                        StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(
+                        (left.PacketTo ?? string.Empty).Trim(),
+                        (right.PacketTo ?? string.Empty).Trim(),
+                        StringComparison.OrdinalIgnoreCase);
+            }
+
+            private static string GetRouteHost(string address)
+            {
+                string normalized = (address ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(normalized))
+                {
+                    return string.Empty;
+                }
+
+                int separator = normalized.LastIndexOf(':');
+                if (separator > 0 && separator < normalized.Length - 1)
+                {
+                    int port;
+                    if (int.TryParse(normalized.Substring(separator + 1), out port) &&
+                        port >= 0 && port <= 65535)
+                    {
+                        return normalized.Substring(0, separator).Trim();
+                    }
+                }
+
+                return normalized;
             }
 
             private static List<Socket_PacketInfo> CaptureCurrentPackets()
@@ -7219,7 +7452,8 @@ namespace WPELibrary.Lib
                     PacketType = captured.PacketType,
                     PacketFrom = captured.PacketFrom ?? string.Empty,
                     PacketTo = captured.PacketTo ?? string.Empty,
-                    CapturedAt = captured.PacketTime
+                    CapturedAt = captured.PacketTime,
+                    PacketFingerprint = GetPacketFingerprint(captured)
                 };
 
                 string currentFrom = Socket_Operation.GetIP_BySocket(
@@ -10595,10 +10829,17 @@ namespace WPELibrary.Lib
             public const string SummonedPetSkillBookPresetName = "召唤兽技能";
             public static string LastStartFailureReason { get; private set; } = string.Empty;
             public const string MountSpeedPresetName = "坐骑速度";
+            public const string MountSpeedHoldPresetName = "坐骑速度保持";
+            public const string MountGrowthRateHoldPresetName = "坐骑成长率保持100";
             public const string FirstRideRefinePresetName = "一坐骑洗炼";
+            public const string SecondRideRefinePresetName = "二坐骑洗炼";
+            public const string ThirdRideRefinePresetName = "三坐骑洗炼";
+            public const string FourthRideRefinePresetName = "四坐骑洗炼";
             public const string FiveElementUpgradePresetName = "五行升级";
             public const string SkillUpgradePresetName = "法术升级";
             public const string EquipmentRefinePresetName = "装备炼化";
+            public const string ShimenTaskPresetName = "师门任务";
+            public const string ShimenTaskPresetFolder = "未完成的任务";
 
             #region//结构定义
 
@@ -10644,6 +10885,9 @@ namespace WPELibrary.Lib
                 FiveElementUpgrade = 12,
                 SkillUpgrade = 13,
                 EquipmentRefine = 14,
+                ShimenTask = 15,
+                MountSpeedHold = 16,
+                MountGrowthRateHold = 17,
             }
 
             #endregion
@@ -10799,6 +11043,98 @@ namespace WPELibrary.Lib
                 return instructions;
             }
 
+            public static bool TryParseMountSpeedHoldTarget(string content, out double target)
+            {
+                return double.TryParse(
+                        content,
+                        NumberStyles.Float,
+                        CultureInfo.InvariantCulture,
+                        out target) &&
+                    !double.IsNaN(target) &&
+                    !double.IsInfinity(target) &&
+                    target > 0D;
+            }
+
+            public static DataTable CreateMountSpeedHoldPresetInstructions()
+            {
+                DataTable instructions = InitInstructions();
+                DataRow row = instructions.NewRow();
+                row["Type"] = InstructionType.MountSpeedHold;
+                row["Content"] = "500";
+                instructions.Rows.Add(row);
+                return instructions;
+            }
+
+            public static bool TryParseMountGrowthRateHoldTarget(string content, out double target)
+            {
+                return double.TryParse(
+                        content,
+                        NumberStyles.Float,
+                        CultureInfo.InvariantCulture,
+                        out target) &&
+                    !double.IsNaN(target) &&
+                    !double.IsInfinity(target) &&
+                    target == 100D;
+            }
+
+            public static DataTable CreateMountGrowthRateHoldPresetInstructions()
+            {
+                DataTable instructions = InitInstructions();
+                DataRow row = instructions.NewRow();
+                row["Type"] = InstructionType.MountGrowthRateHold;
+                row["Content"] = "100.0";
+                instructions.Rows.Add(row);
+                return instructions;
+            }
+
+            public static bool EnsureBuiltInMountGrowthRateHoldPreset()
+            {
+                Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot
+                    .FirstOrDefault(item => item != null && string.Equals(
+                        (item.RName ?? string.Empty).Trim(),
+                        MountGrowthRateHoldPresetName,
+                        StringComparison.Ordinal));
+                if (robot != null)
+                {
+                    if (robot.RInstruction == null || robot.RInstruction.Rows.Count == 0)
+                    {
+                        robot.RInstruction = CreateMountGrowthRateHoldPresetInstructions();
+                        return true;
+                    }
+                    return false;
+                }
+
+                Guid presetId = Guid.NewGuid();
+                AddRobot(false, presetId, MountGrowthRateHoldPresetName,
+                    CreateMountGrowthRateHoldPresetInstructions(), "常用", false);
+                return Socket_Cache.RobotList.lstRobot.Any(item =>
+                    item != null && item.RID == presetId);
+            }
+
+            public static bool EnsureBuiltInMountSpeedHoldPreset()
+            {
+                Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot
+                    .FirstOrDefault(item => item != null && string.Equals(
+                        (item.RName ?? string.Empty).Trim(),
+                        MountSpeedHoldPresetName,
+                        StringComparison.Ordinal));
+                if (robot != null)
+                {
+                    if (robot.RInstruction == null || robot.RInstruction.Rows.Count == 0)
+                    {
+                        robot.RInstruction = CreateMountSpeedHoldPresetInstructions();
+                        return true;
+                    }
+                    return false;
+                }
+
+                Guid presetId = Guid.NewGuid();
+                AddRobot(false, presetId, MountSpeedHoldPresetName,
+                    CreateMountSpeedHoldPresetInstructions(), "常用", false);
+                return Socket_Cache.RobotList.lstRobot.Any(item =>
+                    item != null && item.RID == presetId);
+            }
+
             public static bool EnsureBuiltInMountSpeedPreset()
             {
                 Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot
@@ -10829,6 +11165,27 @@ namespace WPELibrary.Lib
                     item != null && item.RID == presetId);
             }
 
+            public static bool IsRideRefinePresetName(string name)
+            {
+                string normalized = (name ?? string.Empty).Trim();
+                return string.Equals(
+                           normalized,
+                           FirstRideRefinePresetName,
+                           StringComparison.Ordinal) ||
+                    string.Equals(
+                        normalized,
+                        SecondRideRefinePresetName,
+                        StringComparison.Ordinal) ||
+                    string.Equals(
+                        normalized,
+                        ThirdRideRefinePresetName,
+                        StringComparison.Ordinal) ||
+                    string.Equals(
+                        normalized,
+                        FourthRideRefinePresetName,
+                        StringComparison.Ordinal);
+            }
+
             private static bool HasMountSpeedInstruction(DataTable instructions)
             {
                 return instructions != null && instructions.Rows.Cast<DataRow>().Any(row =>
@@ -10849,6 +11206,16 @@ namespace WPELibrary.Lib
                         row["Type"] != DBNull.Value &&
                         Convert.ToInt32(row["Type"]) ==
                             (int)Socket_Cache.Robot.InstructionType.MountSpeed);
+            }
+
+            private static bool HasShimenTaskInstruction(DataTable instructions)
+            {
+                return instructions != null && instructions.Rows.Cast<DataRow>().Any(row =>
+                    row != null &&
+                    row["Type"] != null &&
+                    row["Type"] != DBNull.Value &&
+                    Convert.ToInt32(row["Type"]) ==
+                        (int)Socket_Cache.Robot.InstructionType.ShimenTask);
             }
 
             private static bool IsCompleteMountSpeedInstructionPlan(DataTable instructions)
@@ -11146,6 +11513,53 @@ namespace WPELibrary.Lib
                     item != null && item.RID == presetId);
             }
 
+            public static DataTable CreateShimenTaskPresetInstructions()
+            {
+                DataTable instructions = Socket_Cache.Robot.InitInstructions();
+                foreach (ShimenTaskPresetEntry entry in ShimenTaskPresetPlan.GetEntries())
+                {
+                    DataRow row = instructions.NewRow();
+                    row["Type"] = Socket_Cache.Robot.InstructionType.ShimenTask;
+                    row["Content"] = ShimenTaskPresetPlan.EncodeEntry(entry);
+                    instructions.Rows.Add(row);
+                }
+                return instructions;
+            }
+
+            /// <summary>
+            /// 确保师门任务只读目录存在；已有非空预设不覆盖。
+            /// </summary>
+            public static bool EnsureBuiltInShimenTaskPreset()
+            {
+                Socket_RobotInfo robot = Socket_Cache.RobotList.lstRobot
+                    .FirstOrDefault(item => item != null &&
+                        string.Equals(
+                            (item.RName ?? string.Empty).Trim(),
+                            ShimenTaskPresetName,
+                            StringComparison.Ordinal));
+                if (robot != null)
+                {
+                    if (robot.RInstruction == null || robot.RInstruction.Rows.Count == 0)
+                    {
+                        robot.RInstruction = CreateShimenTaskPresetInstructions();
+                        robot.RFolder = ShimenTaskPresetFolder;
+                        return true;
+                    }
+                    return false;
+                }
+
+                Guid presetId = Guid.NewGuid();
+                AddRobot(
+                    false,
+                    presetId,
+                    ShimenTaskPresetName,
+                    CreateShimenTaskPresetInstructions(),
+                    ShimenTaskPresetFolder,
+                    false);
+                return Socket_Cache.RobotList.lstRobot.Any(item =>
+                    item != null && item.RID == presetId);
+            }
+
             #endregion
 
             #region//新增机器人
@@ -11359,8 +11773,20 @@ namespace WPELibrary.Lib
                             sReturn = "坐骑速度步骤";
                             break;
 
+                        case Socket_Cache.Robot.InstructionType.MountSpeedHold:
+                            sReturn = "坐骑速度保持";
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.MountGrowthRateHold:
+                            sReturn = "坐骑成长率保持";
+                            break;
+
                         case Socket_Cache.Robot.InstructionType.EquipmentRefine:
                             sReturn = "装备炼化步骤";
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.ShimenTask:
+                            sReturn = "师门任务（采购）";
                             break;
 
                     }
@@ -11433,8 +11859,20 @@ namespace WPELibrary.Lib
                             cReturn = Color.OrangeRed;
                             break;
 
+                        case Socket_Cache.Robot.InstructionType.MountSpeedHold:
+                            cReturn = Color.MediumVioletRed;
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.MountGrowthRateHold:
+                            cReturn = Color.MediumPurple;
+                            break;
+
                         case Socket_Cache.Robot.InstructionType.EquipmentRefine:
                             cReturn = Color.MediumSeaGreen;
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.ShimenTask:
+                            cReturn = Color.SteelBlue;
                             break;
 
                     }
@@ -11660,6 +12098,20 @@ namespace WPELibrary.Lib
                             }
                             break;
 
+                        case Socket_Cache.Robot.InstructionType.MountSpeedHold:
+                            double target;
+                            sReturn = TryParseMountSpeedHoldTarget(sContent, out target)
+                                ? "保持坐骑速度：" + target.ToString("R", CultureInfo.InvariantCulture)
+                                : "坐骑速度保持：无效目标（已拒绝执行）";
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.MountGrowthRateHold:
+                            double growthRateTarget;
+                            sReturn = TryParseMountGrowthRateHoldTarget(sContent, out growthRateTarget)
+                                ? "保持坐骑成长率：" + growthRateTarget.ToString("F1", CultureInfo.InvariantCulture)
+                                : "坐骑成长率保持：无效目标（固定为100.0）";
+                            break;
+
                         case Socket_Cache.Robot.InstructionType.EquipmentRefine:
                             EquipmentRefinePresetStep refineStep;
                             if (EquipmentRefinePresetPlan.TryDecodeStep(sContent, out refineStep))
@@ -11669,6 +12121,18 @@ namespace WPELibrary.Lib
                             else
                             {
                                 sReturn = "装备炼化：无效步骤内容（已拒绝执行）";
+                            }
+                            break;
+
+                        case Socket_Cache.Robot.InstructionType.ShimenTask:
+                            ShimenTaskPresetEntry shimenTaskEntry;
+                            if (ShimenTaskPresetPlan.TryDecodeEntry(sContent, out shimenTaskEntry))
+                            {
+                                sReturn = shimenTaskEntry.DisplayText;
+                            }
+                            else
+                            {
+                                sReturn = "师门任务：无效采购条目（已拒绝执行）";
                             }
                             break;
 
@@ -11759,7 +12223,10 @@ List<int> listSendSendList = new List<int>();
                             List<int> listTreasureMap = new List<int>();
                             List<int> listSummonedPetSkillBook = new List<int>();
                             List<int> listMountSpeed = new List<int>();
+                            List<int> listMountSpeedHold = new List<int>();
+                            List<int> listMountGrowthRateHold = new List<int>();
                             List<int> listEquipmentRefine = new List<int>();
+                            List<int> listShimenTask = new List<int>();
 
                         for (int i = 0; i < dtRInstruction.Rows.Count; i++)
                         {
@@ -11790,8 +12257,20 @@ List<int> listSendSendList = new List<int>();
                                     listMountSpeed.Add(i);
                                     break;
 
+                                case Socket_Cache.Robot.InstructionType.MountSpeedHold:
+                                    listMountSpeedHold.Add(i);
+                                    break;
+
+                                case Socket_Cache.Robot.InstructionType.MountGrowthRateHold:
+                                    listMountGrowthRateHold.Add(i);
+                                    break;
+
                                 case Socket_Cache.Robot.InstructionType.EquipmentRefine:
                                     listEquipmentRefine.Add(i);
+                                    break;
+
+                                case Socket_Cache.Robot.InstructionType.ShimenTask:
+                                    listShimenTask.Add(i);
                                     break;
 
                             }
@@ -11901,6 +12380,34 @@ List<int> listSendSendList = new List<int>();
                             }
                         }
 
+                        if (listMountSpeedHold.Count > 0)
+                        {
+                            if (listMountSpeedHold.Count != 1 || dtRInstruction.Rows.Count != 1)
+                            {
+                                return listMountSpeedHold[0];
+                            }
+                            double target;
+                            if (!TryParseMountSpeedHoldTarget(
+                                    dtRInstruction.Rows[0]["Content"].ToString(), out target))
+                            {
+                                return 0;
+                            }
+                        }
+
+                        if (listMountGrowthRateHold.Count > 0)
+                        {
+                            if (listMountGrowthRateHold.Count != 1 || dtRInstruction.Rows.Count != 1)
+                            {
+                                return listMountGrowthRateHold[0];
+                            }
+                            double target;
+                            if (!TryParseMountGrowthRateHoldTarget(
+                                    dtRInstruction.Rows[0]["Content"].ToString(), out target))
+                            {
+                                return 0;
+                            }
+                        }
+
                         if (listEquipmentRefine.Count > 0)
                         {
                             if (listEquipmentRefine.Count != dtRInstruction.Rows.Count)
@@ -11917,6 +12424,29 @@ List<int> listSendSendList = new List<int>();
                                         dtRInstruction.Rows[rowIndex]["Content"].ToString(),
                                         out step) ||
                                     step.Index != stepIndex + 1)
+                                {
+                                    return rowIndex;
+                                }
+                            }
+                        }
+
+                        // 师门任务当前是只读目录，必须保持为纯目录预设，避免与
+                        // 键鼠或发包指令混合后产生未声明的游戏操作。
+                        if (listShimenTask.Count > 0)
+                        {
+                            if (listShimenTask.Count != dtRInstruction.Rows.Count)
+                            {
+                                return listShimenTask[0];
+                            }
+
+                            for (int taskIndex = 0; taskIndex < listShimenTask.Count; taskIndex++)
+                            {
+                                int rowIndex = listShimenTask[taskIndex];
+                                ShimenTaskPresetEntry entry;
+                                if (rowIndex != taskIndex ||
+                                    !ShimenTaskPresetPlan.TryDecodeEntry(
+                                        dtRInstruction.Rows[rowIndex]["Content"].ToString(),
+                                        out entry))
                                 {
                                     return rowIndex;
                                 }
@@ -12022,6 +12552,7 @@ List<int> listSendSendList = new List<int>();
             public static async Task<Socket_Robot> DoRobotAsync(Guid RID, Dictionary<string, object> parameters)
             {
                 Socket_Robot srReturn = null;
+                Stopwatch startupStopwatch = Stopwatch.StartNew();
                 LastStartFailureReason = string.Empty;
 
                 try
@@ -12067,10 +12598,7 @@ List<int> listSendSendList = new List<int>();
                                 }
                                 if (sri.MountSpeedPreset != null &&
                                     (HasMountSpeedInstruction(instruction) ||
-                                     string.Equals(
-                                         (sri.RName ?? string.Empty).Trim(),
-                                         FirstRideRefinePresetName,
-                                         StringComparison.Ordinal)))
+                                     IsRideRefinePresetName(sri.RName)))
                                 {
                                     mountSpeedPreset =
                                         MountSpeedPresetSerializer.DeserializeClone(
@@ -12105,18 +12633,15 @@ List<int> listSendSendList = new List<int>();
                             capture();
                         }
 
-                        bool isFirstRideRefine = string.Equals(
-                            (robotName ?? string.Empty).Trim(),
-                            FirstRideRefinePresetName,
-                            StringComparison.Ordinal);
-                        if (isFirstRideRefine && !HasMountSpeedInstruction(instruction))
+                        bool isRideRefine = IsRideRefinePresetName(robotName);
+                        if (isRideRefine && !HasMountSpeedInstruction(instruction))
                         {
                             instruction = instruction == null || instruction.Rows.Count == 0
                                 ? CreateMountSpeedPresetInstructions()
                                 : AppendMountSpeedPresetInstructions(instruction);
                             Socket_Operation.DoLog(
                                 "MountRefinePreset",
-                                "一坐骑洗炼启动时未发现坐骑流程，已自动迁移并补齐 11 步坐骑速度流程。无需手动配置步骤。");
+                                "坐骑洗炼启动时未发现坐骑流程，已自动迁移并补齐 11 步坐骑速度流程。无需手动配置步骤。");
                         }
 
                         if (instruction != null)
@@ -12149,7 +12674,7 @@ List<int> listSendSendList = new List<int>();
                                     row["Type"] != DBNull.Value &&
                                     Convert.ToInt32(row["Type"]) ==
                                         (int)Socket_Cache.Robot.InstructionType.MountSpeed);
-                                if (hasMountSpeedInstruction && isFirstRideRefine)
+                                if (hasMountSpeedInstruction && isRideRefine)
                                 {
                                     parameters["MountRefineAutoSendRequested"] = true;
                                     string mountPresetError;
@@ -12158,12 +12683,27 @@ List<int> listSendSendList = new List<int>();
                                             out mountPresetError);
                                     if (!hasCompleteMountPreset)
                                     {
-                                        mountSpeedPreset =
-                                            MountSpeedPreset.CreateDefaultFirstRideRefinePreset();
-                                        Socket_Operation.DoLog(
-                                            "MountRefinePreset",
-                                            "一坐骑洗炼启动时未发现完整目标，已自动使用固定目标：高级秋水流弦、"
-                                            + "高级百步穿杨、高级追魂夺命，成长率 1.175。无需重复填写。");
+                                        bool isFirstRide = string.Equals(
+                                            (robotName ?? string.Empty).Trim(),
+                                            FirstRideRefinePresetName,
+                                            StringComparison.Ordinal);
+                                        if (isFirstRide)
+                                        {
+                                            mountSpeedPreset =
+                                                MountSpeedPreset.CreateDefaultFirstRideRefinePreset();
+                                            Socket_Operation.DoLog(
+                                                "MountRefinePreset",
+                                                "一坐骑洗炼启动时未发现完整目标，已自动使用固定目标：高级秋水流弦、"
+                                                + "高级百步穿杨、高级追魂夺命，成长率 1.175。无需重复填写。");
+                                        }
+                                        else
+                                        {
+                                            LastStartFailureReason =
+                                                "坐骑洗炼预设“" +
+                                                (robotName ?? string.Empty).Trim() +
+                                                "”必须先保存当前坐骑的 3 个目标技能和成长率。";
+                                            return null;
+                                        }
                                     }
                                 }
                                 if (mountSpeedPreset != null &&
@@ -12177,6 +12717,17 @@ List<int> listSendSendList = new List<int>();
                                 {
                                     parameters["MountStatusAndroidSnapshotReader"] =
                                         new MountStatusAndroidSnapshotReader();
+                                }
+                                if (HasShimenTaskInstruction(instruction))
+                                {
+                                    if (!parameters.ContainsKey("ShimenTaskMemoryReader"))
+                                    {
+                                        parameters["ShimenTaskMemoryReader"] =
+                                            new ShimenTaskAndroidSnapshotReader();
+                                        parameters["OwnShimenTaskMemoryReader"] = true;
+                                    }
+                                    parameters["ShimenTaskPresetId"] = RID;
+                                    parameters["ShimenTaskStartupStopwatch"] = startupStopwatch;
                                 }
                                 if (visionProfile != null &&
                                     !parameters.ContainsKey("VisionProfile"))
@@ -12194,7 +12745,7 @@ List<int> listSendSendList = new List<int>();
                                     parameters["OwnVisionProfile"] = true;
                                 }
                                 bool started = await Task.Run(() =>
-                                    srReturn.StartRobot(robotName, instruction, parameters));
+                                    srReturn.StartRobot(robotName, RID, instruction, parameters));
                                 if (!started)
                                 {
                                     LastStartFailureReason = string.IsNullOrWhiteSpace(srReturn.LastStartFailureReason)
@@ -12646,13 +13197,18 @@ List<int> listSendSendList = new List<int>();
                         Socket_Cache.RobotList.lstFolders.Insert(0, "常用");
                     }
 
+#if !WPE_CLEAN_PACKAGE
+                    bool removedObsoleteMountSpeedPreset = false;
                     bool repairedTreasureMapPreset = false;
                     bool createdSummonedPetSkillBookPreset = false;
-                    bool removedObsoleteMountSpeedPreset = false;
                     bool migratedFirstRideRefinePreset = false;
                     bool createdFiveElementUpgradePreset = false;
                     bool createdSkillUpgradePreset = false;
                     bool createdEquipmentRefinePreset = false;
+                    bool createdShimenTaskPreset = false;
+                    bool createdMountSpeedHoldPreset = false;
+                    bool createdMountGrowthRateHoldPreset = false;
+#endif
                     foreach (DataRow dataRow in dtRobot.Rows)
                     {
                         Guid RID = Guid.Parse(dataRow["GUID"].ToString());
@@ -12663,7 +13219,9 @@ List<int> listSendSendList = new List<int>();
                             "坐机速度",
                             StringComparison.Ordinal))
                         {
+#if !WPE_CLEAN_PACKAGE
                             removedObsoleteMountSpeedPreset = true;
+#endif
                             continue;
                         }
                         string RFolder = dataRow.Table.Columns.Contains("Folder")
@@ -12855,12 +13413,15 @@ List<int> listSendSendList = new List<int>();
                             }
                         }
 
+#if !WPE_CLEAN_PACKAGE
                         if (Socket_Cache.Robot.EnsureBuiltInTreasureMapPreset(robot))
                         {
                             repairedTreasureMapPreset = true;
                         }
+#endif
                     }
 
+#if !WPE_CLEAN_PACKAGE
                     createdSummonedPetSkillBookPreset =
                         Socket_Cache.Robot.EnsureBuiltInSummonedPetSkillBookPreset();
 
@@ -12876,6 +13437,16 @@ List<int> listSendSendList = new List<int>();
                     createdEquipmentRefinePreset =
                         Socket_Cache.Robot.EnsureBuiltInEquipmentRefinePreset();
 
+                    createdShimenTaskPreset =
+                        Socket_Cache.Robot.EnsureBuiltInShimenTaskPreset();
+
+                    createdMountSpeedHoldPreset =
+                        Socket_Cache.Robot.EnsureBuiltInMountSpeedHoldPreset();
+
+                    createdMountGrowthRateHoldPreset =
+                        Socket_Cache.Robot.EnsureBuiltInMountGrowthRateHoldPreset();
+#endif
+
                     foreach (Socket_RobotInfo robot in Socket_Cache.RobotList.lstRobot)
                     {
                         if (!Socket_Cache.RobotList.lstFolders.Contains(robot.RFolder))
@@ -12883,19 +13454,24 @@ List<int> listSendSendList = new List<int>();
                             Socket_Cache.RobotList.lstFolders.Add(robot.RFolder);
                         }
                     }
+#if !WPE_CLEAN_PACKAGE
                     if ((repairedTreasureMapPreset ||
                          createdSummonedPetSkillBookPreset ||
                          migratedFirstRideRefinePreset ||
                          removedObsoleteMountSpeedPreset ||
                          createdFiveElementUpgradePreset ||
                          createdSkillUpgradePreset ||
-                         createdEquipmentRefinePreset) &&
+                         createdEquipmentRefinePreset ||
+                         createdShimenTaskPreset ||
+                         createdMountSpeedHoldPreset ||
+                         createdMountGrowthRateHoldPreset) &&
                         !Socket_Cache.RobotList.SaveRobotList_ToDB())
                     {
                         Socket_Operation.DoLog(
                             nameof(LoadRobotList_FromDB),
                             "内置机器人预设已在内存修复，但数据库保存失败。");
                     }
+#endif
                 }
                 catch (Exception ex)
                 {
@@ -14446,6 +15022,7 @@ List<int> listSendSendList = new List<int>();
                     string sendName = null;
                     int loopCount = 0;
                     int loopInterval = 0;
+                    bool useSystemSocket = false;
                     BindingList<Socket_PacketInfo> sendCollection = null;
                     Action capture = () =>
                     {
@@ -14458,6 +15035,7 @@ List<int> listSendSendList = new List<int>();
                         }
 
                         sendName = ssi.SName;
+                        useSystemSocket = ssi.SSystemSocket;
                         loopCount = ssi.SLoopCNT;
                         loopInterval = ssi.SLoopINT;
                         sendCollection = new BindingList<Socket_PacketInfo>();
@@ -14556,7 +15134,11 @@ List<int> listSendSendList = new List<int>();
                     }
 
                     Socket_Cache.SocketList.CurrentSocketRoutesResolution routeResolution =
-                        Socket_Cache.SocketList.ResolveCurrentRoutes(sendCollection);
+                        Socket_Cache.SocketList.ResolveCurrentRoutes(
+                            sendCollection,
+                            useSystemSocket
+                                ? Socket_Cache.System.ManualSystemSocket
+                                : 0);
                     for (int index = 0; index < routeResolution.Items.Count; index++)
                     {
                         Socket_Cache.SocketList.LogCurrentRouteResolution(
@@ -14609,7 +15191,10 @@ List<int> listSendSendList = new List<int>();
                         effectiveLoopInterval,
                         sendCollection,
                         usePanguIronSaleTransportProtection,
-                        usePanguIronSaleTransportProtection));
+                        usePanguIronSaleTransportProtection,
+                        useSystemSocket
+                            ? Socket_Cache.System.ManualSystemSocket
+                            : 0));
                     if (!started)
                     {
                         return SendStartResult.Failed("发送预设未能启动。请检查发送线程状态和封包内容。", "send_start_failed");

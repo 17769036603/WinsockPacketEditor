@@ -29,6 +29,7 @@ function Assert-NotContains {
 }
 
 $form = Read-SourceFile "WPELibrary\Socket_Form.cs"
+$assistantConcurrency = Read-SourceFile "WPELibrary\AssistantRunConcurrencyPolicy.cs"
 $cache = Read-SourceFile "WPELibrary\Lib\Socket_Cache.cs"
 $robot = Read-SourceFile "WPELibrary\Lib\Socket_Robot.cs"
 $petReader = Read-SourceFile "WPELibrary\Lib\PetSkillBook\PetSkillBookAndroidSnapshotReader.cs"
@@ -45,6 +46,17 @@ $treasureLogStore = Read-SourceFile "WPELibrary\Lib\Vision\TreasureMapRunLogStor
 $robotForm = Read-SourceFile "WPELibrary\Socket_RobotForm.cs"
 $zh = [xml](Read-SourceFile "WPELibrary\Properties\Resources.resx")
 $en = [xml](Read-SourceFile "WPELibrary\Properties\Resources.en-US.resx")
+$xiangjuChanganName = -join @([char]0x76F8, [char]0x805A, [char]0x957F, [char]0x5B89)
+$luoshenFuName = -join @([char]0x6D1B, [char]0x795E, [char]0x8D4B)
+$zilingName = -join @([char]0x7D2B, [char]0x96F6)
+$guozijianName = -join @([char]0x56FD, [char]0x5B50, [char]0x76D1)
+$thirdRideRefineName = -join @(
+    [char]0x4E09, [char]0x5750, [char]0x9A91, [char]0x6D17, [char]0x70BC)
+$fourthRideRefineName = -join @(
+    [char]0x56DB, [char]0x5750, [char]0x9A91, [char]0x6D17, [char]0x70BC)
+$yizhanQingchengTreasureName = -join @(
+    [char]0x4E00, [char]0x6218, [char]0x503E, [char]0x57CE,
+    [char]0x85CF, [char]0x5B9D, [char]0x56FE)
 
 Assert-Contains $form "cmsAssistantButtonMoveToGroup" `
     "Assistant menu population must use a stable menu reference instead of localized display text."
@@ -60,8 +72,16 @@ Assert-Contains $form "lstRobot.Count <= originalCount" `
     "A failed assistant creation must not modify the previous last assistant."
 Assert-Contains $form "robot.IsEnable = newValue" `
     "Changing an assistant's enabled state must go through the persistent mutation path."
-Assert-Contains $form "this.activeAssistantRobot != null" `
-    "Assistant edits and group changes must be blocked while an assistant is running."
+Assert-Contains $form "this.HasActiveAssistantRuns" `
+    "Assistant edits and group changes must be blocked while any assistant is running."
+Assert-Contains $form "activeRun.Robot.StopRobot()" `
+    "Stopping an assistant button must target only that preset's active run."
+Assert-Contains $form "this.activeAssistantRuns.Remove(completedRobotId)" `
+    "Completing one concurrent assistant must remove only its own run slot."
+Assert-Contains $form "foreach (ActiveAssistantRun assistantRun in this.activeAssistantRuns.Values.ToList())" `
+    "Closing the main form must stop every active assistant run."
+Assert-Contains $assistantConcurrency "public static bool CanStart(" `
+    "Assistant concurrency must be enforced by one reusable policy boundary."
 Assert-Contains $form "private static bool HasTreasureMapInstruction(Socket_RobotInfo robot)" `
     "The main assistant entry must identify treasure-map instructions before starting."
 Assert-Contains $form "robot.TreasureLiveSendAuthorized = true" `
@@ -78,7 +98,7 @@ Assert-Contains $robot "ArrivalEvidenceTimeoutMilliseconds = 1000" `
     "Production treasure-map execution must keep arrival evidence diagnostic instead of blocking Use."
 Assert-Contains $robot "bool isXiangjuChangAnPreset = this.IsXiangjuChangAnTreasureMapPreset()" `
     "Only the Xiangju Chang'an treasure-map preset may opt into the transport protection."
-Assert-Contains $robot 'name.StartsWith("相聚长安", StringComparison.Ordinal)' `
+Assert-Contains $robot ('name.StartsWith("' + $xiangjuChanganName + '", StringComparison.Ordinal)') `
     "The Xiangju Chang'an preset selector must not match the unchanged Yizhan Qingcheng preset."
 Assert-Contains $robot "JumpUseDelayMilliseconds = isXiangjuChangAnPreset ? 1800 : 300" `
     "Only the Xiangju Chang'an preset must use the conservative Jump-to-Use settling window."
@@ -92,8 +112,36 @@ Assert-Contains $robot "JumpRetryDelayMilliseconds = 0" `
     "Production treasure-map execution must not interrupt movement with a mid-route Jump."
 Assert-Contains $robot "RequireActionTemplateBeforeJump = isXiangjuChangAnPreset" `
     "Only the Xiangju Chang'an preset must require a complete action path before Jump."
-Assert-Contains $robot "new TreasureMapRuntimePacketSender(isXiangjuChangAnPreset)" `
-    "Only the Xiangju Chang'an preset may use action-specific cached-socket fallback."
+Assert-Contains $robot "private sealed class TreasureMapPresetSendPolicy" `
+    "Treasure-map compatibility settings must be represented by a preset-local policy."
+Assert-Contains $robot ('if (string.Equals(name, "' + $luoshenFuName + '", StringComparison.Ordinal))') `
+    "The Luoshen Fu preset must resolve its policy from an exact-name branch."
+Assert-Contains $robot "return CreateLuoshenFuTreasureMapSendPolicy();" `
+    "The Luoshen Fu preset must own a separate policy factory."
+Assert-Contains $robot ('if (string.Equals(name, "' + $zilingName + '", StringComparison.Ordinal))') `
+    "The Ziling preset must resolve its policy from an exact-name branch."
+Assert-Contains $robot "return CreateZilingTreasureMapSendPolicy();" `
+    "The Ziling preset must own a separate policy factory."
+Assert-Contains $robot ('if (string.Equals(name, "' + $guozijianName + '", StringComparison.Ordinal))') `
+    "The Guozijian preset must resolve its policy from an exact-name branch."
+Assert-Contains $robot "return CreateGuozijianTreasureMapSendPolicy();" `
+    "The Guozijian preset must own a separate policy factory."
+Assert-NotContains $robot ('name.StartsWith("' + $guozijianName + '", StringComparison.Ordinal)') `
+    "The Guozijian policy must not expand to similarly named presets."
+Assert-Contains $robot ('if (string.Equals(name, "' + $yizhanQingchengTreasureName + '", StringComparison.Ordinal))') `
+    "The Yizhan Qingcheng preset must resolve its policy from an exact-name branch."
+Assert-Contains $robot "return CreateYizhanQingchengTreasureMapSendPolicy();" `
+    "The Yizhan Qingcheng preset must own a separate policy factory."
+Assert-Contains $robot "return new TreasureMapPresetSendPolicy(true, false);" `
+    "Unregistered treasure-map presets must retain strict template and sequence gates."
+Assert-Contains $robot "RequireCurrentPacketTemplates =" `
+    "Treasure-map template validation must come from the resolved preset-local policy."
+Assert-Contains $robot "presetSendPolicy.RequireCurrentPacketTemplates" `
+    "The selected preset policy must control the current-template gate."
+Assert-Contains $robot "presetSendPolicy.AllowMissingSessionSequence)," `
+    "The selected preset policy must independently control the sequence boundary."
+Assert-NotContains $robot "UsesTreasureMapCompatibilitySender" `
+    "Treasure-map presets must not be coupled through one shared compatibility-name list."
 Assert-Contains $c6Controller "topResumedActivity" `
     "C6 startup must inspect the current foreground Android application."
 Assert-Contains $c6Controller "FindForegroundPackage" `
@@ -148,6 +196,8 @@ Assert-Contains $treasureRunner "c6_resync_exhausted" `
     "Treasure-map execution must bound consecutive C6 recovery attempts."
 Assert-Contains $treasureRunner "target_failed_skipped" `
     "Continuous treasure-map execution must skip a failed target instead of exiting."
+Assert-Contains $treasureRunner "stopped_after_ambiguous:" `
+    "An ambiguous action boundary must stop continuous execution and release its controller."
 Assert-Contains $treasureRunner "EnsureC6ConnectedWithRecovery" `
     "Continuous treasure-map execution must keep reconnecting until manually stopped."
 Assert-Contains $treasureRunner "PruneTargetLedgers" `
@@ -224,6 +274,14 @@ Assert-Contains $robot 'this._parameters["MountRefineA050AutoVerified"] = true' 
     "Automatic A050 acceptance must be marked as run-scoped diagnostic state."
 Assert-Contains $cache 'parameters["MountRefineAutoSendRequested"] = true' `
     "The first-mount refine entry must request automatic send without manual protocol fields."
+Assert-Contains $cache ('ThirdRideRefinePresetName = "' + $thirdRideRefineName + '"') `
+    "The third-mount refine preset must have an exact runtime name."
+Assert-Contains $cache ('FourthRideRefinePresetName = "' + $fourthRideRefineName + '"') `
+    "The fourth-mount refine preset must have an exact runtime name."
+Assert-Contains $cache 'ThirdRideRefinePresetName,' `
+    "The ride-refine name gate must include the third-mount preset."
+Assert-Contains $cache 'FourthRideRefinePresetName,' `
+    "The ride-refine name gate must include the fourth-mount preset."
 Assert-Contains $robotForm 'parameters["MountRefineAutoSendRequested"] = true' `
     "The dedicated mount assistant execute entry must request automatic send without manual protocol fields."
 Assert-Contains $robot "RunMountRefinePlanInstruction(mountPreset)" `

@@ -38,7 +38,7 @@
   <data name="Startup_AdminRequired" xml:space="preserve"><value>Administrator permission is required to start injection mode.</value></data>
   <data name="Startup_AdminRestartFailed" xml:space="preserve"><value>Failed to restart with administrator permission: {0}</value></data>
   <data name="Startup_Failed" xml:space="preserve"><value>Startup failed: {0}</value></data>
-  <data name="Injector_TargetNotApproved" xml:space="preserve"><value>The selected process is no longer an approved injection target. Refresh the process list.</value></data>
+  <data name="Injector_TargetNotApproved" xml:space="preserve"><value>The selected process is no longer available or its name changed. Refresh the process list and try again.</value></data>
   <data name="Injector_LibraryMissing" xml:space="preserve"><value>WPELibrary.dll is missing from the application directory.</value></data>
   <data name="Main_Start" xml:space="preserve"><value>Start (&amp;K)</value></data>
   <data name="Main_Stop" xml:space="preserve"><value>Stop (&amp;T)</value></data>
@@ -70,6 +70,13 @@
   <data name="Main_AdvancedTools" xml:space="preserve"><value>Advanced tools</value></data>
   <data name="Main_PacketList" xml:space="preserve"><value>Packet list</value></data>
   <data name="Main_PacketData" xml:space="preserve"><value>Packet data</value></data>
+  <data name="UI_JevAnalyze" xml:space="preserve"><value>Analyze with JEV</value></data>
+  <data name="UI_JevResultTitle" xml:space="preserve"><value>JEV analysis result</value></data>
+  <data name="UI_JevSelectPacket" xml:space="preserve"><value>Select a packet first.</value></data>
+  <data name="UI_JevEmptyPacket" xml:space="preserve"><value>The selected packet has no data to analyze.</value></data>
+  <data name="UI_JevNoKey" xml:space="preserve"><value>TYPESAFE_API_KEY was not found. Configure it in the user or system environment and restart the application.</value></data>
+  <data name="UI_JevRequestFailed" xml:space="preserve"><value>JEV request failed with HTTP status {0}.</value></data>
+  <data name="UI_JevFailed" xml:space="preserve"><value>JEV analysis failed. Check the system log.</value></data>
   <data name="UI_ReadableContentTitle" xml:space="preserve"><value>Readable content (auto detected)</value></data>
   <data name="UI_ReadableContentMetaLabel" xml:space="preserve"><value>Readable content information</value></data>
   <data name="UI_ReadableContentPreview" xml:space="preserve"><value>Readable content preview</value></data>

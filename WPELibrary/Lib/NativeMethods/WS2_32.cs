@@ -18,6 +18,38 @@ namespace WPELibrary.Lib.NativeMethods
 
         #endregion
 
+        #region//select
+
+        [DllImport("WS2_32.dll", CharSet = CharSet.Unicode, SetLastError = true, CallingConvention = CallingConvention.StdCall)]
+        public static extern int select(
+            [In] int nfds,
+            [In, Out] IntPtr readfds,
+            [In, Out] IntPtr writefds,
+            [In, Out] IntPtr exceptfds,
+            [In, Out] IntPtr timeout
+            );
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Auto, SetLastError = true)]
+        public delegate int DSelect(
+            [In] int nfds,
+            [In, Out] IntPtr readfds,
+            [In, Out] IntPtr writefds,
+            [In, Out] IntPtr exceptfds,
+            [In, Out] IntPtr timeout
+            );
+
+        public static int SelectHook(
+            [In] int nfds,
+            [In, Out] IntPtr readfds,
+            [In, Out] IntPtr writefds,
+            [In, Out] IntPtr exceptfds,
+            [In, Out] IntPtr timeout)
+        {
+            return WinSockHook.Select_Hook(nfds, readfds, writefds, exceptfds, timeout);
+        }
+
+        #endregion
+
         #region//WSAGetOverlappedResult
 
         [DllImport("WS2_32.dll", CharSet = CharSet.Unicode, SetLastError = true, CallingConvention = CallingConvention.StdCall)]

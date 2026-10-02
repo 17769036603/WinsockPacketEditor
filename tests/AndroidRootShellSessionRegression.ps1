@@ -73,10 +73,37 @@ Assert-Contains $session "NamedPipeServerStream" `
     "External read-only Python workers must have a broker owned by the shared session."
 Assert-Contains $session "this.commandGate" `
     "Shared Root commands must be serialized before reading the marker."
+Assert-Contains $session "this.commandGate.Wait(gateWaitMilliseconds, cancellationToken)" `
+    "The per-command timeout must bound waiting for the shared Root command gate."
+Assert-Contains $session "Android Root shell 命令等待超时。" `
+    "A command that cannot acquire the shared Root gate in time must report a timeout."
+Assert-Contains $session "if (DateTime.UtcNow >= deadline)" `
+    "A command must recheck its deadline after acquiring the shared Root gate."
+$gateAcquiredIndex = $session.IndexOf("this.commandGate.Wait(gateWaitMilliseconds, cancellationToken)")
+$deadlineCheckIndex = $session.IndexOf("if (DateTime.UtcNow >= deadline)", $gateAcquiredIndex)
+$commandWriteIndex = $session.IndexOf("current.StandardInput.Write(wrapped)", $deadlineCheckIndex)
+if ($gateAcquiredIndex -lt 0 -or $deadlineCheckIndex -le $gateAcquiredIndex -or $commandWriteIndex -le $deadlineCheckIndex) {
+    throw "The Root command deadline must be checked after gate acquisition and before writing the command."
+}
 Assert-Contains $session "AppDomain.CurrentDomain.ProcessExit" `
     "The process-wide Root manager must clean up on desktop process exit."
 Assert-Contains $session "this.session = null;" `
     "A lease must release its caller reference without closing the global session."
+Assert-Contains $session "this.FormatStartupFailure(" `
+    "Startup EOF failures must include captured diagnostics when available."
+if ($session -notmatch '(?s)未返回就绪标记：.*?next,\s*true,\s*stderrCompletion\.Task') {
+    throw "A shell that fails to return the startup marker must be terminated before diagnostics are collected."
+}
+Assert-Contains $session '" stderr: "' `
+    "Startup failures must retain the captured adb stderr tail."
+Assert-Contains $session '" adb exit code: "' `
+    "Startup failures must include an immediately available adb exit code."
+Assert-Contains $session "stderrCompletion.TrySetResult(true)" `
+    "Startup diagnostics must know when the asynchronous stderr stream reaches EOF."
+Assert-Contains $session "stderrReadCompleted.Wait(250)" `
+    "Startup diagnostics must bound their wait for buffered stderr."
+Assert-Contains $session "catch (TimeoutException ex)" `
+    "Startup timeouts must report diagnostics without waiting indefinitely."
 
 Assert-Contains $c6 "AndroidRootShellSessionManager.Acquire" `
     "Treasure C6 must acquire the shared Root session."

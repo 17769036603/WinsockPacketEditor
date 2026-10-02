@@ -51,10 +51,14 @@ namespace WPELibrary.Lib.MountSpeed
     public sealed class MountAndroidRefineSnapshotSource : IMountRefineSnapshotSource
     {
         private readonly MountStatusAndroidSnapshotReader _reader;
+        private readonly string _preferredRideInstanceId;
 
-        public MountAndroidRefineSnapshotSource(MountStatusAndroidSnapshotReader reader)
+        public MountAndroidRefineSnapshotSource(
+            MountStatusAndroidSnapshotReader reader,
+            string preferredRideInstanceId = null)
         {
             _reader = reader;
+            _preferredRideInstanceId = (preferredRideInstanceId ?? string.Empty).Trim();
         }
 
         public async Task<MountRefineSnapshotReadResult> ReadSnapshotAsync(CancellationToken cancellationToken)
@@ -66,7 +70,8 @@ namespace WPELibrary.Lib.MountSpeed
 
             MountStatusAndroidSnapshotReadResult readResult = await _reader.ReadSnapshotAsync(
                 cancellationToken,
-                true).ConfigureAwait(false);
+                true,
+                _preferredRideInstanceId).ConfigureAwait(false);
             if (readResult == null)
             {
                 return new MountRefineSnapshotReadResult(null, "mount_refine_snapshot_reader_returned_null");
@@ -232,14 +237,20 @@ namespace WPELibrary.Lib.MountSpeed
         public int ResultConfirmTimeoutMs { get; set; } = 3000;
 
         /// <summary>
-        /// 单次只读快照读取的上限。实际读取时会再限制为当前确认窗口的剩余时间；
-        /// 读取超时只结束当前窗口，状态机继续等待同一次发送的结果。
+        /// 单次只读快照读取的独立上限。完整发现可能明显长于刷新确认窗口，
+        /// 因此不能用确认窗口的剩余时间截断读取；读取超时后状态机继续等待同一次发送的结果。
         /// </summary>
-        public int SnapshotReadTimeoutMs { get; set; } = 2800;
+        public int SnapshotReadTimeoutMs { get; set; } = 120000;
 
         public int IntervalMs { get; set; } = 250;
 
         public MountSpeedPreset Preset { get; set; }
+
+        /// <summary>
+        /// 仅由明确授权的独立预设设置。非空时，状态机要求每次快照都保持
+        /// refine_selected 且实例 ID 精确一致；其他预设继续要求正在骑乘的 bound 绑定。
+        /// </summary>
+        public string SelectedRefineRideInstanceId { get; set; }
 
         public bool IsValid(out string error)
         {
@@ -614,7 +625,7 @@ namespace WPELibrary.Lib.MountSpeed
 
                     MountRefineSnapshotReadResult readResult = await ReadSnapshotWithTimeoutAsync(
                         cancellationToken,
-                        Math.Min(remainingMs, _configuration.SnapshotReadTimeoutMs)).ConfigureAwait(false);
+                        _configuration.SnapshotReadTimeoutMs).ConfigureAwait(false);
                     if (!readResult.Succeeded)
                     {
                         if (string.Equals(readResult.Error, "mount_refine_result_timeout", StringComparison.Ordinal))
@@ -737,7 +748,7 @@ namespace WPELibrary.Lib.MountSpeed
             }
         }
 
-        private static bool TryValidateSnapshot(MountRefineSnapshotReadResult readResult, out string error)
+        private bool TryValidateSnapshot(MountRefineSnapshotReadResult readResult, out string error)
         {
             if (readResult == null || !readResult.Succeeded || readResult.Snapshot == null)
             {
@@ -754,7 +765,25 @@ namespace WPELibrary.Lib.MountSpeed
                 return false;
             }
 
-            if (snapshot.IsMounted != true || !string.Equals(snapshot.RideBindingStatus, "bound", StringComparison.OrdinalIgnoreCase))
+            string selectedRefineRideInstanceId =
+                (_configuration.SelectedRefineRideInstanceId ?? string.Empty).Trim();
+            bool usesSelectedRefineRide =
+                !string.IsNullOrWhiteSpace(selectedRefineRideInstanceId);
+            bool bindingMatches = usesSelectedRefineRide
+                ? string.Equals(
+                        snapshot.RideBindingStatus,
+                        "refine_selected",
+                        StringComparison.Ordinal) &&
+                    string.Equals(
+                        snapshot.ActiveRideInstanceId,
+                        selectedRefineRideInstanceId,
+                        StringComparison.Ordinal)
+                : snapshot.IsMounted == true &&
+                    string.Equals(
+                        snapshot.RideBindingStatus,
+                        "bound",
+                        StringComparison.OrdinalIgnoreCase);
+            if (!bindingMatches)
             {
                 error = "mount_refine_current_ride_not_bound";
                 return false;

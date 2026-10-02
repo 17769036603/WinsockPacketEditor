@@ -81,6 +81,10 @@ Assert-Contains $reader 'IsCachedRefineCardsIncomplete(probe.Output)' `
     "Only the transient incomplete-card cache result may use the fast retry path."
 Assert-Contains $reader 'HasCompleteRefineCards(snapshot)' `
     "A cached snapshot with incomplete refine cards must not become reusable state."
+Assert-Contains $reader 'preferredRefineRideInstanceId' `
+    "A preset A050 ride instance must reach every Android snapshot read path."
+Assert-Contains $reader '"refine_selected"' `
+    "The desktop reader must distinguish the selected refine ride from the mounted ride."
 Assert-Contains $reader 'ReadProbeDiagnostics(json)' `
     "Probe read-path and phase timing must reach the desktop reader."
 Assert-Contains $reader '!IsProbeWorkerResponseTimeout(probe)' `
@@ -101,7 +105,7 @@ Assert-Contains $probe 'build_probe_warm_hints_from_cache' `
     "Successful plans must persist relative warm-start hints."
 Assert-Contains $probe 'warm_cache = build_warm_cache_from_hints' `
     "Cross-process relative hints must be revalidated in the current process before use."
-Assert-Contains $probe 'Absolute point addresses are process-local only.' `
+Assert-Contains $probe 'Absolute point addresses stay process-local.' `
     "Point addresses must stay scoped to one verified process identity."
 Assert-Contains $probe 'def select_cold_priority_ranges(' `
     "Cold discovery must have a bounded small-mapping priority pass."
@@ -137,8 +141,14 @@ Assert-Contains $probe 'luajit_gc64_warm_priority' `
     "Successful priority scans must be visible in probe diagnostics."
 Assert-Contains $probe 'requireCompleteRefineCards' `
     "The long-lived probe must receive the strict refine-card requirement."
+Assert-Contains $probe 'def bind_refine_ride_instance(' `
+    "The read-only probe must support an explicitly selected refine-page ride."
+Assert-Contains $probe '"LocalRide.m_RideIns+PresetA050"' `
+    "Selected refine-ride binding must retain both live-page and preset-packet evidence."
 Assert-Contains $robot 'ReadMountPreflightSnapshot(' `
     "An incomplete 21-card refine snapshot must be re-read before failing."
+Assert-Contains $robot '"MountRefinePreferredRideInstanceId"' `
+    "The validated preset ride instance must be retained for refresh reads."
 Assert-Contains $robot 'GetParameter("MountRefineMaxAttempts", 0)' `
     "Mount-refine must default to no attempt-count auto-stop."
 Assert-Contains $robot '"a050_binding_retry"' `
@@ -192,6 +202,8 @@ Assert-NotContains $sender 'ResolveCurrentRoute(' `
     "A050 sender must not silently switch to another route at send time."
 Assert-Contains $packetTemplate 'packet = (byte[])_fixtureBytes.Clone();' `
     "A050 template must return a clone of the fixed fixture."
+Assert-Contains $packetTemplate 'public string RideInstanceId' `
+    "A validated A050 template must expose its immutable ride instance for read binding."
 Assert-NotContains $packetTemplate 'Buffer.BlockCopy(encodedId' `
     "A050 template must not rewrite the fixed ride-instance bytes."
 Assert-Contains $sender 'speedMode={3}' `
@@ -204,6 +216,18 @@ Assert-Contains $stateMachine '"send_result"' `
     "Every mount-refine send attempt must emit a structured result."
 Assert-Contains $stateMachine 'IMountRefinePacketSenderDiagnostics' `
     "Sender-native failure details must reach the execution result and log."
+Assert-Contains $stateMachine 'SelectedRefineRideInstanceId' `
+    "The state machine must receive an explicit per-preset selected-ride binding."
+Assert-Contains $stateMachine '"refine_selected"' `
+    "The state machine must recognize the explicitly selected refine-page binding."
+Assert-Contains $stateMachine 'snapshot.ActiveRideInstanceId,' `
+    "Selected refine-page validation must compare the active ride instance."
+Assert-Contains $robot 'Socket_Cache.Robot.FourthRideRefinePresetName' `
+    "The exact fourth-ride preset must retain its independent selected-ride state-machine path."
+Assert-Contains $robot 'Socket_Cache.Robot.ThirdRideRefinePresetName' `
+    "Only the exact third-ride preset may enable its selected-ride state-machine path."
+Assert-Contains $robot 'SelectedRefineRideInstanceId = selectedRefineRideInstanceId' `
+    "The exact third- or fourth-ride instance must reach state-machine validation."
 Assert-Contains $stateMachine 'readResult.WasCancelled' `
     "Android snapshot cancellation must be classified as a user/host stop."
 Assert-Contains $stateMachine 'long baselineSequence' `
@@ -238,10 +262,26 @@ Assert-Contains $stateMachine '"refresh_wait_retry"' `
     "A single refresh timeout must be logged as a recoverable wait retry."
 Assert-Contains $stateMachine 'mount_refine_result_timeout_retrying' `
     "A refresh timeout must not terminate the preset run."
+Assert-Contains $stateMachine 'public int SnapshotReadTimeoutMs { get; set; } = 120000;' `
+    "A full safe-discovery read must have an independent bounded timeout."
+Assert-NotContains $stateMachine 'Math.Min(remainingMs, _configuration.SnapshotReadTimeoutMs)' `
+    "The short confirmation window must not cancel a legitimate snapshot discovery."
+Assert-Contains $harness 'DelayedChangedSnapshotSource' `
+    "The harness must cover a snapshot read that outlives one confirmation window."
+Assert-Contains $probeRegression 'selected_binding_candidate' `
+    "The offline probe regression must cover a selected ride that is not currently mounted."
+Assert-Contains $harness 'delayedReadSource.CancelledReadCount != 0' `
+    "The harness must prove the slow snapshot read was not cancelled and restarted."
 Assert-Contains $stateMachine 'sendToVerifyStopwatch' `
     "Refresh verification must measure the accepted-send to new-snapshot segment."
 Assert-Contains $harness 'TestMountRefineSnapshotSequenceWaitAsync' `
     "The harness must cover repeated non-advancing sequence waits."
+Assert-Contains $harness 'TestFourthRideSelectedRefineBindingAsync' `
+    "The harness must cover the exact fourth-ride selected binding."
+Assert-Contains $harness 'TestThirdRideSelectedRefineBindingAsync' `
+    "The harness must cover the exact third-ride selected binding."
+Assert-Contains $harness 'Non-target second-ride preset inherited selected binding' `
+    "The harness must prove a non-target ride preset is not broadened."
 Assert-Contains $harness 'string[] readPaths = { "point", "fast", "fallback" }' `
     "The harness must cover every optimized Android read path."
 Assert-Contains $harness 'source.ReadCount < 11' `

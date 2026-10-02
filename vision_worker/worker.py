@@ -29,6 +29,105 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 LOGGER = logging.getLogger("wpe-vision-worker")
 MAX_JSONL_REQUEST_BYTES = 32 * 1024 * 1024
 WORKER_VERSION = "2026.8.7.2"
+LANGSMITH_PROJECT = "my-first-agent"
+
+
+def configure_langsmith() -> bool:
+    """Enable tracing for this WPE worker only, using its local key file."""
+    local_app_data = Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
+    key_file = local_app_data / "XNAS" / "WPE" / "vision-worker" / "langsmith.env"
+    api_key = ""
+    try:
+        for line in key_file.read_text(encoding="utf-8-sig").splitlines():
+            name, separator, value = line.strip().partition("=")
+            if separator and name == "LANGSMITH_API_KEY":
+                api_key = value.strip().strip("\"'")
+                break
+    except OSError:
+        pass
+
+    # These variables stay inside the WPE worker process and cannot redirect
+    # tracing from any other project that happens to share this computer.
+    os.environ["LANGSMITH_PROJECT"] = LANGSMITH_PROJECT
+    os.environ["LANGSMITH_TRACING"] = "true" if api_key else "false"
+    os.environ.pop("LANGSMITH_API_KEY", None)
+    if api_key:
+        os.environ["LANGSMITH_API_KEY"] = api_key
+    return bool(api_key)
+
+
+LANGSMITH_ENABLED = configure_langsmith()
+
+
+def _trace_inputs(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    allowed_methods = {"ping", "warmup", "ocr", "capture", "begin_input_session", "airtest_action"}
+    method = str(inputs.get("method", "unknown") or "unknown").strip().lower()
+    return {"method": method if method in allowed_methods else "unknown"}
+
+
+def _trace_outputs(output: Any) -> Dict[str, Any]:
+    if not isinstance(output, dict):
+        return {"ok": False}
+    result = {
+        name: bool(output[name])
+        for name in ("ok", "available", "success")
+        if name in output
+    }
+    elapsed_ms = output.get("elapsed_ms")
+    if isinstance(elapsed_ms, (int, float)) and elapsed_ms >= 0:
+        result["elapsed_ms"] = int(elapsed_ms)
+    return result
+
+
+def _trace_request(function: Any) -> Any:
+    if not LANGSMITH_ENABLED:
+        return function
+    try:
+        from langsmith import traceable
+    except ImportError:
+        LOGGER.warning("LangSmith tracing is configured but the SDK is not installed.")
+        return function
+    return traceable(
+        name="wpe_vision_worker.request",
+        run_type="tool",
+        project_name=LANGSMITH_PROJECT,
+        process_inputs=_trace_inputs,
+        process_outputs=_trace_outputs,
+    )(function)
+
+
+@_trace_request
+def _record_request_summary(
+    method: str, result_flags: Dict[str, bool], elapsed_ms: int
+) -> Dict[str, Any]:
+    return {**result_flags, "elapsed_ms": elapsed_ms}
+
+
+def _handle_request(worker: Any, request: Dict[str, Any]) -> Dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        result = worker.handle(request)
+    except Exception:
+        _submit_request_trace(request, {"ok": False}, started)
+        raise
+    _submit_request_trace(request, result, started)
+    return result
+
+
+def _submit_request_trace(
+    request: Dict[str, Any], result: Dict[str, Any], started: float
+) -> None:
+    if not LANGSMITH_ENABLED:
+        return
+    try:
+        method = _trace_inputs({"method": request.get("method", "unknown")})["method"]
+        flags = _trace_outputs(result)
+        elapsed_ms = int(round((time.perf_counter() - started) * 1000.0))
+        _record_request_summary(method, flags, elapsed_ms)
+    except Exception:
+        # Tracing must not suppress or repeat a worker operation such as an
+        # explicitly authorized Airtest action.
+        LOGGER.warning("LangSmith trace submission failed; worker result is preserved.")
 
 
 def module_available(name: str) -> bool:
@@ -640,7 +739,7 @@ def run_jsonl() -> int:
             if not isinstance(request, dict):
                 raise ValueError("A JSONL request must be an object.")
             request_id = request.get("id")
-            result = worker.handle(request)
+            result = _handle_request(worker, request)
         except Exception as exc:
             LOGGER.error("Protocol request failed: %s", exc)
             result = error_response(request_id, "Worker protocol error: " + str(exc))

@@ -410,7 +410,7 @@
     <value>Close (&amp;C)</value>
   </data>
   <data name="bSendStop.Text" xml:space="preserve">
-    <value>Stop (&amp;T)</value>
+    <value>Stop (Space)</value>
   </data>
   <data name="bSend.Text" xml:space="preserve">
     <value>Start (&amp;F)</value>

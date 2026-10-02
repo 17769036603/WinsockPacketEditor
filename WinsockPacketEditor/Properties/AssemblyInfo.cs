@@ -8,7 +8,7 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyTitle("小黑封包助手")]
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("X-NAS")]
+[assembly: AssemblyCompany("个人开发维护")]
 [assembly: AssemblyProduct("小黑封包助手")]
 [assembly: AssemblyCopyright("Copyright ©  2024")]
 [assembly: AssemblyTrademark("")]
@@ -31,7 +31,7 @@ using System.Runtime.InteropServices;
 //
 //可以指定所有这些值，也可以使用“生成号”和“修订号”的默认值
 //通过使用 "*"，如下所示:
-[assembly: AssemblyVersion("2026.8.28.2")]
-[assembly: AssemblyFileVersion("2026.8.28.2")]
+[assembly: AssemblyVersion("2026.9.28.3")]
+[assembly: AssemblyFileVersion("2026.9.28.3")]
 //[assembly: AssemblyVersion("1.0.0.21")]
 //[assembly: AssemblyFileVersion("1.0.0.21")]

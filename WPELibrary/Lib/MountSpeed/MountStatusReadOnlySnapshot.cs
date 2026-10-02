@@ -53,6 +53,12 @@ namespace WPELibrary.Lib.MountSpeed
 
         public string GrowthRateSource { get; internal set; }
 
+        /// <summary>
+        /// Optional address of the boxed GROWUP TValue, exposed only for the
+        /// separately confirmed one-shot writer.
+        /// </summary>
+        public ulong? GrowthRateMemoryAddress { get; internal set; }
+
         public bool? IsRiding { get; internal set; }
 
         public bool? IsCurrent { get; internal set; }
@@ -470,6 +476,8 @@ namespace WPELibrary.Lib.MountSpeed
 
         public double RoleMoveSpeed { get; internal set; }
 
+        public ulong? RoleMoveSpeedMemoryAddress { get; internal set; }
+
         public IDictionary<string, MountStatusRuntimeValue> RawValues { get; internal set; }
 
         /// <summary>
@@ -622,12 +630,24 @@ namespace WPELibrary.Lib.MountSpeed
                 int gx;
                 int gy;
                 double roleMoveSpeed;
+                JObject references = player["references"] as JObject;
+                JObject roleMoveSpeedReference = references == null
+                    ? null
+                    : references["m_RoleMoveSpeed"] as JObject;
+                ulong? roleMoveSpeedMemoryAddress;
                 bool isLocalPlayer;
                 bool isMounted;
                 if (!TryReadInt(player, "playerId", out playerId, out error) ||
                     !TryReadInt(player, "gx", out gx, out error) ||
                     !TryReadInt(player, "gy", out gy, out error) ||
                     !TryReadFiniteDouble(player, "roleMoveSpeed", out roleMoveSpeed, out error) ||
+                    !TryReadOptionalHexAddress(
+                        roleMoveSpeedReference == null
+                            ? null
+                            : roleMoveSpeedReference["nodeValueAddress"],
+                        "references.m_RoleMoveSpeed.nodeValueAddress",
+                        out roleMoveSpeedMemoryAddress,
+                        out error) ||
                     !TryReadBoolean(player, "isLocalPlayer", out isLocalPlayer, out error) ||
                     !TryReadBoolean(player, "isMounted", out isMounted, out error))
                 {
@@ -749,6 +769,7 @@ namespace WPELibrary.Lib.MountSpeed
                     Gx = gx,
                     Gy = gy,
                     RoleMoveSpeed = roleMoveSpeed,
+                    RoleMoveSpeedMemoryAddress = roleMoveSpeedMemoryAddress,
                     RawValues = ReadRawValues(player["rawValues"] as JObject),
                     RideInstances = rideInstances,
                     RideRefineCards = rideRefineCards,
@@ -897,6 +918,16 @@ namespace WPELibrary.Lib.MountSpeed
                     return false;
                 }
 
+                ulong? growthRateMemoryAddress;
+                if (!TryReadOptionalHexAddress(
+                    instance["growthRateAddress"],
+                    "rideInstance.growthRateAddress",
+                    out growthRateMemoryAddress,
+                    out error))
+                {
+                    return false;
+                }
+
                 bool? isRiding;
                 if (!TryReadOptionalBoolean(
                     instance["isRiding"],
@@ -923,6 +954,7 @@ namespace WPELibrary.Lib.MountSpeed
                     RideShapeId = rideShapeId,
                     GrowthRate = growthRate,
                     GrowthRateSource = growthRateSource,
+                    GrowthRateMemoryAddress = growthRateMemoryAddress,
                     IsRiding = isRiding,
                     IsCurrent = isCurrent,
                     Skills = skills
@@ -1141,6 +1173,7 @@ namespace WPELibrary.Lib.MountSpeed
             error = string.Empty;
             if (rideBindingStatus != null &&
                 !string.Equals(rideBindingStatus, "bound", StringComparison.Ordinal) &&
+                !string.Equals(rideBindingStatus, "refine_selected", StringComparison.Ordinal) &&
                 !string.Equals(rideBindingStatus, "unresolved", StringComparison.Ordinal) &&
                 !string.Equals(rideBindingStatus, "ambiguous", StringComparison.Ordinal) &&
                 !string.Equals(rideBindingStatus, "not_mounted", StringComparison.Ordinal))
@@ -1173,6 +1206,26 @@ namespace WPELibrary.Lib.MountSpeed
                     current.RideShapeId.Value != mountId.Value)
                 {
                     error = "坐骑绑定证据不完整或不匹配。";
+                    return false;
+                }
+                return true;
+            }
+
+            if (string.Equals(rideBindingStatus, "refine_selected", StringComparison.Ordinal))
+            {
+                if (string.IsNullOrWhiteSpace(activeRideInstanceId) ||
+                    !string.Equals(
+                        rideBindingSource,
+                        "LocalRide.m_RideIns+PresetA050",
+                        StringComparison.Ordinal) ||
+                    currentCount != 1 ||
+                    current == null ||
+                    !string.Equals(current.RideInstanceId, activeRideInstanceId, StringComparison.Ordinal) ||
+                    !current.RideShapeId.HasValue ||
+                    current.Skills == null ||
+                    current.Skills.Count != 3)
+                {
+                    error = "炼化页面选中坐骑的绑定证据不完整或不匹配。";
                     return false;
                 }
                 return true;
@@ -1410,6 +1463,40 @@ namespace WPELibrary.Lib.MountSpeed
                 double.IsInfinity(parsed))
             {
                 error = "坐骑快照字段 " + name + " 不是有限数值。";
+                return false;
+            }
+
+            value = parsed;
+            return true;
+        }
+
+        private static bool TryReadOptionalHexAddress(
+            JToken token,
+            string name,
+            out ulong? value,
+            out string error)
+        {
+            value = null;
+            error = string.Empty;
+            if (token == null || token.Type == JTokenType.Null)
+            {
+                return true;
+            }
+
+            string text = token.Type == JTokenType.String ? token.Value<string>() : null;
+            ulong parsed;
+            if (string.IsNullOrWhiteSpace(text) ||
+                text.Length < 3 ||
+                text.Length > 18 ||
+                !text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ||
+                !ulong.TryParse(
+                    text.Substring(2),
+                    NumberStyles.AllowHexSpecifier,
+                    CultureInfo.InvariantCulture,
+                    out parsed) ||
+                parsed == 0)
+            {
+                error = "坐骑快照字段 " + name + " 不是有效非零十六进制地址或 null。";
                 return false;
             }
 

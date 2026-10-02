@@ -50,10 +50,16 @@ namespace MountSpeedRunnerHarness
                 Console.WriteLine("\n[TEST 8] Mount Refine State Machine Safety and Loop");
                 if (!await TestMountRefineStateMachineAsync()) return 1;
 
-                Console.WriteLine("\n[TEST 8B] Mount Refine Snapshot Read Timeout");
+                Console.WriteLine("\n[TEST 8A] Third Ride Selected Refine Binding Isolation");
+                if (!await TestThirdRideSelectedRefineBindingAsync()) return 1;
+
+                Console.WriteLine("\n[TEST 8B] Fourth Ride Selected Refine Binding Isolation");
+                if (!await TestFourthRideSelectedRefineBindingAsync()) return 1;
+
+                Console.WriteLine("\n[TEST 8C] Mount Refine Snapshot Read Timeout");
                 if (!await TestMountRefineSnapshotReadTimeoutAsync()) return 1;
 
-                Console.WriteLine("\n[TEST 8C] Mount Refine Snapshot Sequence Wait");
+                Console.WriteLine("\n[TEST 8D] Mount Refine Snapshot Sequence Wait");
                 if (!await TestMountRefineSnapshotSequenceWaitAsync()) return 1;
 
                 Console.WriteLine("\n[TEST 9] Mount Refine A050 Offline Packet Template");
@@ -581,6 +587,48 @@ namespace MountSpeedRunnerHarness
                 return false;
             }
 
+            string selectedRefineJson = mountedJson
+                .Replace(
+                    "\"isRiding\":false,\"skills\"",
+                    "\"isRiding\":false,\"isCurrent\":true,\"skills\"")
+                .Replace(
+                    "\"isRiding\":true,\"isCurrent\":true",
+                    "\"isRiding\":true")
+                .Replace(
+                    "\"activeRideInstanceId\":\"2091811378351566852\"",
+                    "\"activeRideInstanceId\":\"2091811378351566849\"")
+                .Replace(
+                    "\"rideBindingStatus\":\"bound\"",
+                    "\"rideBindingStatus\":\"refine_selected\"")
+                .Replace(
+                    "\"rideBindingSource\":\"LocalRide.PropertyValueDict.SHAPE+RIDEING\"",
+                    "\"rideBindingSource\":\"LocalRide.m_RideIns+PresetA050\"");
+            WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot selectedRefineSnapshot;
+            if (!WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshotProtocol.TryParse(
+                    selectedRefineJson,
+                    out selectedRefineSnapshot,
+                    out error) ||
+                selectedRefineSnapshot.ActiveRideInstanceId != "2091811378351566849" ||
+                selectedRefineSnapshot.RideBindingStatus != "refine_selected" ||
+                selectedRefineSnapshot.RideInstances[0].IsCurrent != true ||
+                selectedRefineSnapshot.RideInstances[0].IsRiding != false)
+            {
+                Console.WriteLine("  [FAIL] Selected refine-ride binding was rejected: " + error);
+                return false;
+            }
+            string invalidSelectedRefineSource = selectedRefineJson.Replace(
+                "LocalRide.m_RideIns+PresetA050",
+                "LocalRide.m_RideIns");
+            WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot invalidSelectedSnapshot;
+            if (WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshotProtocol.TryParse(
+                invalidSelectedRefineSource,
+                out invalidSelectedSnapshot,
+                out error))
+            {
+                Console.WriteLine("  [FAIL] Untrusted selected refine-ride source was accepted.");
+                return false;
+            }
+
             WPELibrary.Lib.MountSpeed.MountRideRefineCardComparison firstComparison =
                 WPELibrary.Lib.MountSpeed.MountRideRefineCardComparer.Compare(null, snapshot);
             WPELibrary.Lib.MountSpeed.MountRideRefineCardComparison sameComparison =
@@ -880,6 +928,121 @@ namespace MountSpeedRunnerHarness
             }
         }
 
+        static async Task<bool> TestThirdRideSelectedRefineBindingAsync()
+        {
+            return await TestSelectedRefineBindingIsolationAsync(
+                "三坐骑洗炼",
+                "2092100442933833730",
+                "二坐骑洗炼");
+        }
+
+        static async Task<bool> TestFourthRideSelectedRefineBindingAsync()
+        {
+            return await TestSelectedRefineBindingIsolationAsync(
+                "四坐骑洗炼",
+                "2092100442933833731",
+                "二坐骑洗炼");
+        }
+
+        static async Task<bool> TestSelectedRefineBindingIsolationAsync(
+            string targetPresetName,
+            string targetRideInstanceId,
+            string nonTargetPresetName)
+        {
+            try
+            {
+                WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot baseline;
+                WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot changed;
+                string error;
+                if (!WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshotProtocol.TryParse(
+                        BuildSelectedRefineFixtureJson(
+                            1.095,
+                            1,
+                            targetRideInstanceId),
+                        out baseline,
+                        out error) ||
+                    !WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshotProtocol.TryParse(
+                        BuildSelectedRefineFixtureJson(
+                            1.055,
+                            2,
+                            targetRideInstanceId),
+                        out changed,
+                        out error))
+                {
+                    Console.WriteLine("  [FAIL] Selected-ride fixture rejected: " + error);
+                    return false;
+                }
+
+                WPELibrary.Lib.MountSpeed.MountSpeedPreset targetPreset =
+                    CreateRefineStateMachinePreset();
+                targetPreset.Name = targetPresetName;
+                WPELibrary.Lib.MountSpeed.RecordingMountRefinePacketSender targetSender =
+                    new WPELibrary.Lib.MountSpeed.RecordingMountRefinePacketSender(true, true);
+                WPELibrary.Lib.MountSpeed.MountRefineExecutionResult targetResult =
+                    await new WPELibrary.Lib.MountSpeed.MountRefineStateMachine(
+                        new WPELibrary.Lib.MountSpeed.MountRefineConfiguration
+                        {
+                            Preset = targetPreset,
+                            SelectedRefineRideInstanceId = targetRideInstanceId,
+                            MaxAttempts = 2,
+                            ResultConfirmTimeoutMs = 500,
+                            IntervalMs = 0
+                        },
+                        new ScriptedMountRefineSnapshotSource(baseline, changed),
+                        targetSender)
+                    .RunAsync(CancellationToken.None);
+                if (!targetResult.Success ||
+                    targetResult.StopReason !=
+                        WPELibrary.Lib.MountSpeed.MountRefineStopReason.TargetReached ||
+                    targetResult.AttemptCount != 1 ||
+                    targetSender.Requests.Count != 1 ||
+                    targetSender.Requests[0].ActiveRideInstanceId != targetRideInstanceId)
+                {
+                    Console.WriteLine(
+                        "  [FAIL] Target selected binding did not complete one safe loop: " +
+                        targetResult.Message);
+                    return false;
+                }
+
+                WPELibrary.Lib.MountSpeed.MountSpeedPreset nonTargetPreset =
+                    CreateRefineStateMachinePreset();
+                nonTargetPreset.Name = nonTargetPresetName;
+                WPELibrary.Lib.MountSpeed.RecordingMountRefinePacketSender nonTargetSender =
+                    new WPELibrary.Lib.MountSpeed.RecordingMountRefinePacketSender(true, true);
+                WPELibrary.Lib.MountSpeed.MountRefineExecutionResult nonTargetResult =
+                    await new WPELibrary.Lib.MountSpeed.MountRefineStateMachine(
+                        new WPELibrary.Lib.MountSpeed.MountRefineConfiguration
+                        {
+                            Preset = nonTargetPreset,
+                            MaxAttempts = 2,
+                            ResultConfirmTimeoutMs = 500,
+                            IntervalMs = 0
+                        },
+                        new ScriptedMountRefineSnapshotSource(baseline),
+                        nonTargetSender)
+                    .RunAsync(CancellationToken.None);
+                if (nonTargetResult.Success ||
+                    nonTargetResult.Message != "mount_refine_current_ride_not_bound" ||
+                    nonTargetSender.Requests.Count != 0)
+                {
+                    Console.WriteLine(
+                        "  [FAIL] Non-target second-ride preset inherited selected binding: " +
+                        nonTargetResult.Message);
+                    return false;
+                }
+
+                Console.WriteLine(
+                    "  [PASS] exact " + targetPresetName +
+                    " selected binding accepted; non-target second ride rejected with 0 sends");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("  [FAIL] " + ex.Message);
+                return false;
+            }
+        }
+
         static async Task<bool> TestMountRefineSnapshotReadTimeoutAsync()
         {
             try
@@ -948,6 +1111,42 @@ namespace MountSpeedRunnerHarness
                     return false;
                 }
 
+                WPELibrary.Lib.MountSpeed.MountRefineConfiguration delayedReadConfiguration =
+                    new WPELibrary.Lib.MountSpeed.MountRefineConfiguration
+                    {
+                        Preset = CreateRefineStateMachinePreset(),
+                        MaxAttempts = 2,
+                        ResultConfirmTimeoutMs = 40,
+                        SnapshotReadTimeoutMs = 250,
+                        IntervalMs = 0
+                    };
+                WPELibrary.Lib.MountSpeed.RecordingMountRefinePacketSender delayedReadSender =
+                    new WPELibrary.Lib.MountSpeed.RecordingMountRefinePacketSender(true, true);
+                DelayedChangedSnapshotSource delayedReadSource =
+                    new DelayedChangedSnapshotSource(baseline, changed, 100);
+                machine = new WPELibrary.Lib.MountSpeed.MountRefineStateMachine(
+                    delayedReadConfiguration,
+                    delayedReadSource,
+                    delayedReadSender);
+                using (CancellationTokenSource delayedReadCancellation = new CancellationTokenSource())
+                {
+                    delayedReadCancellation.CancelAfter(1000);
+                    result = await machine.RunAsync(delayedReadCancellation.Token);
+                }
+
+                if (!result.Success ||
+                    result.AttemptCount != 1 ||
+                    result.StopReason != WPELibrary.Lib.MountSpeed.MountRefineStopReason.TargetReached ||
+                    delayedReadSender.Requests.Count != 1 ||
+                    delayedReadSource.ReadCount != 2 ||
+                    delayedReadSource.CancelledReadCount != 0)
+                {
+                    Console.WriteLine(
+                        "  [FAIL] Confirmation-window expiry cancelled a valid slow snapshot read: " +
+                        result.Message);
+                    return false;
+                }
+
                 WPELibrary.Lib.MountSpeed.MountRefineConfiguration cancellationConfiguration =
                     new WPELibrary.Lib.MountSpeed.MountRefineConfiguration
                     {
@@ -983,7 +1182,7 @@ namespace MountSpeedRunnerHarness
                     }
 
                     Console.WriteLine(
-                        "  [PASS] refresh timeout retries without resending; manual stop remains bounded at " +
+                        "  [PASS] slow discovery survives the confirmation window; refresh timeout retries without resending; manual stop remains bounded at " +
                         stopwatch.ElapsedMilliseconds + "ms");
                 }
                 return true;
@@ -1307,6 +1506,36 @@ namespace MountSpeedRunnerHarness
                     return false;
                 }
 
+                const string secondRidePacketHex =
+                    "4D 5A 00 00 00 00 00 00 00 1D A0 50 00 06 03 00 00 00 00 13 " +
+                    "32 30 39 32 31 30 30 34 34 32 39 33 33 38 33 33 37 32 39";
+                WPELibrary.Lib.MountSpeed.MountRefineA050PacketTemplate secondRideTemplate;
+                if (!WPELibrary.Lib.MountSpeed.MountRefineA050PacketTemplate.TryCreateFromHex(
+                    secondRidePacketHex,
+                    "user-provided-second-ride-a050",
+                    out secondRideTemplate,
+                    out error))
+                {
+                    Console.WriteLine("  [FAIL] User-provided second-ride A050 hex rejected: " + error);
+                    return false;
+                }
+                byte[] secondRidePacket = ParseHex(secondRidePacketHex);
+                byte[] secondRideFixture = secondRideTemplate.FixtureBytes;
+                if (secondRideFixture.Length != secondRidePacket.Length ||
+                    secondRideTemplate.RideInstanceId != "2092100442933833729")
+                {
+                    Console.WriteLine("  [FAIL] User-provided second-ride A050 identity changed.");
+                    return false;
+                }
+                for (int index = 0; index < secondRidePacket.Length; index++)
+                {
+                    if (secondRideFixture[index] != secondRidePacket[index])
+                    {
+                        Console.WriteLine("  [FAIL] User-provided second-ride A050 byte changed at offset " + index);
+                        return false;
+                    }
+                }
+
                 WPELibrary.Lib.MountSpeed.MountRefineSendRequest request =
                     new WPELibrary.Lib.MountSpeed.MountRefineSendRequest
                     {
@@ -1494,6 +1723,20 @@ namespace MountSpeedRunnerHarness
                 + "}";
         }
 
+        static string BuildSelectedRefineFixtureJson(
+            double cardTwoGrowthRate,
+            long sequence,
+            string rideInstanceId)
+        {
+            return BuildMountedRefineFixtureJson(cardTwoGrowthRate, sequence)
+                .Replace("\"isMounted\":true", "\"isMounted\":false")
+                .Replace("\"rideInstanceId\":\"ride-1\"", "\"rideInstanceId\":\"" + rideInstanceId + "\"")
+                .Replace("\"isRiding\":true", "\"isRiding\":false")
+                .Replace("\"activeRideInstanceId\":\"ride-1\"", "\"activeRideInstanceId\":\"" + rideInstanceId + "\"")
+                .Replace("\"rideBindingStatus\":\"bound\"", "\"rideBindingStatus\":\"refine_selected\"")
+                .Replace("\"rideBindingSource\":\"fixture\"", "\"rideBindingSource\":\"LocalRide.m_RideIns+PresetA050\"");
+        }
+
         static WPELibrary.Lib.MountSpeed.MountRefineSnapshotReadResult CreateFixtureReadResult(
             WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot snapshot,
             string readPath)
@@ -1671,6 +1914,61 @@ namespace MountSpeedRunnerHarness
                         : _changedSnapshot;
                 return Task.FromResult(
                     new WPELibrary.Lib.MountSpeed.MountRefineSnapshotReadResult(snapshot));
+            }
+        }
+
+        private sealed class DelayedChangedSnapshotSource : WPELibrary.Lib.MountSpeed.IMountRefineSnapshotSource
+        {
+            private readonly WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot _baselineSnapshot;
+            private readonly WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot _changedSnapshot;
+            private readonly int _delayMilliseconds;
+            private int _cancelledReadCount;
+            private int _readCount;
+
+            public DelayedChangedSnapshotSource(
+                WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot baselineSnapshot,
+                WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot changedSnapshot,
+                int delayMilliseconds)
+            {
+                _baselineSnapshot = baselineSnapshot;
+                _changedSnapshot = changedSnapshot;
+                _delayMilliseconds = delayMilliseconds;
+            }
+
+            public int CancelledReadCount
+            {
+                get { return Volatile.Read(ref _cancelledReadCount); }
+            }
+
+            public int ReadCount
+            {
+                get { return Volatile.Read(ref _readCount); }
+            }
+
+            public async Task<WPELibrary.Lib.MountSpeed.MountRefineSnapshotReadResult> ReadSnapshotAsync(
+                CancellationToken cancellationToken)
+            {
+                if (Interlocked.Increment(ref _readCount) == 1)
+                {
+                    return new WPELibrary.Lib.MountSpeed.MountRefineSnapshotReadResult(
+                        _baselineSnapshot);
+                }
+
+                try
+                {
+                    await Task.Delay(_delayMilliseconds, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    Interlocked.Increment(ref _cancelledReadCount);
+                    return new WPELibrary.Lib.MountSpeed.MountRefineSnapshotReadResult(
+                        null,
+                        "reader_cancelled",
+                        true);
+                }
+
+                return new WPELibrary.Lib.MountSpeed.MountRefineSnapshotReadResult(
+                    _changedSnapshot);
             }
         }
 

@@ -9,6 +9,7 @@ param(
     [string]$CertificateSubject = "CN=小黑封包助手 本机 ClickOnce",
     [switch]$SignManifests,
     [switch]$Unsigned,
+    [switch]$CleanPresets,
     [switch]$Preview
 )
 
@@ -424,6 +425,7 @@ else {
     $endpointBase
 }
 $signManifestsEnabled = ($SignManifests.IsPresent -or [string]::IsNullOrWhiteSpace($Endpoint)) -and -not $Unsigned.IsPresent
+$cleanPresetsValue = if ($CleanPresets.IsPresent) { "true" } else { "false" }
 if ($SignManifests.IsPresent -and $Unsigned.IsPresent) {
     throw "-SignManifests 与 -Unsigned 不能同时使用。"
 }
@@ -490,6 +492,7 @@ if ($Preview) {
         StageDirectory = $stagePath
         MSBuild = (Find-MSBuild)
         SignManifests = $signManifestsEnabled
+        CleanPresets = $CleanPresets.IsPresent
     } | Format-List
     return
 }
@@ -516,6 +519,7 @@ try {
         "/p:ApplicationRevision=0",
         "/p:InstallUrl=$buildInstallUrl",
         "/p:SignManifests=$signValue",
+        "/p:CleanPresets=$cleanPresetsValue",
         "/m",
         "/nologo"
     )

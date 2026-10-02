@@ -22,15 +22,35 @@ Android 探针若返回 `needs_discover` 且诊断码为 `local_player_missing` 
 
 `WPELibrary.Lib.MountSpeed.MountStatusMemoryReader` 在通用只读层之上读取坐骑状态快照。调用方必须通过 `MountStatusMemoryLayout` 提供已确认的显式地址和数据类型；读取器不扫描、不猜测偏移，也不调用现有的坐骑内存写入器。
 
-快照以 `MountStatusReadResult` 返回，包含成功标志、错误码、进程 ID、启动时间、读取会话 ID 和递增序号。`IsMounted` 是当前必需字段；坐骑 ID、基础速度、坐骑加成速度和角色移动速度在地址未确认时保持未读取状态，合法的 `0` 与 `false` 不会被误判为读取失败。每次读取都会复核进程身份并写入现有有界内存追踪日志。共享 Root broker 的内存块批次同时受最多 32 个命令和 32 MiB 原始数据约束，并使用至少 30 秒批次超时；Python 客户端通过一条持久命名管道和 1 MiB 缓冲读取大 JSONL 响应，连接建立阶段允许服务端管道重建的短重试，但已经写入的读取命令不重复提交。轻量进程身份、映射和状态命令仍使用较短超时；批次失败保持 fail-closed，并由探针输出具体缺失字段，不能把通道超时当作有效角色。
+快照以 `MountStatusReadResult` 返回，包含成功标志、错误码、进程 ID、启动时间、读取会话 ID 和递增序号。`IsMounted` 是当前必需字段；坐骑 ID、基础速度、坐骑加成速度和角色移动速度在地址未确认时保持未读取状态，合法的 `0` 与 `false` 不会被误判为读取失败。每次读取都会复核进程身份并写入现有有界内存追踪日志。共享 Root broker 的内存块批次同时受最多 32 个命令和 32 MiB 原始数据约束，并使用至少 30 秒批次超时；Python 客户端通过一条持久命名管道和 1 MiB 缓冲读取大 JSONL 响应，连接建立阶段允许服务端管道重建的短重试，但已经写入的读取命令不重复提交。轻量进程身份、映射和状态命令仍使用较短超时；共享 Root 命令的超时从等待命令锁之前开始，并在写入前复核，排队超时的命令不会在过期后执行。批次失败保持 fail-closed，并由探针输出具体缺失字段，不能把通道超时当作有效角色。
 
 目标 Android LuaJIT 客户端不使用稳定的原生坐骑结构体偏移。`tools/mount-reader/mount_status_luajit_probe.py` 通过 rooted ADB 对匿名可读写映射做有界只读扫描，验证 `m_PlayerId`、`m_IsLocalPlayer`、`m_RideId`、`m_RoleMoveSpeed`、`m_Gx` 和 `m_Gy` 的 GC64 字符串键及其表节点值；`m_Gx/m_Gy` 兼容整数和有限浮点盒装值，浮点坐标在输出协议前归一化为 Int32。探针按唯一 `m_IsLocalPlayer=true` 角色生成 `mount_status_snapshot.v1`。同一 PID 的真实前后样本已确认 `m_RideId=nil/9111` 与 `m_RoleMoveSpeed=200/256` 的动态切换，当前运行时可据此可靠判定骑乘状态。探针只读内存，不写内存、不注入、不调用游戏方法、不发包，并绑定 PID 与 `/proc/<pid>/stat` 启动 tick。
 
 `MountStatusReadOnlySnapshotProtocol` 严格拒绝非只读、非 `ok`、多候选、进程身份不完整或未绑定本地角色的快照。`MountStatusAndroidSnapshotReader` 负责桌面端 ADB/Python 桥接；包含坐骑预设的助手启动时由 `Socket_Robot` 创建本次运行专用读取器，在 `StartRobot` 预检阶段强制重新读取 LuaJIT 快照并清除旧快照，读取成功后才进入后台步骤；后续步骤只复用本次启动快照。仍显式提供 Windows 布局的调用方保留原有读取路径。两条路径都只缓存有效快照，不执行坐骑写入、封包发送或状态切换。
 
-坐骑技能沿独立的只读链路解析：探针在同一进程快照中定位 `LocalRide.m_Rideskills`，校验外层 `GCtab`、数组中的技能对象以及对象内 `skillId`/`exp` 两个字段后，输出 `player.rideInstances[]`。`LocalRide.PropertyValueDict` 的 `SHAPE` 与 `RIDEING` 作为绑定证据；只有一个实例同时满足 `SHAPE == MapRole.m_RideId` 且 `RIDEING == 1` 时，才输出 `activeRideInstanceId` 和 `rideBindingStatus=bound`，否则保持未绑定或歧义。当前现场已确认 `m_RideId=9111` 绑定 `rideInstanceId=2091811378351566852`。`ride_skill_name_map.json` 使用 `data_RideSkill` 字节码注册时的 `skillId → name` 配对补充 `skillName`，不以可复用的 `icon` 反推名称。C# 的 `RideInstances`、`SkillName` 和实例绑定字段都可选，缺失时按空列表/空名称/未绑定处理，结构不完整时拒绝快照。
+坐骑速度保持启动时使用专用 `speedOnly` 请求，只解析唯一当前角色、骑乘/坐骑 ID 和角色移动速度所需基础字段，跳过技能、成长率及炼化卡片；复用预检快照中的速度地址及进程身份，跳过 helper 原有的首轮重复快照读取。保持专用的 `holdRebind` 允许同一进程、角色和坐骑在地址改变后重绑：缓存字段名对象须通过当前引用槽复核；旧缓存没有对象地址时，从当前引用槽解析 GCstr 并核对字段名。缓存布局提示先转换为扫描器使用的范围尺寸结构，再优先扫描上次布局附近；未找到唯一候选时扫描剩余的非重叠范围，字段名对象失效时回到一次完整发现。普通 speed-only 与其他快照调用不启用此路径。
+
+`speedOnly` 缓存快读只刷新并核验当前候选的六个基础字段引用，按字段名和引用地址精确匹配；缓存中其他坐骑技能、实例或同名坐骑 ID 引用变化不会否决有效的速度快照。缺少任一基础字段引用仍拒绝缓存命中；普通完整读取继续处理所有缓存引用。
+
+速度保持重绑时先暂停旧地址写入。新地址必须由当前快照确认并读到有效速度；若其值不等于目标，就以该值作为新基线并原子替换现有 v1 journal，然后比较写入目标值。若目标值已经随先前的写入尝试迁移到新地址，则沿用 journal 中已知的原基线并更新绑定；没有先前写入尝试时，已等于目标的地址不能推断正常基线，因此拒绝接管。保持循环、失败恢复和停止恢复均重新确认当前地址，只在当前地址仍是 journal 目标值时恢复；当前值已是基线时安全结束，未知值保留 journal。先前用过的地址若之后重新被快照确认为当前字段，也必须重新通过基线和 journal 校验。
+
+速度保持写入后若立即读回启动基线，最多允许连续 3 次失配；每次重试都经过下一轮保持轮询，重新读取并核对进程、角色、坐骑和当前速度字段地址，再按当前 TValue 执行比较写入。读回目标值会清除连续失配计数；连续 3 次仍停留在基线时走原失败恢复。未知值、读取错误、进程/角色/坐骑变化或无法安全接管的新地址仍失败关闭，不会用重试覆盖未识别状态。
+
+保持轮询在当前速度读到既非 journal 基线也非目标的第三种 TValue 时，暂停写入并最多额外进行 2 次完整快照重验；每次均重新核对进程、角色、坐骑与字段绑定。重验恢复为已知值后继续保持；持续异值仍失败关闭并保留恢复 journal。失败恢复只重验一次，最终释放沿用原有异值保护。
+
+停止时若最终核验发现速度已被其他逻辑改写，保持 helper 会保留恢复 journal 并在结果中报告；journal 地址使用数值格式，显式恢复继续使用与内存读取相同的 Root Broker 身份通道。
+
+速度保持机器人将 C# 启动预检与 Python helper 的逐轮读取、耗时、字段绑定、解码速度、写入核验、错误、停止及恢复结果追加到同一份 `%LOCALAPPDATA%\XNAS\WPE\mount-speed-hold\logs\mount-speed-hold.jsonl`。记录按运行 ID、预设名和 GUID 关联，文件超过 5 MiB 时轮转并保留 20 份；日志不保存原始 TValue 字节，日志写入失败不改变保持流程。
+
+坐骑技能沿独立的只读链路解析：探针在同一进程快照中定位 `LocalRide.m_Rideskills`，校验外层 `GCtab`、数组中的技能对象以及对象内 `skillId`/`exp` 两个字段后，输出 `player.rideInstances[]`。普通读取保持原有闸门：`LocalRide.PropertyValueDict` 的 `SHAPE` 与 `RIDEING` 作为绑定证据，只有一个实例同时满足 `SHAPE == MapRole.m_RideId` 且 `RIDEING == 1` 时，才输出 `activeRideInstanceId` 和 `rideBindingStatus=bound`。坐骑洗炼预设若保存了经结构校验的 A050，则可用包内 19 位实例 ID 选中唯一 `LocalRide`；只有该实例存在恰好 3 个技能，且炼化页 `m_RideIns.m_RideId` 与包内 ID 完全一致并读满 21 张卡时，才输出 `rideBindingStatus=refine_selected`。该分支不要求选中坐骑同时处于骑乘状态；未配置 A050 的一坐骑等路径仍保持 `bound` 语义不变。`ride_skill_name_map.json` 使用 `data_RideSkill` 字节码注册时的 `skillId → name` 配对补充 `skillName`，不以可复用的 `icon` 反推名称。C# 的 `RideInstances`、`SkillName` 和实例绑定字段都可选，缺失时按空列表/空名称/未绑定处理，结构不完整时拒绝快照。
 
 坐骑成长率沿同一只读快照增加可选 `player.growthRate`，并按每个 `rideInstances[]` 的 `rideShapeId` 透传 `growthRate` 与来源。探针从已绑定的 `LocalRide.PropertyValueDict.GROWUP` 读取当前实例值；`RideData[Shape].GrowthRate` 只属于模板数据，不作为当前成长率。当前值保持客户端的浮点表示，不再做 940 类模板值的换算；桌面只读界面同时显示当前坐骑和各实例的“当前成长率”，不因此获得写内存或操作能力。
+
+桌面快照另提供经确认的一次性当前坐骑 GROWUP 写入入口，目标固定为 100.0。只有唯一本地玩家、已骑乘、唯一 bound 当前实例及有效 growthRateAddress 同时通过校验时才可启动；用户确认后，独立脚本再次核对进程启动 tick、角色/坐骑/实例绑定、快照原值和地址，再比较旧 TValue 后写一次并立即读回，随后重新读取当前绑定坐骑。只有写后快照仍确认同一绑定实例的 GROWUP 为 100.0，才报告字段已核实；否则只报告旧地址读回值或状态不明确。普通探针协议仍只读，不发包；写入仅作用于客户端进程内存，不证明服务端认可或跨刷新持久。LuaJIT GC 仍可能在最后一次校验后搬移表节点，/proc/PID/mem 无法与游戏线程同步，因此写后快照仍是客户端观测而非线程同步保证。
+
+独立测试脚本 `tools/mount-reader/mount_growth_rate_memory_test.py` 提供 `set`/`restore`，目标默认 10.935；写入必须显式使用 `--write`，默认通过 Android `run-as`，并在写入前原子创建不可覆盖的恢复 journal。恢复需匹配 ADB 序列号、进程身份、玩家/坐骑/当前实例、字段地址、命令确认的旧值及当前目标 TValue；写后还要重新读取当前绑定快照，验证旧值后才清除 journal。旧桌面调用仍默认执行其 100.0 写入目标并使用 root broker；该入口不提供恢复按钮，默认 journal 未恢复时会拒绝同路径再次写入，需通过脚本 `restore` 处理。此脚本不发包；`/proc/PID/mem` 的比较写入仍无法和 LuaJIT GC/rehash 同步，所有成功状态只代表客户端观测。
+
+机器人增加独立内置预设“坐骑成长率保持100”，默认禁用，只有一条固定目标为 100.0 的指令。启动时先读取并绑定当前骑乘坐骑；执行指令时记录原始成长率与唯一恢复日志，再把客户端当前实例 GROWUP 写为 100.0，并保持运行直到停止。停止或机器人正常取消时，恢复脚本重新读取当前绑定地址，仅在游戏进程身份、角色、坐骑、ride 实例匹配且字段仍是本预设写入的 100.0 时比较写回启动前原值；换坐骑、进程变化、字段变化或恢复未核实时不会覆盖当前值，并保留恢复日志供检查。恢复仍受 LuaJIT GC 与游戏线程并发迁移的限制；此行为只修改客户端内存，不代表服务端认可或持久化。
 
 坐骑炼化页面的临时技能卡片也沿同一只读快照输出为可选 `player.rideRefineCards[]`：当前/自带卡固定保留页面索引 1，候选卡来自选中 `LocalRide.m_ResetData[4]` 的内层 33 槽表，当前客户端现场验证为索引 2–21 共 20 张，因此页面合计 21 张。候选卡的 `growty` 按 `growty/1000` 透传为当前卡片成长率，`speed`/`score` 保留为可选原始值；卡片技能 ID 从 `skill[].name` 的数字字符串读取，`val` 仅保留为原始 `value`，不当作技能经验。解析不完整或不是完整 20 张候选卡时返回空列表；该链路仍不写内存、不发包、不触发炼化。
 
@@ -38,15 +58,19 @@ Android 探针若返回 `needs_discover` 且诊断码为 `local_player_missing` 
 
 `MountSpeedPreset.TargetSkills` 是坐骑预设的可选目标集合，每项可只填 `SkillId`、只填 `SkillName`，或同时填写两者；同时填写时要求同一当前技能同时满足 ID 和名称，避免名称映射错误造成误判。`MountSkillPresetPreview` 只接受已通过协议校验的 `MountStatusReadOnlySnapshot`，先确认 `ActiveRideInstanceId` 对应唯一 `IsCurrent` 实例，再对目标集合生成逐项状态和摘要。`Socket_Robot` 在启动预检中保存这份结果；未形成完整四项目标时，后续 `IDLE` 只展示本次启动的快照和预演结果，预演没有任何写内存、输入、封包或洗炼调用。
 
-坐骑炼化目标另由 `MountSpeedPreset.TargetGrowthRate` 与恰好 3 个 `TargetSkills` 组成四项配置。`MountSpeedPreset.CreateDefaultFirstRideRefinePreset` 为新建或尚未配置坐骑目标的编辑入口提供固定默认目标：高级秋水流弦（61108）、高级百步穿杨（61118）、高级追魂夺命（61117）和成长率 `1.175`；已有保存预设不被自动覆盖，清空目标仍可保持普通只读速度模式。名称为 `一坐骑洗炼` 的助手从列表/快捷方式启动时，`Socket_Cache.DoRobotAsync` 与 `Socket_RobotForm` 的启动参数构建都会在目标为空或不完整时自动补入该固定目标，不要求用户重复填写；其他坐骑预设不走该兜底。`MountRideRefineTargetMatcher` 对只读 `rideRefineCards` 的全部页面卡片逐张判断：成长率按 `0.0005` 容差匹配，三个技能使用一对一无序匹配，因此技能在卡片中的行顺序不影响结果；默认卡片 1 和候选卡 2–21 都纳入判断，任一张卡同时满足四项即为命中。该 matcher 本身只返回匹配结果；完整四项目标由 `Socket_Robot` 的 `IDLE` 接线交给 `MountRefineStateMachine`，由状态机控制发送前检查、发送后刷新和命中停止，仍不写内存或点击页面。
+坐骑炼化目标另由 `MountSpeedPreset.TargetGrowthRate` 与恰好 3 个 `TargetSkills` 组成四项配置。`MountSpeedPreset.CreateDefaultFirstRideRefinePreset` 为新建或尚未配置坐骑目标的编辑入口提供固定默认目标：高级秋水流弦（61108）、高级百步穿杨（61118）、高级追魂夺命（61117）和成长率 `1.175`；已有保存预设不被自动覆盖，清空目标仍可保持普通只读速度模式。名称为 `一坐骑洗炼`、`二坐骑洗炼`、`三坐骑洗炼` 或 `四坐骑洗炼` 的助手均使用同一自动炼化入口；只有一坐骑允许在目标缺失时采用上述固定兜底，其他坐骑目标缺失时 fail-closed，不会借用一坐骑技能。`MountRideRefineTargetMatcher` 对只读 `rideRefineCards` 的全部页面卡片逐张判断：成长率按 `0.0005` 容差匹配，三个技能使用一对一无序匹配，因此技能在卡片中的行顺序不影响结果；默认卡片 1 和候选卡 2–21 都纳入判断，任一张卡同时满足四项即为命中。该 matcher 本身只返回匹配结果；完整四项目标由 `Socket_Robot` 的 `IDLE` 接线交给 `MountRefineStateMachine`，由状态机控制发送前检查、发送后刷新和命中停止，仍不写内存或点击页面。
 
 首次加载助手列表时，`Socket_Cache.Robot.EnsureBuiltInFirstRideRefinePreset` 将旧的 `坐骑速度` 11 步模板复制到 `一坐骑洗炼`，并为后者补齐固定四项目标；旧记录保留作为回退。若一坐骑记录为空，列表加载和 `DoRobotAsync` 启动入口都会自动生成同一套坐骑步骤，避免“目标已经配置但机器人指令为空”导致无法进入 `StartRobot`。
 
 `Socket_RobotForm` 通过动态“坐骑目标”页编辑上述四项：技能列表限制为 3 项，另有目标成长率输入框；列表项支持 ID/名称添加或更新、删除和从已保存助手读取。只有 3 个技能和成长率都填写完整时，“应用到助手”才保存炼化目标。页面的“刷新只读快照”使用本次调用专用的 `MountStatusAndroidSnapshotReader`，同时显示当前坐骑、21 张卡片、技能名称和两个只读预演结果，不改变预设，也不执行游戏动作。
 
-`MountRefineStateMachine` 将上述只读快照和目标匹配组织成独立的炼化循环：首次读取后先检查目标，未命中才经过 `IMountRefinePacketSender` 闸门；发送被接受后固定发送前快照为本轮基线，并持续轮询同一 PID、启动 tick、会话、坐骑和当前坐骑实例。只有候选快照有效、完整包含 21 张卡、sequence 严格大于发送前基线，并且卡片内容相对发送前基线确实变化时，才进入 verify 和四项目标判断；sequence 未推进，或 sequence 已推进但卡片内容未变化，都只写入有界等待事件并继续可取消轮询，不做目标判断、不重复发送。等待期间不会用候选 sequence 覆盖发送前基线，因此同一推进序号下稍后出现真实卡片变化仍可恢复。真实读取失败、卡片不完整或任一坐骑上下文变化仍 fail-closed 停止。单次刷新等待超时只继续轮询同一次发送结果，不自动重发，也不把超时当作终止条件。`Socket_Robot` 在完整四项目标的一坐骑 `IDLE` 步骤创建本次运行状态机；本次明确启动会把当前有效 A050 出站捕获作为本次会话的协议验收依据，并生成不落盘的临时发送授权。没有有效当前出站捕获时仍使用 `FailClosedMountRefinePacketSender`，离线 `RecordingMountRefinePacketSender` 只记录上下文；真实服务端接受条件仍需通过一坐骑单次实机测试确认。
+`MountRefineStateMachine` 将上述只读快照和目标匹配组织成独立的炼化循环：首次读取后先检查目标，未命中才经过 `IMountRefinePacketSender` 闸门；发送被接受后固定发送前快照为本轮基线，并持续轮询同一 PID、启动 tick、会话、坐骑和当前坐骑实例。只有候选快照有效、完整包含 21 张卡、sequence 严格大于发送前基线，并且卡片内容相对发送前基线确实变化时，才进入 verify 和四项目标判断；sequence 未推进，或 sequence 已推进但卡片内容未变化，都只写入有界等待事件并继续可取消轮询，不做目标判断、不重复发送。等待期间不会用候选 sequence 覆盖发送前基线，因此同一推进序号下稍后出现真实卡片变化仍可恢复。真实读取失败、卡片不完整或任一坐骑上下文变化仍 fail-closed 停止。单次刷新等待超时只继续轮询同一次发送结果，不自动重发，也不把超时当作终止条件。`Socket_Robot` 在完整四项目标的坐骑洗炼 `IDLE` 步骤创建本次运行状态机；一坐骑和二坐骑共用相同的首次命中、发送、刷新等待、变化校验和命中停止逻辑，二坐骑只额外携带经校验的实例 ID 绑定与字节不变的预设包。本次明确启动会把当前有效 A050 出站捕获作为本次会话的协议验收依据，并生成不落盘的临时发送授权。没有有效当前出站捕获时仍使用 `FailClosedMountRefinePacketSender`，离线 `RecordingMountRefinePacketSender` 只记录上下文；真实服务端接受条件仍需通过单次实机测试确认。
+
+“三坐骑洗炼”和“四坐骑洗炼”分别在状态机层持有自己经 A050 严格校验得到的 `SelectedRefineRideInstanceId`。两个精确名称各自拥有独立入口；其初始和刷新快照必须同时保持 `rideBindingStatus=refine_selected`、`activeRideInstanceId` 与各自实例 ID 逐字一致，才可替代普通的 `isMounted=true + bound` 闸门。该例外不扩展到一、二坐骑，任一实例缺失、错配或状态变化仍在发送前 fail-closed。
 
 Android 桥接结果另保留 `WasCancelled` 标记，和普通读取错误分开传递到 `MountRefineStateMachine`；首读或发送后刷新阶段若确认共享取消令牌已触发，则以 `UserStopped / mount_refine_user_stopped` 结束，不能把宿主停止误报成探针故障。`Socket_Robot.StopRobot()` 在取消活动状态机前写入 `stop_requested` 结构化事件，再执行状态机取消；该事件只记录状态与验收元数据，不记录原始封包，也不绕过取消闸门。探针首次发现或缓存失效时仍可能执行完整扫描；换进程时先执行经过完整校验的暖提示优先扫描，同进程 PID、启动 tick、可执行文件和缓存版本有效时才直接使用引用方案及实际访问页缓存。`MountStatusAndroidSnapshotReader` 长驻一个 JSONL 探针进程，让同一读取器在多次刷新之间复用同一个 Root ADB shell；长驻探针若已耗尽整轮响应超时，不再启动一次性进程重复同一后端扫描。机器人结束、启动失败和桌面手动刷新完成时都会释放探针；缓存路径失败、结构变化、卡片不完整或刷新读取超时仍 fail-closed，不把慢读取改写成成功读取。
+
+桌面助手首页通过 `AssistantRunConcurrencyPolicy` 管理显式并发组合：`TreasureMap` 与 `MountRefine` 各一个可以并行；独立 `MountSpeedHold` 与纯延时助手 `DelayOnly` 各一个也可以并行。`MountSpeedHold` 必须恰好只有一条速度保持指令；`DelayOnly` 必须至少含一条延时指令，且其它指令只能是循环起止标记。其余组合、同类组合、`Other` 与活动类型以及混合预设均拒绝并行。活动运行按预设 RID 和 Worker 独立跟踪、停止和完成清理；启动仍串行，任何活动或启动状态都会锁定预设编辑、删除、分组及旧批量入口。该策略只改变桌面首页的运行编排，不合并各藏宝图策略、坐骑实例绑定、发送授权或日志边界。
 
 当前提速实现再增加进程内 `point` 定点读取：只在同一 PID、启动 tick、可执行文件和当前映射下复用已验证的 `m_RideIns`、`m_ResetData` 外层索引及卡片容器位置；动态卡片仍逐轮读取，任一校验失败立即清空定点计划并回退。无暖提示的新进程先尝试不超过 16 个且占比不超过总映射 25% 的小映射，命中即停，失败继续完整发现。探针 `reader.readPath` 现在标识 `point/fast/warm/cold/discover/fallback`，同时输出 Root/ADB、探针和丰富字段/卡片解析耗时；桌面运行日志补充读取总耗时及 `send_result` 到 `verify_new_snapshot` 的单调耗时。成功刷新后的默认轮询间隔由 500ms 调整为 250ms，3 秒确认窗口、2.8 秒单次读取上限、PID/startTicks/session/坐骑实例/21 张卡和 fail-closed 边界不变。
 
@@ -56,9 +80,9 @@ Android 桥接结果另保留 `WasCancelled` 标记，和普通读取错误分�
 
 坐骑探针和装备属性 reader 通过 `--root-broker-pipe` 使用该会话的本地命名管道；broker 服务端允许一个已连接客户端连续提交多条串行命令，避免每个内存批次重建管道。宠物属性读取在普通 shell 报告进程内存权限不足时复用同一会话；藏宝图 C6 的所有 Root 命令也复用同一入口。桌面生产路径不得在新预设或新 reader 中自行拼接 `adb shell su`、`adb exec-out su` 或逐次启动 Root shell；新增 Android 只读预设必须接入 `AndroidRootShellSessionManager`，脚本必须接收并使用 `--root-broker-pipe`。脚本保留的无 broker `su` 分支仅用于独立 CLI 兼容，不属于桌面预设运行路径。普通 `adb devices`、包名/PID 查询和非 Root 读取仍保持普通 shell，不额外申请超级用户权限。
 
-用户提供的坐骑请求样本均为 39 字节 `4D5A` 帧，body 长度为 `0x1D`，原始协议号为 `0xA050`；样本的偏移 12--18 操作前缀和偏移 19 的 `0x13` 长度字段一致，偏移 20--38 为固定的 19 位 ASCII 数字。`MountRefineA050PacketTemplate` 严格校验这些结构，并按当前客户端行为逐字节复制捕获帧，不再根据只读快照改写尾部字段；只读快照中的坐骑实例 ID 仍用于上下文绑定和刷新前后身份校验。样本用于结构匹配，服务端业务接受仍以当前注入捕获和单次实机结果为准。
+用户提供的坐骑请求样本均为 39 字节 `4D5A` 帧，body 长度为 `0x1D`，原始协议号为 `0xA050`；样本的偏移 12--18 操作前缀和偏移 19 的 `0x13` 长度字段一致，偏移 20--38 为固定的 19 位 ASCII 数字。`MountRefineA050PacketTemplate` 严格校验这些结构，并按当前客户端行为逐字节复制捕获帧，不再根据只读快照改写尾部字段；经校验的包内坐骑实例 ID 会同时传给只读炼化页读取器，C# 桥接层再次核对 `refine_selected` 和 `activeRideInstanceId`，用于上下文绑定和刷新前后身份校验。`MountSpeedPreset.RefinePacketHex` 可保存经同一结构校验的预设包十六进制文本；存在该字段时仅替换发送模板字节，Socket 路由仍必须来自当前注入会话的有效出站证据。样本用于结构匹配，服务端业务接受仍以当前注入捕获和单次实机结果为准。
 
-注入模式下的发送方向由当前捕获自动绑定，不要求预设保存 Socket 或用户手填方向。捕获队列在进入受页面筛选和 5000 条自动清空限制的 `lstRecPacket` 前，会把结构有效的 A050 出站记录复制到最多 64 条的当前注入会话证据缓冲；`BeginCaptureSession` 必须先清空该缓冲，因此证据不跨注入会话。停止抓包只关闭采集，不清空当前会话证据；下一次开始抓包或程序退出时才重建/清理。`MountRefineA050CaptureBinding` 同时检查可见列表和本会话证据，忽略入站包，并要求 `PacketSocket + PacketFrom + PacketTo` 组合唯一；同一 Socket 经 `send`/`WSASend` 包装层重复观察不会误报方向冲突，缺少候选或多个真实方向仍拒绝绑定。`Socket_Robot` 每次坐骑炼化启动都重新建立 A050 模板和方向，不沿用旧坐骑或旧会话模板；一坐骑明确启动且捕获成功时同步设置本次运行的协议验收和临时授权。`MountRefineA050SocketPacketSender` 保存当前会话捕获记录里的原始 Socket、封包类型和方向，并按手动发送路径直接使用这组路由，不在发送时按目标地址重新切换连接；Socket 仍不跨会话持久化。自动接线已经完成，真实发送后的服务端接受和卡片刷新仍以实机日志为准。
+注入模式下的发送方向由当前捕获自动绑定，不要求预设保存 Socket 或用户手填方向。捕获队列在进入受页面筛选和 5000 条自动清空限制的 `lstRecPacket` 前，会把结构有效的 A050 出站记录复制到最多 64 条的当前注入会话证据缓冲；`BeginCaptureSession` 必须先清空该缓冲，因此证据不跨注入会话。停止抓包只关闭采集，不清空当前会话证据；下一次开始抓包或程序退出时才重建/清理。`MountRefineA050CaptureBinding` 同时检查可见列表和本会话证据，忽略入站包，并要求 `PacketSocket + PacketFrom + PacketTo` 组合唯一；同一 Socket 经 `send`/`WSASend` 包装层重复观察不会误报方向冲突，缺少候选或多个真实方向仍拒绝绑定。`Socket_Robot` 每次坐骑炼化启动都重新建立 A050 模板和方向，不沿用旧坐骑或旧会话模板；一坐骑或二坐骑明确启动且捕获成功时同步设置本次运行的协议验收和临时授权。`MountRefineA050SocketPacketSender` 保存当前会话捕获记录里的原始 Socket、封包类型和方向，并按手动发送路径直接使用这组路由，不在发送时按目标地址重新切换连接；Socket 仍不跨会话持久化。自动接线已经完成，真实发送后的服务端接受和卡片刷新仍以实机日志为准。
 
 ## 移动端预设同步后端
 
@@ -105,7 +129,7 @@ Android 桥接结果另保留 `WasCancelled` 标记，和普通读取错误分�
 
 ## 发送预设的实时连接路由
 
-普通预设、批量发送、快捷键、移动端发送和字节递进都在发送启动前从可见捕获快照与当前会话的有界出站路由证据中逐封包解析 `Socket`、源地址和目标地址。高速模式在绕过界面队列前仍观察出站路由和协议帧，入站包提前返回；路由证据最多保留 256 条，只复制 Socket、方向、地址和时间，不保留普通封包正文。`Socket_Cache.SocketList.ResolveCurrentRoute(s)` 优先匹配封包类型与预设原目标；原目标已经变化时，只在同类型/方向候选唯一时切换到当前地址，多候选返回 `runtime_route_ambiguous` 并拒绝整组启动，没有候选返回 `runtime_not_connected`。候选使用 `getsockname/getpeername` 校验句柄仍可用，并按 `Socket + PacketFrom + PacketTo` 去重、按捕获时间保留最新记录；不会主动创建 TCP 连接。
+普通预设、批量发送、快捷键、移动端发送和字节递进都在发送启动前从可见捕获快照与当前会话的有界出站路由证据中逐封包解析 `Socket`、源地址和目标地址。高速模式在绕过界面队列前仍观察出站路由和协议帧，入站包提前返回；路由证据最多保留 256 条，只复制 Socket、方向、地址、时间和封包 SHA-256 指纹，不保留普通封包正文；同一 Socket/方向可以保留多个近期指纹，以便界面列表自动清空后仍能识别没有保存地址的历史预设。`Socket_Cache.SocketList.ResolveCurrentRoute(s)` 依次使用封包类型、预设目标、预设来源、当前封包指纹和来源主机缩小候选；启用系统 Socket 的普通发送预设若仍有多个候选，只有当前已明确选中的有效系统 Socket 也属于这些实时候选时，才用它作最后的消歧条件；没有有效选择时仍返回 `runtime_route_ambiguous` 并拒绝整组启动，没有候选返回 `runtime_not_connected`。候选使用 `getsockname/getpeername` 校验句柄仍可用，并按 `Socket + PacketFrom + PacketTo` 去重、按捕获时间保留最新记录；不会主动创建 TCP 连接。
 
 `Socket_Send` 的实时入口让每个发送封包携带自己的 Socket、源地址和目标地址，不能由一个全局实时 Socket 覆盖整组封包。所有封包先完成路由预检，任一封包失败则不启动发送线程。实时地址只写入发送任务和界面临时状态，不写回发送预设数据库/XML；停止抓包保留当前注入会话的路由，重新开始抓包由 `BeginCaptureSession` 清理旧证据并要求新会话重新观察对应出站路由。路由日志只记录预设 ID、封包序号、原/当前地址、候选数和状态原因，不记录封包正文。
 
@@ -251,6 +275,7 @@ flowchart LR
 ## Hook I/O boundary
 
 - Overlapped and completion-routine `WSASend`/`WSARecv` calls pass through to Winsock unchanged; synchronous buffer rewriting is not safe for completion-driven I/O.
+- Manual replay of a captured receive packet is queued per Socket and consumed by the synchronous `recv`/`recvfrom`/`WSARecv`/`WSARecvFrom`/`WSARecvEx` hooks inside the injected process. The `select` hooks expose queued sockets as readable and use a zero-timeout native probe, so a loop waiting in `select` can reach the receive hook. It bypasses native `send`/`sendto` and the capture-display callback, so the server receives no replay and the UI does not add another capture row. `MSG_PEEK` does not consume the queued frame. The queue is cleared with the hook session and capped at 8 MiB.
 - Receive-side interception returns `SOCKET_ERROR` with `WSAEINTR` rather than zero bytes, so a filtered packet is not misreported as a closed connection. The raw packet is still sent to the existing processing/logging path.
 - Multi-buffer synchronous send/receive paths preserve every `WSABUF.len` and clear unused replacement tails before the native call; TCP replay loops until the complete payload is sent or the native API fails.
 
@@ -505,20 +530,36 @@ treasure result/log, invalidates the failed session socket, and preserves the
 Ambiguous disposition so callers do not repeat an action whose delivery is
 unknown.
 
-The production runner sets `RequireCurrentPacketTemplates=true` for the
-normal Jump/Use path. The exact `洛神赋` preset is the sole named exception:
-when its current client session has not exposed a `0x5828` Jump template, it
-uses the existing coordinate-bound encoder against the current route; the
+The production runner resolves a separate `TreasureMapPresetSendPolicy` for
+each exact named preset instead of coupling multiple presets through one shared
+compatibility-name list. `洛神赋`, `紫零`, `紫气东来`, `国子监`, `照山河`, and `一战倾城藏宝图` each have
+their own policy factory. Their current policy values may permit the coordinate-bound
+encoder when the current client session has not exposed a `0x5828` Jump
+template, but changing one factory does not change either of the others. The
 send boundary still re-resolves the current Socket. If no current-session
-sequence is available, only this exact compatibility sender permits the
-encoded frame to pass without inventing a sequence; when one is available it
-is still advanced normally. Other presets continue to accept only a validated
-frame captured during the current hook session/current route and do not fall
-back to historical Jump/Use presets or the closed encoder. A missing template
-or session sequence on those strict paths returns `NotDispatched` before the
-native send boundary. The closed encoder remains available to offline
-regression callers, while the validated current-route AutoDig compatibility
-path remains separate.
+sequence is available, the selected preset policy decides whether its encoded
+frame may pass without inventing a sequence; when one is available it is still
+advanced normally. Unregistered presets use the strict policy and continue to
+accept only a validated frame captured during the current hook session/current
+route. They do not fall back to historical Jump/Use presets or the closed
+encoder. A missing template or session sequence on strict paths returns
+`NotDispatched` before the native send boundary. The closed encoder remains
+available to offline regression callers, while the validated current-route
+AutoDig compatibility path remains separate.
+
+The target-stability confirmation window is also part of the exact preset
+policy. The current precision experiment sets only `紫气东来` to 80 ms and
+requires three distinct complete C6 `snapshotId` samples within that window;
+other registered and unregistered presets remain at the 20 ms default without
+the additional sample gate. The longer window repeats the existing validation
+of the same member/package and scene/x/y, and does not change template, route,
+authorization, or send rules.
+
+Continuous execution distinguishes an ordinary `NotDispatched` target failure
+from an ambiguous action boundary. Ordinary failures may still be skipped per
+preset policy, but `Ambiguous` always terminates the runner and releases the
+exclusive controller lease; the runner never continues to another map when the
+previous action's delivery or Hook-session boundary is unknown.
 
 For strict current-template presets, when the current session has no validated
 `0x783A` Use template, production selects the AutoDig compatibility path only
@@ -627,3 +668,58 @@ WPE 继续检查同一 snapshot 的目标身份、唯一路径以及严格 1..20
 
 该路径的输入仍是只读 resident 结构化数据，不是 live attach 或真实二进制
 decoder。满值/`refineNeedFactories`/`maxKnown`/`maxValue` 不参与 Bag 卡片判定。
+
+## 师门任务预设目录
+
+`ShimenTaskPresetPlan` 将已确认的师门采购任务保存为独立的 `RobotInstruction` 目录指令，格式为 `ShimenTask|Version|TaskId|TaskType|ItemId|Quantity|SellerId|ItemName`。默认目录包含 400003 血烟石×3、400013 铁骨扇×1、400023 风水混元丹×3、400033 灵翅天香×3、400043 千年灵花×3 和 400053 引妖香×5，并保留物品 ID、数量及商人 ID；桌面列表把任务类型和采购内容转换为中文显示。
+
+精确名称为“师门任务”的预设由 `EnsureBuiltInShimenTaskPreset` 放入“未完成的任务”分组；已有非空预设不覆盖。六条目录在一次启动中只作为白名单数据使用，不会被解释成六个连续机器人步骤。
+
+### 师门任务运行预检与发送边界
+
+`DoRobotAsync` 在启动 `ShimenTask` 目录预设时只注入一次
+`ShimenTaskAndroidSnapshotReader`，并把启动计时器传给 `Socket_Robot.StartRobot`。
+读取器通过现有 `AndroidRootShellSessionManager`/Root broker 调用外部
+`shimen_task_memory_reader.py`，只读取当前游戏 PID 的 LuaJIT GC64
+`TaskMgr.m_TaskList`。探针输出必须携带 `readOnly=true`、
+`actionAuthorized=false`、`ocrUsed=false`，并以 PID 与进程 `startTicks` 绑定
+任务表地址；地址缺失、进程身份变化、任务 ID 或 `canGiveUp` 无法可靠解码时
+保持 fail-closed。该路径不调用 OCR、截图、键鼠、写内存、注入或发送接口。
+
+`ShimenTaskFlowEngine` 对一次快照只形成一个分支：唯一命中六条采购目录中的
+任务时返回 `Submit`；只要存在任务记录但没有命中采购白名单，就返回 `Cancel`
+并只形成一次取消动作，读取顺序中的第一条记录仅作为本轮日志和刷新指纹的锚点；
+零任务或明确的不可领取标记返回 `None`；重复命中或状态歧义返回 `Rejected`。
+`ShimenTaskLoopRunner` 在
+`Submit` 分支严格执行“采购对应物品包 → 提交包 → 等待任务列表身份变化”，
+刷新后的白名单任务重新走采购和提交；刷新后的非白名单任务执行
+“取消包 → 重新领取包 → 等待刷新”。循环有刷新超时和最大轮数限制，任务列表
+为空或系统明确报告不可领取时结束。
+
+`IShimenTaskPacketSender` 现在包含 `Purchase`、`Submit`、`Cancel` 和
+`Reclaim` 四类动作；`ShimenTaskPacketTemplateSlots` 为六个精确任务 ID分别
+保留采购包位，并保留提交、取消、重新领取包位。当前已录入任务 `400043`
+“千年灵花×3”、“风水混元丹×3”、“灵翅天香×3”、“血烟石×3”、“引妖香×5”和
+“铁骨扇×1”的 26 字节采购包、通用“提交任务”65 字节包、“领取师门任务”29 字节包
+和“放弃师门任务”61 字节包均已录入；其中 400033 的原消息标签为“灵翼天香”，按
+包内 `27 12` 归位。默认 `FailClosedShimenTaskPacketSender` 永不访问 Socket。
+真实桌面助手入口已接入 `ShimenTaskSocketPacketSender`：启动时必须从封包列表选择
+一条当前会话的出站包；用户点击启动入口后自动建立一次性临时授权，不弹出确认文本输入框，
+授权不写入预设或数据库。发送器每次动作前重新解析当前 `PacketType + PacketFrom + PacketTo`
+路由，当前连接缺失、歧义、方向错误、模板不完整或授权缺失时在 native send 前零发送。
+未携带本次授权的批量、远程或其他调用方仍使用 fail-closed 预览路径。
+
+启动耗时的定义是 `DoRobotAsync` 调用开始到只读任务快照返回，不等同于桌面
+EXE 的冷启动时间。当前现场缓存地址的实测约为 3.6 秒，其中任务读取约
+3.52 秒；缓存仅对同一 PID/startTicks 有效，游戏重启后必须重新建立经过验证
+的地址缓存。
+
+## 伙伴属性内存测试
+
+本地静态分析版本的 `PartnerAttrView` 从 `GetPartnerDynamicInfo` 返回的同一 LuaJIT 表读取 `HpMax`、`Atk`、`Speed`，分别显示为气血、攻击和速度；当前模拟器安装包与该静态 APK 哈希不同，因此运行时字段链尚未确认。`tools/mount-reader/partner_panel_memory_test.py` 复用现有 Android LuaJIT 读取器和 ADB 写入通道；扫描及写入都要求这三个面板值同时匹配，并通过表键、表地址、字段节点地址、PID、进程启动时间和旧 TValue 重新校验后才进行一次可选写入。只读扫描额外输出有界的 GCstr 引用与前驱 TValue 诊断；批次短读重试一次，仍不完整则整轮失败。写入默认关闭，测试记录保存在本地 JSON journal，恢复只接受工具记录的新 TValue。
+
+LuaJIT 仍可能在最后一次校验之后移动或回收表节点，`/proc/PID/mem` 写入无法与游戏线程同步；该工具只提供单次、尽力校验的本地进程测试，不保证服务端属性或刷新后的持久性，也不暂停游戏进程。
+
+## LangSmith tracing
+
+Python vision worker requests can be traced to the fixed `my-first-agent` project when its local API key is configured. The key is read only from `%LOCALAPPDATA%\XNAS\WPE\vision-worker\langsmith.env`. Traces retain only the request method, boolean result flags, and elapsed time; image data, OCR text, action coordinates, and session tokens are removed.

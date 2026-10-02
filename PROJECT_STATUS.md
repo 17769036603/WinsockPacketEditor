@@ -1,13 +1,445 @@
 # 项目状态
 
-更新时间：2026-08-28
+## 2026-09-28 坐骑速度保持切图瞬态异值修复桌面热更（2026.9.28.3）
 
-## 2026-08-28 坐骑炼化 sequence 未推进过早停止修复（源码已验证，未热更新）
+- 用户确认退出时正在切换地图。运行 `acdff4e2-55e9-4d2c-813d-fc6bb8bac304` 在同一速度地址先读到 `f64:2000`，随后短暂读到有效 `i32:200`；该值与本轮 journal 的基线 `f64:242` 和目标值均不同，旧 helper 因单次异值立即退出。约 37 秒后的失败恢复重新校验同一绑定并读回 `f64:242`，未写入恢复值，journal 已删除。日志不能进一步证明具体的游戏内存更新机制。
+- 保持 helper 现对第三种 TValue 最多追加 2 次完整快照、身份与字段绑定重验；期间不写入异值，回到已知基线或目标后才继续。持续异值仍失败关闭并保留 journal；最终释放及失败恢复维持原有保护。`MountSpeedMemoryTestRegression.py` 离线回归通过，覆盖瞬态 `i32:200` 恢复和持续异值拒写。
+- CodeRabbit 指出的关联问题已处理：`speedOnly` 缓存快读只核验当前候选的六个基础引用，按字段名和引用地址精确匹配；失效的可选坐骑引用不再迫使速度读取退回重新发现，基础引用失效仍拒绝缓存命中。普通完整读取保持原有缓存校验范围。`MountStatusLuaJitProbeRegression.py` 完整离线回归通过，包含失效的可选技能引用、同名坐骑 ID 引用和核心引用失效场景。CodeRabbit 复审未对本次保持及速度快读改动报告问题；另两条意见涉及独立的炼化选中与成长率恢复路径，本次未修改。
+- 已签名发布本地 ClickOnce `releases\2026.9.28.3`，固定入口 `releases\小黑封包助手.application` 和桌面快捷方式已更新；发布前分别备份了原固定入口与快捷方式，旧版和用户预设保留，`CleanPresets=False`。Release 构建 0 错误、4 条既有 EasyHook `MSB3178` 警告；包共 212 个文件、92 个 `.deploy` 文件，两份坐骑 Python 文件的源码/包内 SHA-256 一致。版本应用清单、版本部署清单与固定入口均通过 Mage 验签；`ClickOnceUpdateRegression.ps1`、`ReviewRegressionChecks.ps1`、`MountSpeedHoldRobotRegression.ps1` 通过。
+- 直接启动 `.3` 发布包后，启动日志确认以管理员身份初始化数据库并开始显示主窗体，约 100 秒后记录正常退出。自动调用桌面快捷方式时只观察到 ClickOnce 服务，尚未观察到 `.3` 安装进本机 ClickOnce 缓存；因此快捷方式更新后的实际激活需再次确认。未启动游戏、未运行 ADB 或实时坐骑内存操作；换图时恢复速度和耗时仍待用户实机验证。
+
+## 2026-09-28 坐骑速度保持异常退出诊断桌面热更（2026.9.28.2）
+
+- 本次运行最后一条 `probeRequest`（序号 1564）没有对应 `probeResult`，约 23 分钟后桌面记录 helper 以 `exitCode=2` 退出。该次 stderr 没有写入持久日志，现有证据无法确认唯一异常文本。
+- Root Broker 命令期限现覆盖共享命令锁排队，并在命令写入前复核；超时的排队命令不会在过期后执行。helper 非零退出会将最后至多 4096 个 stderr 字符写入 JSONL。
+- 已签名发布本地 ClickOnce `releases\2026.9.28.2`，固定入口 `releases\小黑封包助手.application` 和桌面快捷方式均指向该入口；保留 `.1` 旧版本，`CleanPresets=False`。发布包 212 个文件、92 个 `.deploy` 文件；坐骑速度 helper 源码与包内 SHA-256 一致，包内 `WPELibrary.dll` 已确认包含 Root 超时和 helper 退出诊断。
+- Release 构建 0 错误、4 条既有 EasyHook `MSB3178` 警告；版本应用清单、版本部署清单和固定入口清单均通过 Mage 验签。`ClickOnceUpdateRegression.ps1`、`ReviewRegressionChecks.ps1`、`MountSpeedHoldRobotRegression.ps1`、`AndroidRootShellSessionRegression.ps1` 和 `MountSpeedMemoryTestRegression.py` 通过。CodeRabbit 对 Android Root 改动复查为 0 findings；另 3 条意见涉及独立坐骑成长率路径，本次未改动。
+- 桌面程序未启动；用户从现有快捷方式下次启动时会获取 `.2`。本轮未执行 ADB、游戏或实时内存操作，换图表现仍待用户实机测试。
+
+## 2026-09-28 坐骑速度换图后重提取桌面热更（2026.9.28.1）
+
+- 坐骑速度保持专用 `holdRebind` 在点位读取失败后保留同进程定位线索。探针直接核验缓存 GCstr 对象的字段名内容；有效时把布局提示转换为扫描器所需的范围尺寸格式，优先扫描旧布局附近，再只扫未覆盖范围并合并引用。缓存字符串失效时直接进行一次完整字段发现和引用扫描。日志区分 `rebind_priority`、`rebind_scan` 和 `rebind_full_discovery`。
+- 保持逻辑在同一进程、角色和坐骑重新绑定到新速度地址后，若当前值不是目标就以它为新基线并原子更新现有 v1 journal；若目标值已随先前写入尝试迁移，则沿用已记录的原基线并改绑 journal。终止和异常恢复都会重新确认当前地址，只在当前字段仍为目标值时恢复；相同地址出现未知值时保留 journal。没有先前写入尝试而新地址已等于目标时仍拒绝接管。非 hold 的 speed-only 与其他快照路径不启用重绑。
+- 已签名发布本地 ClickOnce `releases\2026.9.28.1`，固定入口 `releases\小黑封包助手.application` 已切换；原固定入口备份于 `releases\fixed-entry-backups\小黑封包助手_before_2026.9.28.1_20260928_081643.application`。发布包 212 个文件、92 个 `.deploy` 文件，坐骑探针和保持 helper 的源码/包内 SHA-256 一致；`CleanPresets=False`，未清理预设。
+- Release 构建 0 错误、4 条既有 EasyHook `MSB3178` 警告；版本应用清单、版本部署清单和固定入口清单均通过 Mage 验签。`ClickOnceUpdateRegression.ps1`、`ReviewRegressionChecks.ps1`、Release `UiDesignRegression.ps1`、坐骑保持回归、两项 Python 回归/语法编译及 `git diff --check` 通过。
+- 桌面程序未运行，未启动桌面程序或游戏；未执行 ADB 读取或实时游戏内存写入。下次从固定入口启动会获取 `.1`；换图效果与耗时待用户实机验证。
+- CodeRabbit 最终检查了内存读取工具目录的 4 个文件，本次探针和速度保持 helper 未报告问题；另在原有 `partner_panel_memory_test.py` 与 `mount_growth_rate_memory_test.py` 各报告 1 个 Major 问题，均不属于本次范围且未修改。
+
+## 2026-09-28 坐骑速度保持写后核验瞬态重试发布（2026.9.28.0）
+
+- 现场日志出现多次读回目标速度后，某轮写入后立即读回启动基线，导致保持 helper 退出。helper 现在容忍最多连续 3 次基线核验失配；每次都等下一轮保持轮询，重新核对绑定并使用当前 TValue 比较写入。核验读到目标后继续保持；连续 3 次失配仍触发原恢复逻辑。
+- 未知 TValue、短读/其它读取异常、CAS 失败和进程/角色/坐骑/速度地址绑定变化仍失败关闭。journal 以数值地址匹配显式恢复，并沿用 Root Broker 身份通道；最终恢复前若值被外部改写，会保留 journal 且日志如实报告。`MountSpeedMemoryTestRegression.py` 覆盖瞬态回落重试、三次失配上限、journal 和 Root Broker 恢复路径。
+- 已发布签名本地 ClickOnce `releases\2026.9.28.0`，程序版本元数据已同步为 `.0`，固定入口 `releases\小黑封包助手.application` 已切换，旧 `.10` 及用户配置保留。发布包共 212 个文件、92 个 `.deploy` 文件；包内 helper 与源码 SHA-256 一致。
+- Release 构建 0 错误、4 条既有 EasyHook `MSB3178` 警告；版本应用清单、版本部署清单和固定入口清单均通过 Mage 签名验证。`MountSpeedMemoryTestRegression.py`、`MountSpeedHoldRobotRegression.ps1`、`ClickOnceUpdateRegression.ps1`、`ReviewRegressionChecks.ps1` 和 `git diff --check` 通过。
+- 桌面快捷方式仍指向固定入口，桌面程序当前未运行；下次从快捷方式启动会获取 `.0`。未启动模拟器或游戏，也未写入实时游戏内存，真实游戏效果尚未验收。
+
+## 2026-09-27 坐骑速度详细读取日志桌面热更（2026.9.27.10）
+
+- 从签名 `.9` 发布本地 ClickOnce `.10`，固定入口 `releases\小黑封包助手.application` 已切换；旧固定清单备份于 `releases\fixed-entry-backups\小黑封包助手_before_2026.9.27.10_20260927_222746.application`。包共 212 个文件、92 个 `.deploy` 文件，应用清单有 92 个文件/程序集条目；旧版本和用户配置保留。
+- 包内坐骑速度 helper 与源码 SHA-256 一致，`WPELibrary.dll` 中可检出日志文件名。重建后内容摘要变化的载荷为 EXE、两份 `en-US` 资源程序集、速度 helper、`WPELibrary.dll` 和 `Be.Windows.Forms.HexBox.dll`；HexBox 文件大小、程序集版本与方法 IL 指纹均与 `.9` 一致，相关源码未变。
+- VS 2022 Release 构建 0 错误、4 个既有 EasyHook `MSB3178` 警告；三份 Mage 清单签名验证、`ClickOnceUpdateRegression.ps1`、`ReviewRegressionChecks.ps1` 和 `git diff --check` 通过。现有桌面快捷方式仍指向固定入口；发布时桌面程序未运行，未启动游戏或进行实机效果验收，下次从该快捷方式启动时会获取 `.10`。
+
+## 2026-09-27 坐骑速度保持详细运行日志（源码）
+
+- 速度保持机器人把启动预检、每轮 `speedOnly` 快照及耗时、角色/坐骑/速度地址绑定、速度读写核验、错误、停止和恢复结果写入同一份 JSONL；每条记录包含运行 ID、预设名称和 GUID。日志位于 `%LOCALAPPDATA%\XNAS\WPE\mount-speed-hold\logs\mount-speed-hold.jsonl`，单文件 5 MiB，保留 20 个轮转文件。
+- 日志记录解码后的速度值和字段地址，不复制原始 TValue 字节，也不改变读取、写入、恢复和停止策略。`MountSpeedMemoryTestRegression.py`、`MountSpeedHoldRobotRegression.ps1`、WPELibrary Debug 隔离构建和 `git diff --check` 通过。未启动桌面助手或游戏，未做实机验收。
+
+## 2026-09-27 坐骑速度启动优化桌面热更（2026.9.27.9）
+
+- 用户明确授权将当前工作区待发布改动一起热更。已通过 VS 2022 Release 重建并发布本地 ClickOnce 包，共 212 个文件、92 个 `.deploy` 文件；EXE 和 WPELibrary 程序集版本均为 `2026.9.27.9`。旧版本和用户配置保留。
+- 首次构建因本地 `file://` URI 被用作 MSBuild `InstallUrl` 而在 `FormatUrl` 阶段失败；恢复原 HTTPS 安装 URL 默认值后构建成功，本机固定 ClickOnce 入口仍指向本地 `releases`。最终构建 0 错误，4 个 EasyHook 文件 `MSB3178` 警告。
+- 版本应用清单、版本部署清单和固定入口清单均通过 Mage 签名验证；ClickOnce、Review、坐骑机器人、LuaJIT 探针和速度内存读取回归通过，固定入口依赖的清单摘要和包内坐骑 helper 文件哈希核对通过。`git diff --check` 通过。
+- 固定入口为 `releases\\小黑封包助手.application`。现有桌面快捷方式已指向该入口；`.8` 入口备份于 `releases\\fixed-entry-backups\\小黑封包助手_before_2026.9.27.9_20260927_211256.application`，快捷方式备份于 `releases\\shortcut-backups\\小黑封包助手_before_2026.9.27.9_20260927_211256.lnk`。发布时桌面程序未运行，未启动游戏或进行游戏内效果验收；下次从原快捷方式启动时会取得 `.9`。
+
+## 2026-09-27 首页助手：坐骑速度保持与纯延时并行
+
+- 首页并发白名单新增 `MountSpeedHold × DelayOnly`：速度保持助手必须恰好只有一条速度保持指令；纯延时助手至少含一条延时指令，且其它指令只能是循环起止标记。同类、混合或含其它游戏操作的预设仍不放行；原有 `TreasureMap × MountRefine` 组合不变。
+- `AutomationHomeRegression.ps1` 通过，覆盖类型分类、兼容组合、同类拒绝和阻止第三个不兼容任务；WPELibrary Debug 隔离重建通过。未启动机器人、模拟器或游戏，未写入游戏内存、发包或发布。
+
+## 2026-09-27 坐骑速度保持启动优化（源码）
+
+- 启动预检改用专用 `speedOnly` 请求，只读取坐骑速度保持所需的角色/骑乘绑定和速度字段，跳过技能、成长率和炼化卡片；helper 复用预检中的速度地址和进程身份，省去一次重复初始探测。创建恢复 journal 后仍会重新读取并核对当前绑定，再进行首次写入。
+- 保持写入后核验失败时立即退出，并重新核对原进程、角色、坐骑和字段地址；仅当当前值仍是本次目标时才 CAS 恢复并核验基线，已在基线则不写，其他状态保留 journal。离线回归覆盖短读恢复、未知值、绑定变化、未取得写入所有权和 journal 清理失败。
+- 验证：`MountStatusLuaJitProbeRegression.py`、`MountSpeedMemoryTestRegression.py`、`MountSpeedHoldRobotRegression.ps1` 通过；WPELibrary Debug 隔离构建 0 警告、0 错误，`git diff --check` 通过。构建产物使用隔离目录；清理操作被自动审核拦截，临时目录仍保留。
+- 本轮只改源码和项目文档，未启动桌面助手、模拟器或游戏，未写入游戏内存，也未发布。节省的是一次完整探测往返；实际耗时没有设备实测，现有目标速度配置未改。
+
+## 2026-09-27 桌面标题版本号 ClickOnce 热更（2026.9.27.8）
+
+- 基于签名 `.7` 包发布 `.8`，只改 EXE、WPELibrary、两份 `en-US` 卫星程序集及对应 `.deploy` 文件的程序集版本元数据，并更新 ClickOnce 清单。四个程序集的 AssemblyVersion 与 EXE 对 WPELibrary 的引用已同步为 `.8`；四个程序集的方法 IL 和嵌入资源无变化。旧版本目录保留。
+- 固定入口 `releases\小黑封包助手.application` 已切换到 `.8`；旧入口备份于 `releases\fixed-entry-backups\小黑封包助手_before_2026.9.27.8_20260927_200554.application`。
+- 三份 Mage 签名验证、`ClickOnceUpdateRegression.ps1`、`ReviewRegressionChecks.ps1` 和 `git diff --check` 通过；候选和暂存包共 209 个文件且 SHA-256 一致。桌面程序未启动验收，游戏内效果未测试，也未写游戏内存。
+- 主窗口标题取 AssemblyVersion，重新从原固定快捷方式启动后应显示 `.8`。PE `FileVersion` 与 `ProductVersion` 字符串仍为 `.4`，所以 Windows 文件属性页仍可能显示 `.4`。
+
+
+## 2026-09-27 坐骑速度保持快速轮询热更（2026.9.27.7）
+
+- 已以签名 `.27.6` 为基线发布 `.27.7`，固定 ClickOnce 入口已切换；仅更新坐骑速度读取/保持脚本、对应 `.deploy` 文件和三个 ClickOnce 清单，209 个文件中只有这 6 个文件内容变化。旧固定入口备份于 `releases\fixed-entry-backups\小黑封包助手_before_2026.9.27.7_20260927_192910_843.application`。
+- speed-only 快速读取按持久保持模式启用；保持循环间隔上限为 100ms。ADB、RootBroker、toybox 和字段发现的往返耗时未做设备实测，不能据此承诺端到端毫秒级响应。
+- 坐骑速度与 LuaJIT 探针源码回归、候选包检查、`ClickOnceUpdateRegression.ps1`、`ReviewRegressionChecks.ps1`、三个 Mage 签名校验和 `git diff --check` 通过。此次未启动桌面程序或游戏，也未写入游戏内存；真实游戏效果尚未验收。
+- 桌面助手没有运行中的进程；现有快捷方式仍指向固定入口。用户关闭旧窗口后从原快捷方式重新启动即可获取 `.27.7`。
+
+## 2026-09-27 坐骑速度保持 Root 读取命令修复
+
+- 用户现场错误 `phase=hold-baseline expected=8 actual=17` 已复现为 LDPlayer Root shell 未找到裸 `dd`，其 stdout 返回 `dd: no such tool`（17 字节）；保持脚本在创建恢复 journal、写入速度前就退出，游戏无效果是预期的 fail-closed 结果。
+- `mount_speed_memory_test.py` 现对 RootBroker、普通 root shell 和 run-as 统一显式使用 `toybox dd`；`MountSpeedMemoryTestRegression.py` 已通过，模拟器 `toybox dd` 对 `/dev/zero` 的 Base64 读取验证通过。此次未向游戏写内存。
+- 已以签名 `.27.5` 为基线发布 `.27.6`，只改坐骑速度 helper 及其 `.deploy` 副本并更新三个 ClickOnce 清单；使用与 `.27.5` 相同、当前用户证书库中仍带私钥的签名证书。固定入口已更新，旧入口备份在 `releases\fixed-entry-backups\小黑封包助手_before_2026.9.27.6_20260927_160225.application`。
+- `MountSpeedMemoryTestRegression.py`、`ClickOnceUpdateRegression.ps1` 及三个 Mage 清单签名验证通过。桌面旧主进程 PID 59600 仍在运行且没有活动的速度 helper；需完全退出桌面助手、从原快捷方式重新启动后才会加载 `.27.6`。尚未完成更新包上的真实游戏效果验收。
+
+## 2026-09-27 当前坐骑 GROWUP 单次写入（源码）
+
+- 桌面快照区新增“写当前成长率为 100.0”按钮，仅对唯一本地角色、已骑乘、唯一 `bound` 当前实例及有效 GROWUP 地址开放；确认后由独立脚本复核进程和绑定、校验快照原值、比较旧 TValue、单次写入、立即读回并重新读取当前绑定字段。只有写后快照仍读到 100.0 才报告字段已核实；旧地址读回但绑定字段不匹配时报告未核实。
+- `MountGrowthRateMemoryWriteRegression.py`、`MountStatusLuaJitProbeRegression.py` 和 `MountSpeedHoldRobotRegression.ps1` 离线通过；`WPELibrary` Debug 隔离构建 0 错误。构建产物留在系统临时目录，不覆盖现有发布目录。
+- 独立 `mount_growth_rate_memory_test.py` 支持 `set`/`restore`，默认目标为 10.935，写入必须显式传 `--write`；写入前生成独占 journal，恢复校验设备序列号、进程/骑乘绑定、旧值、地址和目标 TValue，恢复后重新读快照，只有核验通过才删除 journal。旧桌面调用仍可省略动作并使用固定 100.0 目标；它未接入恢复按钮，未恢复的默认 journal 会阻止同路径再次写入。
+- `MountGrowthRateMemoryWriteRegression.py` 离线回归与 `MountSpeedHoldRobotRegression.ps1` 桌面调用兼容检查通过。`emulator-5554` 上 `com.gdoo.dhxy` PID 1681、角色 201753、坐骑 9111、实例 `2103828088520622084` 的当前 GROWUP 从 0.935 单次试写为 10.935；写后快照返回 `field_verified`。随后 restore dry-run 返回 `dry_run`，确认 journal 与当前目标值匹配且没有恢复写入。恢复 journal 保存在 `%LOCALAPPDATA%\XNAS\WPE\mount_growth_rate_memory_test_20260927_1681.json`。
+- 普通坐骑快照探针仍保持只读，写入没有发送封包。此次只确认客户端内存中的同一绑定实例已读到 10.935；`/proc/PID/mem` 无法与 LuaJIT GC 同步，服务端是否接受及刷新/重登后是否持久均未验证。
+
+## 2026-09-27 坐骑成长率保持机器人预设（源码）
+
+- 新增默认禁用的“坐骑成长率保持100”独立机器人预设，固定写入目标为 100.0。启动前读取当前骑乘坐骑并确认唯一绑定；执行后等待机器人停止，并用独立恢复日志保存启动前 GROWUP。
+- 停止时重新读取当前字段地址，只在进程启动身份、角色、坐骑和实例仍匹配且当前值仍为本预设写入的 100.0 时恢复启动前原值。地址变化时按新鲜绑定快照定位；绑定或值变化、写后核验失败时不覆盖字段并保留恢复日志。
+- 验证：`MountGrowthRateMemoryWriteRegression.py`、`MountGrowthRateHoldCatalogRegression.ps1`、`MountGrowthRateHoldRobotRegression.ps1`、`MountSpeedHoldRobotRegression.ps1`、`MountStatusLuaJitProbeRegression.py` 与 `MountSpeedMemoryTestRegression.py` 均通过；`WPELibrary` Debug 隔离构建通过。本轮未连接设备、未执行真实游戏内存写入、未发布。`/proc/PID/mem` 写入与 LuaJIT GC 之间仍不存在游戏线程同步保证。
+- 普通坐骑快照探针仍保持只读，写入不发送封包。`/proc/PID/mem` 无法与 LuaJIT GC 同步，客户端读回不代表服务端接受或刷新后持久；本轮不做设备写入或真实游戏验收。
+
+## 2026-09-27 坐骑速度保持短读处理修复热更（2026.9.27.5）
+
+- `.4` 的保持脚本读取 `/proc/<pid>/mem` 时要求一次拿到 8 字节；短读会使子进程退出码为 2，保持循环随之停止。`.5` 对短读最多重试 4 次，并在仍失败时输出 PID、地址、实际/预期字节数和读取阶段；设置与恢复写入前也会比较当前 TValue 是否仍与先前读取值相同。
+- 本地 ClickOnce `.5` 以签名 `.4` 包为基线，仅替换坐骑速度保持脚本及其 `.deploy` 映射并更新清单。其余发布文件与 `.4` 一致；固定入口已指向 `.5`，旧固定入口备份于 `releases\fixed-entry-backups\小黑封包助手_before_2026.9.27.5_20260927_143503.application`。
+- Python 内存助手回归、ClickOnce 更新回归、三个 Mage 签名验证和 WPELibrary Release 隔离构建通过。没有对模拟器或游戏进程写内存，也没有做实机效果验收。桌面助手需关闭旧窗口后从原固定入口重新打开才能加载 `.5`。
+- 当前工作区另有 C#“恢复日志是否存在”提示修正，但 `.5` 保留 `.4` 的 WPELibrary.dll，因此该提示修正尚未进入桌面包；当前截图路径对应的 JSON 恢复日志不存在。短读与比较写入仍可能与游戏线程/GC 并发变化竞争。
+
+## 2026-09-27 坐骑速度保持启动探针误报修复热更（2026.9.27.4）
+
+- Root broker 探针遇到单个短读块时，之前会丢弃该次读取中的全部有效块并把失败误报为 `field_string_missing`。现在保留完整块；字段发现或引用扫描不完整时返回 `memory_read_transport_failed`，继续禁止切换到其他 `su`/ADB 读取通道。
+- 已生成签名本地 ClickOnce `releases\2026.9.27.4` 并更新固定入口。打包后的探针与源码 SHA-256 一致；`MountStatusLuaJitProbeRegression`、`MountSpeedHoldRobotRegression`、`ReviewRegressionChecks`、`ClickOnceUpdateRegression` 和三个清单的 `mage -Verify` 均通过。Release 构建 0 错误，保留既有 4 条 EasyHook `MSB3178` 警告。
+- 桌面快捷方式仍指向固定入口；两个已运行的旧版窗口未强制关闭，需先关闭后从原快捷方式重新启动才会加载 `.4`。本轮未运行机器人或写入游戏内存。
+
+## 2026-09-27 坐骑速度保持预设 ClickOnce 热更（2026.9.27.0）
+
+- “坐骑速度保持”已作为“常用”分组独立预设发布，默认目标速度为 500；发布包包含内存测试脚本依赖。旧版本目录保留，固定 ClickOnce 入口已更新到 `2026.9.27.0`。
+- Release 重建 0 错误，保留 4 条既有 EasyHook `MSB3178` 警告；`ClickOnceUpdateRegression.ps1` 通过，版本应用清单、版本部署清单和固定入口清单的 `mage -Verify` 均通过。
+- 发布时桌面旧进程仍在运行，需关闭后从原桌面快捷方式重新打开以加载新版本。本轮未启动机器人、未操作真实游戏或写入游戏内存。
+
+## 2026-09-25 发送窗口 IP 地址复制修复发布
+
+- 发送封包窗口的来源和目标 IP/端口框已从禁用只读改为启用只读，可选中并复制，仍不可编辑。
+- 已以正式 `2026.9.20.0` 包为基线发布签名 ClickOnce `releases\2026.9.25.0`，仅更新地址框资源、对应程序集版本和 ClickOnce 清单；未打入工作区其他尚未发布的代码。固定入口 `releases\小黑封包助手.application` 已切换，旧入口备份至 `releases\fixed-entry-backups\小黑封包助手_before_ip_copy_20260925_001858.application`。
+- `ClickOnceUpdateRegression.ps1`、三个 ClickOnce 清单 `mage -Verify`、88 个 `.deploy` 映射核对，以及中英文资源读取均通过；两个 IP 框在中英文资源下均为启用状态，设计器仍设为只读。
+- 未启动应用或执行真实网络操作。已打开的旧窗口不会自动切换；关闭后从原桌面快捷方式重新打开即可加载修复版。
+
+## 2026-09-23 ClickOnce 启动入口修复
+
+- 根据 ClickOnce 报错日志，故障发生在程序启动前的 URI 激活阶段。桌面快捷方式直接调用 `dfshim` 并传入百分号编码的 `file:///...` URI；现已将其改为通过 Windows 原生 `.application` 文件关联打开 `releases\小黑封包助手.application` 固定入口。
+- 原桌面快捷方式已备份到 `releases\shortcut-backups\小黑封包助手_before-uri-fix_20260923_223114.lnk`。固定入口和 `2026.9.20.0` 发布清单签名校验通过；应用首次启动仍需在 UAC 提示中确认。
+
+## 2026-09-20 注入器模拟器筛选入口
+
+- 注入器顶部的“远程设置”快捷入口已替换为“显示模拟器”；点击后复用现有进程选择窗口并默认启用模拟器过滤，普通“选择进程”仍显示全部本机进程。远程设置功能本身未删除，只是不再占用注入器顶部按钮。
+- 模拟器选择继续通过实时 PID/进程名复核。已生成签名本地 ClickOnce 热更 `releases\2026.9.20.0`，固定入口 `releases\小黑封包助手.application` 已指向该版本；旧版本目录保留。
+- `ReviewRegressionChecks.ps1`、Release `UiDesignRegression.ps1`、`ClickOnceUpdateRegression.ps1`、三个清单 `mage -Verify` 和 `git diff --check` 均通过；Release 构建保留项目原有 4 条 `EasyHook` `MSB3178` 警告，未执行注入、抓包或真实封包发送。
+- 实际桌面根目录及开始菜单的 `小黑封包助手 - 1 .appref-ms` 原先仍指向旧 `releases-clean` 入口，已分别备份为 `.before-hotupdate-20260920` 并改指向当前 `releases` 固定入口；已经运行的旧进程需关闭后重新启动。
+- 直接启动 `releases\2026.9.20.0\小黑封包助手.application` 后，ClickOnce 缓存已出现 `2026.9.20.0`；旧 `2026.9.18.1` 窗口仍因权限拒绝无法由当前会话强制结束，新版本窗口已启动并保留。
+- 检查发现系统的 ClickOnce `.appref-ms` 文件关联缺少打开命令，导致桌面入口显示为空白文件且双击无效；已保留原入口，并新增桌面 `小黑封包助手.lnk`，通过 `dfshim.dll` 调用 `releases\2026.9.20.0\小黑封包助手.application`，未修改用户数据库或预设。
+- 已整理桌面重复入口：仅保留桌面根目录可启动的 `小黑封包助手.lnk`；根目录旧 `.appref-ms`、旧入口备份和“系统软件”目录旧 `.appref-ms` 已移动到 `releases\shortcut-backups\desktop-cleanup-20260920`，未删除。
+- 复现启动弹窗时发现已有响应正常且可见的 `小黑封包助手` 进程；重复从 ClickOnce 入口启动会显示“无法启动应用程序”，关闭提示后继续使用现有窗口即可。
+
+## 2026-09-18 注入权限修复后的干净发行包（2026.9.18.2）
+
+- 注入前新增 Windows 目标句柄权限探测并尝试启用 `SeDebugPrivilege`；失败时显示真实 Windows 错误和“目标程序可能拒绝用户态注入”，不再把访问拒绝统一显示成 `STATUS_NO_MEMORY`。ClickOnce 清单继续使用兼容的 `asInvoker`，沿用现有 UAC `runas` 自提权流程。
+- 已生成签名本地 ClickOnce 干净包 `releases-clean\2026.9.18.2`、交付压缩包 `releases-clean\小黑封包助手-干净版-2026.9.18.2.zip`；固定入口和桌面根目录 `冒险岛专用抓包.lnk` 均已指向该干净入口，快捷方式图标已切换到 `.2`。
+- 构建使用 `-CleanPresets`；`CleanPresetPackageRegression` 确认 Send、ByteSweep、Robot 预设数量均为 0。Release 重建 0 错误，保留项目原有 4 条 EasyHook `MSB3178` 警告；版本应用清单、版本部署清单和固定入口清单的 `mage -Verify` 均通过。注入前权限回归、`ReviewRegressionChecks` 和 `git diff --check` 均通过。
+- 本轮未注入、未抓包、未发送真实封包；需关闭已运行的旧助手，从桌面“冒险岛专用抓包”启动并在 UAC 提示中选择“是”后再测试。
+
+## 2026-09-18 本机进程选择开放后的干净发行包（2026.9.18.1）
+
+- 已生成签名本地 ClickOnce 干净包 `releases-clean\2026.9.18.1`、交付压缩包 `releases-clean\小黑封包助手-干净版-2026.9.18.1.zip`；`releases-clean\小黑封包助手.application` 固定入口曾指向该版本。桌面根目录已新增 `冒险岛专用抓包.lnk` 指向该干净入口；原“系统软件”目录快捷方式及其备份保留。
+- 构建使用 `-CleanPresets`；包内不含用户数据库或预设文件，`CleanPresetPackageRegression` 确认 Send、ByteSweep、Robot 预设数量均为 0。压缩包共 205 个条目。
+- Release 构建 0 错误，保留项目原有 4 条 EasyHook `MSB3178` 警告；版本包内应用清单、版本部署清单和固定入口清单的 `mage -Verify` 均通过。本轮未注入、未抓包、未发送真实封包。
+
+## 2026-09-18 当前源码干净发行包（2026.9.18.0）
+
+- 已生成签名本地 ClickOnce 干净包 `releases-clean\2026.9.18.0` 及交付压缩包 `releases-clean\小黑封包助手-干净版-2026.9.18.0.zip`；固定入口 `releases-clean\小黑封包助手.application` 已指向该版本。
+- 构建使用 `-CleanPresets`；包内不含用户数据库或预设文件，临时数据库回归确认 Send、递进和 Robot 预设数量均为 0。应用清单声明的 59 个文件全部存在且大小一致，三个 ClickOnce 清单 `mage -Verify` 均通过。
+- Release 构建 0 错误，保留项目原有 4 条 EasyHook `MSB3178` 警告；本轮仅完成本地构建、包内容和离线回归校验，未注入、未抓包、未发送真实封包。
+
+## 2026-09-08 接收封包回放修复热更（2026.9.8.0）
+
+- 已按用户明确授权完成签名本地 ClickOnce 热更 `releases\2026.9.8.0`；固定入口 `releases\小黑封包助手.application`、版本部署清单和应用清单均为 `2026.9.8.0`，三处 `mage -Verify` 均通过。旧版发布目录保留。
+- 新发布包内的 `WPELibrary.dll.deploy` 已核对包含接收回放队列与 `select` 可读通知修复；未执行真实游戏发包。发布构建 0 错误，保留项目原有 4 条 EasyHook `MSB3178` 警告；`ClickOnceUpdateRegression`、接收回放回归和 `git diff --check` 通过。
+- 现有桌面快捷方式 `C:\Users\Administrator\Desktop\系统软件\小黑封包助手.lnk` 仍指向固定入口，图标已切换到 `.0`；更新前备份为 `releases\shortcut-backups\小黑封包助手_20260908_213617.lnk`。ClickOnce 不会强制结束已运行的旧窗口，需先关闭旧助手，再从该快捷方式启动后测试。
+
+## 2026-09-08 照山河策略修复热更（2026.9.7.2）
+
+- 已生成签名本地 ClickOnce 版本 `2026.9.7.2`，固定入口 `releases\小黑封包助手.application` 已更新；旧版 `2026.9.7.1` 发布目录保留。
+- 正式包包含精确名称“照山河”的兼容发送策略；其他藏宝图预设仍按各自原策略解析，数据库未修改。
+- `ClickOnceUpdateRegression.ps1`、Release `TreasureC6StreamRegression.ps1 -BuildDirectory releases\2026.9.7.2` 和 `ReviewRegressionChecks.ps1` 均通过；Release 构建 0 错误，保留原有 4 条 EasyHook `MSB3178` 警告。
+- Release `UiDesignRegression.ps1` 仍被当前环境禁用 .NET `BinaryFormatter` 阻塞，未归因于本次热更；未发送真实游戏封包。已从固定入口启动 `2026.9.7.2`，尚未启动“照山河”运行。
+
+## 2026-09-08 C6 读取服务运行态恢复
+
+- 现场提示“C6 读取服务未连接或已断开”的根因是旧的 `tcp:28765 -> localabstract:piaomiao.treasure.stream` ADB 转发仍在，但设备内 `treasure-streamd-resident` 已退出；仅检查本地端口会误判服务正常。
+- 已按授权重启 ADB 服务，确认 `emulator-5554` 在线，重新启动设备内只读 C6 读取器并恢复端口转发；协议握手返回 `hello_ack/state=ready`。
+- 本轮只恢复 C6 只读读取链路，未修改数据库、未发送游戏封包、未扩大任何藏宝图预设策略。
+
+## 2026-09-08 接收封包客户端侧回放
+
+- 选中 `WS1_Recv`、`WS2_Recv`、`WS1_RecvFrom`、`WS2_RecvFrom`、`WSARecv`、`WSARecvFrom` 或 `WSARecvEx` 类型的接收包点击发送时，改为排队到当前注入进程的同步接收 Hook，由游戏下一次接收调用读取；`select` 会把有排队数据的 Socket 暴露为可读，并用零超时原生探测避免继续阻塞。不再调用 native `send`/`sendto`，也不再进入新的捕获显示队列。
+- TCP 接收包支持按游戏接收缓冲区分段取出，UDP 接收包按一个完整数据报消费；`MSG_PEEK` 不消费回放帧；回放队列按 Socket 隔离、总量上限 8 MiB，并在 Hook 启停时清空。Overlapped/completion-routine `WSARecv`/`WSARecvFrom` 仍保持原生透传。
+- 离线源码回归、接收队列/`select`/`MSG_PEEK` 运行时自检、`WPELibrary` Debug 构建和完整解决方案 Debug 构建（`SignManifests=false`）均通过；主程序保留项目原有 4 条 EasyHook `MSB3178` 警告。未启动游戏、未注入、未抓包、未向真实游戏发送测试包；“只显示效果”仍需实机确认，且最终表现取决于该接收包本身的客户端处理语义。
+
+## 2026-09-08 照山河自动挖宝助手预设策略修复（源码）
+
+- 现场日志的实际阻断为 `jump_template_not_found`；数据库中的“照山河”已存在独立的 `Type=9` 连续藏宝图指令和授权，根因是该精确名称未进入生产发送策略，落入了默认严格模板闸门。
+- 仅为精确名称“照山河”增加独立策略工厂，沿用当前路由校验、AutoDig/发送授权和其他失败保护；未扩大到相似名称或其他藏宝图预设。
+- `WPELibrary` Debug 构建、主程序 Debug 构建和 `TreasureC6StreamRegression` 可执行回归均通过；回归同时确认“照山河”为兼容策略、未登记相似名称仍为严格默认策略。主程序构建保留项目原有 4 条 EasyHook `MSB3178` 警告，0 个错误。
+- 本轮未修改数据库、未发布 ClickOnce、未重启当前窗口、未注入、未抓包、未发送真实游戏封包；需关闭旧窗口并加载本次 Debug/发布产物后再做真实运行验收。
+
+## 2026-09-07 干净发行包
+
+- 发布脚本新增 `-CleanPresets`；该构建只关闭首次启动的内置助手预设补全，普通构建和用户自行创建预设的能力不变。
+- 已生成 `releases-clean\2026.9.7.0` 及 `小黑封包助手-干净版-2026.9.7.0.zip`；包内无用户数据库和预设文件，临时数据库运行检查确认机器人预设数量为 0。
+- 本次仅完成本地构建、包内容和离线运行检查，未注入、未抓包、未发送真实封包。
+
+更新时间：2026-09-07
+
+## 2026-09-07 普通发送路由修复桌面热更新（2026.9.7.1）
+
+- 已使用现有发布脚本生成签名本地 ClickOnce 版本 `releases\\2026.9.7.1`，固定入口 `releases\\小黑封包助手.application` 已切换到该版本；包内共 204 个文件，源码版本文件和应用清单均为 `2026.9.7.1`。
+- 桌面快捷方式 `C:\\Users\\Administrator\\Desktop\\系统软件\\小黑封包助手.lnk` 已指向固定入口并使用新版本图标，旧快捷方式备份为 `releases\\shortcut-backups\\小黑封包助手_20260907_230454.lnk`。
+- 已通过发行包目录上的 `UiDesignRegression.ps1 -Configuration Release`、Socket 路由解析回归、`ReviewRegressionChecks.ps1`、`ClickOnceUpdateRegression.ps1`、快捷方式 `UpToDate` 检查和 `git diff --check`；未启动或重启助手、未注入、未抓包、未发送真实封包。需关闭当前旧窗口后，从桌面快捷方式重新启动才会加载新版本。
+
+## 2026-09-07 普通发送旧预设路由消歧修复
+
+- 已确认当前数据库完整性正常；其中 15 个启用系统 Socket 的旧 `WS2_Send` 预设没有保存来源/目标地址。历史运行记录中的目标会随会话变化，且包含不同连接，未用历史地址批量回填，避免把预设绑定到错误连接。
+- 普通发送的路由预检、发送页和受保护发送线程现在会透传用户明确选中的系统 Socket；只有该句柄已经出现在当前同类型实时路由候选中时才用于消歧，过期或无关句柄仍保持安全拦截。已有目标/来源/封包指纹的预设解析顺序不变。
+- 已通过隔离 `WPELibrary`/桌面程序 Debug 重建、Socket 路由解析（含 IPv4 回环回归）、路由证据、受保护发送线程、发送保护、移动端路由和 Review 回归；UI 回归仍受当前环境禁用 .NET `BinaryFormatter` 阻塞。未发布 ClickOnce，未重启助手、未注入、未抓包、未发送真实封包。
+
+## 2026-09-04 当前连接候选解析修复
+
+- 修复普通发送预设的当前 Socket 路由解析：同一进程中的控制/ADB/游戏连接不再仅按 `WS2_Send` 类型混为一谈；依次使用目标地址、来源地址、当前会话封包 SHA-256 指纹和来源主机缩小候选，仍无法唯一确认时继续安全拦截。
+- 当前会话路由缓存只保留 Socket、方向地址、封包类型和指纹，不保留封包内容；同一连接可保留多个近期指纹，因此界面列表自动清空后仍能恢复旧预设的路由线索。原有 A050 专用发送路径未改为共用该解析器。
+- 已通过 `WPELibrary` Debug 重建、桌面程序 Debug 重建、Socket 路由解析回归、列表清空后的路由证据回归、UI 回归、发送保护回归、移动端路由回归、抓包停止回归、装备炼化接线回归和 `git diff --check`；未重启助手、未注入、未抓包、未发送真实封包，当前已运行的旧版本不会自动载入本次源码修复。
+- 按用户明确要求完成签名本地 ClickOnce 热更新 `releases\\2026.9.4.0`；固定入口 `releases\\小黑封包助手.application` 和桌面快捷方式 `C:\\Users\\Administrator\\Desktop\\系统软件\\小黑封包助手.lnk` 已指向最新版本，原快捷方式备份为 `releases\\shortcut-backups\\小黑封包助手_20260904_152159.lnk`，旧版本目录和数据库均保留。
+- 发布后 `ReviewRegressionChecks.ps1`、指向 `2026.9.4.0` 的 `UiDesignRegression.ps1 -Configuration Release`、`ClickOnceUpdateRegression.ps1`、Socket 路由两项 Release 回归、快捷方式 `UpToDate` 检查和 `git diff --check` 均通过；未强制结束原运行进程，需用户关闭旧窗口后从桌面快捷方式重新启动。
+
+## 2026-09-02 发送页停止快捷键调整
+
+- `Socket_SendForm` 的停止发送快捷键改为空格键，中文/英文按钮文案同步显示为“空格键”/“Space”；开始发送仍使用 F 快捷键。
+- 已通过 `WPELibrary` Debug 重建、Debug `UiDesignRegression`、资源/快捷键针对性检查和 `git diff --check`；未启动游戏、未注入、未抓包或发送真实封包。
+
+## 2026-09-02 回退上一稳定藏宝图版本并热更新（2026.9.2.3）
+
+- 按用户要求生成新的单调递增 ClickOnce 版本 `releases\\2026.9.2.3`：部署版本身份为 `2026.9.2.3`，程序内容回到上一稳定包 `2026.9.2.1`；没有把 ClickOnce 版本号降级。原 `2026.9.2.2` 目录完整保留。
+- 覆盖固定入口前已备份为 `releases\\fixed-entry-backups\\小黑封包助手_20260902_220026_rollback-from-2026.9.2.2.application`；固定入口现指向 `2026.9.2.3`。数据库 `C:\WPE64Cache\\小黑封包助手.db` 未修改。
+- 桌面快捷方式仍指向固定入口，并切换为 `2026.9.2.3` 图标；更新前备份为 `releases\\shortcut-backups\\小黑封包助手_20260902_220522.lnk`。
+- 回退包共 204 个文件、其中 88 个 `.deploy` 文件；版本应用清单、版本部署清单和固定入口均通过 `mage -Verify`。`TreasureC6StreamRegression.ps1`、`UiDesignRegression.ps1 -Configuration Release`、`ReviewRegressionChecks.ps1`、`ClickOnceUpdateRegression.ps1` 和 `git diff --check` 均通过。
+- 本轮只做离线发布与清单/回归校验，未启动助手或游戏、未注入、未抓包、未发送真实游戏封包。
+
+## 2026-09-02 紫气东来藏宝图连续快照确认尝试与热更新
+
+- 已先备份数据库 `C:\WPE64Cache\小黑封包助手.before-ziqi-donglai-3-samples-20260902-212325.db`；源库与备份库大小均为 299008 字节，SHA-256 均为 `1E9214B6BDCD062E3A51778C13F3C2ECED20C608D598C9214C71B129F27F71E7`，两份 `PRAGMA integrity_check` 均为 `ok`。
+- 仅对精确名称“紫气东来”的独立藏宝图策略增加样本闸门：在原 80ms 稳定窗口内要求连续观察到 3 个不同的完整 C6 `snapshotId`；其他预设的样本闸门保持关闭，模板、路由、授权和发送规则未改变。
+- 已通过 Debug 构建、可执行藏宝图回归和 PowerShell 回归；新增回归确认未达到 3 个不同完整快照前不通过稳定确认，达到后才发送 Jump/Use，且“紫零”和未注册相似名称仍保持原策略。
+- 随后按用户要求完成签名本地 ClickOnce 热更新 `releases\\2026.9.2.2`：发布目录 204 个文件、其中 88 个 `.deploy` 文件；三个 ClickOnce 清单均通过 `mage -Verify`。固定入口和桌面快捷方式均已更新，快捷方式备份为 `releases\\shortcut-backups\\小黑封包助手_20260902_212837.lnk`。
+- 发布后 `ReviewRegressionChecks.ps1`、指向最新发布目录的 `UiDesignRegression.ps1 -Configuration Release`、`TreasureC6StreamRegression.ps1`、`ClickOnceUpdateRegression.ps1` 和 `git diff --check` 均通过；未启动助手或游戏、未注入、未抓包、未发送真实游戏封包。
+
+## 2026-09-02 紫气东来藏宝图精度尝试
+
+- 已先备份数据库 `C:\WPE64Cache\小黑封包助手.before-ziqi-donglai-precision-20260902-204808.db`；源库与备份库大小均为 299008 字节，SHA-256 均为 `2805AE93F8808100314A607C3C655E2335A8EF7B32047C76995A64AEAB87578F`，两份 `PRAGMA integrity_check` 均为 `ok`。
+- 仅对精确名称“紫气东来”的独立藏宝图策略增加目标稳定确认：目标稳定窗口从 20ms 调整为 80ms，并要求窗口内连续观察到 3 个不同的完整 C6 `snapshotId`；仍重复校验同一 member/package/scene/x/y。模板、路由、授权、发送规则以及其他预设均未改变。
+- 已通过 `WPELibrary` Debug 构建、`TreasureC6StreamRegression` Debug 构建及其可执行回归、`TreasureC6StreamRegression.ps1` 和本次涉及文件的 `git diff --check`；回归明确确认“紫零”仍为 20ms，未注册相似名称仍使用 20ms 严格默认策略。
+- 新增离线回归确认：未达到 3 个不同完整快照前不通过稳定样本闸门，达到后才发送 Jump/Use；样本闸门默认关闭的调用方保持原行为。
+- 本轮调整针对短暂坐标抖动的识别精度，不等同于真实游戏业务成功；此前日志中的主要阻断仍是 `jump_template_not_found`，需要后续运行观察新日志。
+- 本轮未启动助手或游戏、未注入、未抓包、未发送真实游戏封包。随后按用户明确要求完成签名本地 ClickOnce 热更新 `releases\\2026.9.2.1`：发布目录 204 个文件、其中 88 个 `.deploy` 文件；三个 ClickOnce 清单均通过 `mage -Verify`。
+- 固定入口 `releases\\小黑封包助手.application` 已更新；桌面快捷方式 `C:\\Users\\Administrator\\Desktop\\系统软件\\小黑封包助手.lnk` 已备份为 `releases\\shortcut-backups\\小黑封包助手_20260902_211033.lnk` 并切换到 `2026.9.2.1` 图标。旧版本、数据库和配置均保留。
+- 发布后 `ReviewRegressionChecks.ps1`、指向 `releases\\2026.9.2.1` 的 `UiDesignRegression.ps1 -Configuration Release`、`TreasureC6StreamRegression.ps1`、`ClickOnceUpdateRegression.ps1` 和 `git diff --check` 均通过；仍未进行真实游戏业务验收。
+
+## 2026-09-02 师门任务二发送间隔调整为 10ms
+
+- 按用户要求，仅修改数据库中精确 GUID `BDEE8CE8-6B2D-485D-9A88-4C9A9261A8DF`、名称为“师门任务二”的预设：其引用的 42 个发送列表全部从 `LoopINT=1ms` 调整为 `LoopINT=10ms`；每个列表仍保持 `LoopCNT=1` 和单封包发送。
+- 这 42 个发送列表没有被其他机器人预设引用，因此本次调整未扩大到其他预设。数据库修改前备份为 `C:\WPE64Cache\小黑封包助手.before-shimen-task-two-interval-20260902.db`。
+- 已通过当前数据库与备份数据库对比、目标列表计数核验和 `PRAGMA integrity_check=ok`；本次未启动助手、未操作游戏、未抓包、未发送真实封包。
+
+## 2026-09-02 紫气东来藏宝图预设跳转策略匹配修复
+
+- 现场结构化日志显示当前运行可以识别 C6 目标，但每个目标均在发送前以 `jump_template_not_found` 重试后跳过，`Jump/Use/AutoDig` 实际发送次数为 0；数据库已按用户要求拆分为两个独立预设：原 GUID `113FC2F2-09C4-49C6-BA13-18465E095FFD` 保留为“紫零”，新 GUID `942B563E-95D9-49DB-AAFF-0C1BF4C25EE4` 为“紫气东来”，两者的 `TREASURE_MAP_V2|mode=continuous` 指令、`挖宝` 分组、授权和附属配置均已回读一致，数据库 `PRAGMA integrity_check` 为 `ok`。
+- 根因为该预设原先只是从“紫零”改名为“紫气东来”，而生产入口只按精确名称解析策略，改名后落入默认严格模板闸门。现为“紫气东来”增加独立的精确名称策略；“紫零”保留自己的策略，其他未注册相似名称继续使用严格默认策略。数据库变更前备份为 `C:\WPE64Cache\小黑封包助手.db.backup-before-split-20260902-104444.db`。
+- `WPELibrary` Debug/Release 构建、`TreasureC6StreamRegression`（含目标/非目标策略隔离回归）、`TreasureC6StreamRegression.ps1`、Windows PowerShell 5.1 下的 `UiDesignRegression.ps1 -Configuration Release`、`ClickOnceUpdateRegression.ps1`、`ReviewRegressionChecks.ps1` 和 `git diff --check` 均通过。
+- 已按用户要求完成签名本地 ClickOnce 热更新 `releases\\2026.9.2.0`：发布目录 204 个文件、其中 88 个 `.deploy` 文件；固定入口 `releases\\小黑封包助手.application` 和版本目录内两个清单均通过 `mage -Verify`。桌面快捷方式 `C:\\Users\\Administrator\\Desktop\\系统软件\\小黑封包助手.lnk` 已更新到 `.0` 图标并备份为 `releases\\shortcut-backups\\小黑封包助手_20260902_110415.lnk`。
+- 本轮仅在用户明确要求下修改了本机助手数据库并保留备份；未启动助手或模拟器、未注入、未抓包、未发送真实游戏封包。需要关闭可能已打开的旧窗口后，从该桌面快捷方式重新启动，ClickOnce 新版本和数据库中的两个独立预设才会由助手重新加载。
+
+## 2026-09-01 师门任务未命中白名单时改为取消封包
+
+- 修复 `ShimenTaskFlowEngine`：只要当前快照存在任务记录且没有命中师门采购白名单，就形成 `Cancel` 分支，不再因为读取到多条记录或 `canGiveUp=false` 直接停止；读取顺序中的第一条记录仅作为本轮日志和刷新指纹锚点，每轮只发送一次取消动作。
+- 白名单唯一命中仍执行 `Submit`，重复命中仍拒绝，空任务仍结束为 `None`；新增 `tests\ShimenTaskFlowHarness` 离线回归，覆盖上述 5 种判定/发送路径。
+- 本轮已完成 VS 2022 隔离构建、离线回归和签名本地 ClickOnce 热更新；发布目录 `releases\\2026.9.1.0` 共 204 个文件、其中 88 个 `.deploy` 文件，Release 构建 0 个错误，保留项目原有 4 条 `MSB3178` 警告。
+- `releases\\小黑封包助手.application`、版本目录内应用清单和部署清单均通过 `mage -Verify`；桌面快捷方式已更新到 `.0` 图标并备份为 `releases\\shortcut-backups\\小黑封包助手_20260901_140245.lnk`。
+- 本轮未启动助手、未操作游戏、未抓包、未发送真实封包；旧版本、数据库和配置均保留。需要关闭可能已打开的旧助手后，再从桌面快捷方式启动新版本。
+
+## 2026-08-31 师门任务地址锚点诊断接入与本地 ClickOnce 热更新（2026.8.31.3）
+
+- 已把师门任务只读读取器接入当前 PID/startTicks 绑定的 ELF/模块身份诊断；锚点证据只通过固定只读元数据命令获取，任务表读取、地址缓存和 fail-closed 约束保持不变。Android 端权限不足时只报告诊断状态，不升级为写内存、注入或发送。
+- 已生成签名本地 ClickOnce `releases\\2026.8.31.3`；Release 构建 0 个错误，保留项目原有 4 条 EasyHook `MSB3178` 警告。发布目录 204 个文件、其中 88 个 `.deploy` 文件；应用清单、版本部署清单和固定入口均通过 `mage -Verify`。
+- 固定入口 `releases\\小黑封包助手.application` 已更新到 `.3`；桌面快捷方式 `C:\\Users\\Administrator\\Desktop\\系统软件\\小黑封包助手.lnk` 已更新到 `.3` 图标，并备份为 `releases\\shortcut-backups\\小黑封包助手_20260831_220842.lnk`。
+- 发布后 `ReviewRegressionChecks`、指向新发布目录的 `UiDesignRegression -Configuration Release`、`ClickOnceUpdateRegression`、`AssistantManagementRegression`、PowerShell 7 下的 `ShimenTaskReaderRegression`（24/24）和 `git diff --check` 均通过；默认旧 Release 目录的 UI 回归因缺少新增类型失败，未作为新包结论。
+- 师门 Python 只读伴随脚本继续按现有架构位于 `F:\\项目目录\\飘渺游戏助手\\tools\\treasure-reader`，不复制进 ClickOnce 目录；当前固定路径文件均存在。此次未启动小黑封包助手、未启动游戏、未注入、未抓包、未发送真实封包；旧版本、数据库和配置均保留。
+
+## 2026-08-31 师门任务启动免口令与本地 ClickOnce 热更新（2026.8.31.2）
+
+- 按用户要求移除师门任务启动时的确认文本输入框；用户从助手首页或预设执行窗点击启动后，系统自动建立仅限本次运行的临时授权，不再要求输入 `SHIMEN-TASK-LIVE-SEND`。
+- 当前出站路由、四类封包模板、任务与采购目录绑定及发送前 fail-closed 校验保持不变；路由缺失、歧义、方向错误、模板异常或任务不一致时仍零发送。临时授权不写入预设或数据库，未携带授权的批量/远程调用方仍为只读预览。
+- 已生成签名本地 ClickOnce `releases\2026.8.31.2`；Release 构建 0 个错误，保留项目原有 4 条 EasyHook `MSB3178` 警告。版本目录应用清单、版本部署清单和固定入口清单均通过 `mage -Verify`。
+- 发布后 `ReviewRegressionChecks`、新发布目录上的 `UiDesignRegression`、`ClickOnceUpdateRegression`、`AssistantManagementRegression` 和 `git diff --check` 均通过；桌面快捷方式已更新到 `.2` 图标并备份为 `releases\shortcut-backups\小黑封包助手_20260831_161758.lnk`，状态为 `UpToDate`。
+- 本轮未启动小黑封包助手、未启动游戏、未注入、未抓包、未发送真实封包；旧版本、数据库和配置均保留。现在可从桌面快捷方式启动 `.2` 进入真实验收。
+
+## 2026-08-31 师门任务接线本地 ClickOnce 热更新（2026.8.31.1）
+
+- 已将当前师门任务接线源码生成签名本地 ClickOnce `releases\2026.8.31.1`；Release 构建 0 个错误，保留项目原有 4 条 EasyHook `MSB3178` 警告。
+- 发布目录共 204 个文件，其中 88 个 `.deploy` 文件；版本目录应用清单、版本部署清单和固定入口清单均通过 `mage -Verify`，版本号均为 `2026.8.31.1`，`WPELibrary.dll` 已随包包含。
+- 固定入口 `releases\小黑封包助手.application` 已更新到 `2026.8.31.1`；桌面快捷方式 `C:\Users\Administrator\Desktop\系统软件\小黑封包助手.lnk` 已更新并备份为 `releases\shortcut-backups\小黑封包助手_20260831_161000.lnk`，当前状态为 `UpToDate`。
+- 发布后 `ReviewRegressionChecks`、新发布目录上的 `UiDesignRegression -Configuration Release -BuildDirectory releases\2026.8.31.1`、`ClickOnceUpdateRegression`、`AssistantManagementRegression` 和 `git diff --check` 均通过；首次 UI 回归使用旧默认 Release 目录时因缺少新增类型失败，改指向新发布目录后通过。
+- 本轮未启动小黑封包助手、未启动游戏、未注入、未抓包、未发送真实封包；旧版本和数据库/配置均保留。重新启动前应先关闭可能已打开的旧窗口，再从桌面快捷方式加载新版本。
+
+## 2026-08-31 师门任务只读采购目录
+
+- 已保留“师门任务”机器人 GUID `D4912288-2316-42DE-A2B9-79B0657D9AF6`，将其放入新建的“未完成的任务”分组，并写入 6 条 `ShimenTask|1` 只读目录指令：400003 血烟石×3、400013 铁骨扇×1、400023 风水混元丹×3、400033 灵翅天香×3、400043 千年灵花×3、400053 引妖香×5；每条同时保存物品 ID和商人 ID。
+- 新增 `ShimenTaskPresetPlan` 编解码和中文显示；现有非空同名预设不会被内置修复覆盖。六条目录只触发一次运行预检，不会被当作六个连续执行步骤。
+- 已接入启动流程：`DoRobotAsync` 注入 `ShimenTaskAndroidSnapshotReader`，通过现有 Android Root broker 和 Python LuaJIT GC64 只读探针读取 `TaskMgr.m_TaskList`，不使用 OCR、截图、键鼠、写内存、注入或发包。读取结果必须绑定当前 PID 与 `startTicks`，无有效地址缓存或身份变化即停止。
+- 已接入 fail-closed 分支引擎：唯一命中 6 条白名单任务时形成“提交”计划；未命中时只有在任务列表恰好一条且 `canGiveUp=true` 已可靠解码时才形成“取消”计划；多任务、重复命中或字段不确定均停止。取消、提交、采购和重新领取的模板槽位现已全部录入；桌面助手启动入口已注入 `ShimenTaskSocketPacketSender`，但只有当前会话选中的出站路由和用户点击启动入口时生成的本次运行临时授权同时存在时才允许真实发送，缺任一条件仍由默认发送器保持不触碰 Socket。
+- 发送器每个动作前重新解析当前 `PacketType + PacketFrom + PacketTo` 路由，当前连接缺失、歧义、方向不符、模板校验失败或任务与采购目录不一致时，在 native send 前零发送。临时授权不弹出确认文本输入框，只存在本次运行参数中，不写入预设或数据库；批量、远程和未携带授权的调用方继续走只读预览路径。
+- 已加入循环占位状态机：白名单任务按“采购对应物品包 → 提交包 → 等待任务列表变化”执行；非白名单唯一可放弃任务按“取消包 → 重新领取包 → 等待刷新”执行；检测到空任务列表或明确的不可领取标记后结束。采购六项、提交、取消、重新领取共四类包位均按精确任务 ID/动作独立保存；已录入六个 26 字节采购包：`400043：千年灵花×3`、`400023：风水混元丹×3`、`400033：灵翅天香×3`、`400003：血烟石×3`、`400053：引妖香×5`、`400013：铁骨扇×1`（用户原消息将 400033 标注为“灵翼天香”，按包内 `27 12` 归位），以及通用“提交任务”65 字节包、“领取师门任务”29 字节包和“放弃师门任务”61 字节包。
+- 当前模拟器只读实测：PID `1917`、`startTicks=3987`，读取到 4 条任务（唯一命中 `400043`，列表槽位 4）。以 `DoRobotAsync` 调用开始为启动边界，启动到读到任务约 `3534.9 ms`，其中读取约 `3515.2 ms`；该计时不包含桌面 EXE 进程冷启动。
+- 写入前数据库备份为 `C:\WPE64Cache\小黑封包助手.before-shimen-task-preset-20260831-021613.db`；提交后 `PRAGMA integrity_check=ok`、外键检查 0 行，目标机器人 6 条指令均为 `Type=15`。隔离 Release 编译、目录编解码、指令校验、启动闸门、`AssistantManagementRegression`、`ReviewRegressionChecks` 和 `git diff --check` 均通过。
+- 本轮审查新增隔离构建、六包位长度/完整性校验，以及“采购→提交→刷新”和“取消→重新领取→刷新”离线回放，均通过；另验证了“授权存在但当前路由不存在”时发送字节数为 0。真实 Socket 发送器已经接线，但本轮仍未调用真实发送，真实动作验收需在加载包含本次改动的桌面版本后进行。
+- 本轮未发布 ClickOnce，未进行真实取消/提交、未抓包、未发送封包；当前桌面快捷方式所加载的旧版本不会包含本次接线，完整桌面 EXE 冷启动仍需单独计时，后续需明确授权热更新或使用本次构建后再做实机验收。
+
+## 2026-08-31 藏宝图与坐骑洗炼助手双槽并行与签名热更新（2026.8.31.0）
+
+- 桌面助手首页由单一活动助手改为按预设 RID 跟踪活动运行；并发策略只允许一个藏宝图助手与一个精确名称的坐骑洗炼助手同时运行。藏宝图对藏宝图、坐骑洗炼对坐骑洗炼、其他助手与任意活动助手仍互斥，混合了两类特征的异常预设按其他助手 fail-closed。
+- 两个活动按钮分别保持可见和可停止；完成事件按具体 Worker 只清理自己的运行槽。跨分组活动项会临时显示，结束后重新渲染当前分组；编辑、删除、分组、旧批量入口在任一助手活动或启动中时继续禁用，关闭主窗体会逐项请求停止所有活动助手。
+- `AutomationHomeRegression`、`AssistantManagementRegression`、`ReviewRegressionChecks`、隔离 Release `UiDesignRegression` 的真实程序集策略组合断言和 `git diff --check` 均通过；完整 Release 解决方案构建 0 错误，仅保留 4 条既有 EasyHook `MSB3178` 警告。
+- 本轮编码由用户指定的 GPT-5.6 Luna 代理完成，主代理复审后补强混合类型 fail-closed、跨分组完成清理和回归。已生成签名本地 ClickOnce `releases\2026.8.31.0`，共 204 个发布文件、88 个 `.deploy` 文件；应用清单、版本部署清单和稳定入口均通过 `mage -Verify`，版本均为 `2026.8.31.0`，公钥标识均为 `cfc7999435ada7fc`。Release 构建 0 错误，仅保留 4 条既有 EasyHook `MSB3178` 警告。
+- 固定入口 `releases\小黑封包助手.application` 已更新到 `.0`。`C:\Users\Administrator\Desktop\系统软件\小黑封包助手.lnk` 仍指向固定入口，图标已切换到 `.0`；旧快捷方式备份为 `releases\shortcut-backups\小黑封包助手_20260831_002636.lnk`。
+- 发布后 `AutomationHomeRegression`、`AssistantManagementRegression`、`ReviewRegressionChecks`、Release `UiDesignRegression`（指向新发布目录）、签名 `ClickOnceUpdateRegression`、三处 `mage -Verify` 和 `git diff --check` 均通过。UI 回归首次使用默认旧 Release 目录时因旧 DLL 缺少新增策略类型未通过，改用新发布目录参数重跑通过；不影响新包验证。
+- 发布前后均未检测到 `小黑封包助手` 进程；本轮未启动助手或模拟器、未注入、未抓包、未发送真实封包，真实游戏结果仍需用户从现有桌面快捷方式启动 `.0` 后验收。
+
+## 2026-08-30 三坐骑洗炼实例绑定修复与签名热更新（2026.8.30.5）
+
+- 最新结构化日志确认“三坐骑洗炼”预检已读取完整 21 张卡，以 `refine_selected` 绑定实例 `2092100442933833730`，并通过 A050 当前会话路由验收；旧 `.4` 运行仍在状态机初始校验阶段报 `mount_refine_current_ride_not_bound`，该次运行发送次数和发送字节均为 0。
+- `Socket_Robot` 现为精确名称“三坐骑洗炼”增加自己的 `SelectedRefineRideInstanceId` 入口，要求 A050 实例 ID、`activeRideInstanceId` 和 `refine_selected` 完全一致；四坐骑的既有独立入口保持不变，一、二坐骑未扩大匹配。
+- Release 测试新增目标/非目标隔离回归：三坐骑完成一次离线读取、发送接口、刷新和命中循环；二坐骑面对相同选中快照仍在发送前报 `mount_refine_current_ride_not_bound`，发送记录为 0。四坐骑原回归同时通过。
+- `MountSpeedRunnerHarness` 全部测试、`MountRefineCompleteFixRegression`、`ReviewRegressionChecks`、Release `UiDesignRegression`、完整 Release 解决方案构建和 `git diff --check` 均通过。Release 构建 0 错误，仅保留 4 条既有 EasyHook `MSB3178` 警告。
+- 已使用项目发布脚本生成签名本地 ClickOnce `releases\2026.8.30.5`，共 204 个文件、88 个 `.deploy` 文件；应用清单、版本部署清单和固定入口三处签名均有效，版本为 `.5`、公钥标识均为 `cfc7999435ada7fc`。Release 构建 0 错误，仅保留 4 条既有 EasyHook `MSB3178` 警告。
+- 固定入口 `releases\小黑封包助手.application` 已更新到 `.5`。现有 `C:\Users\Administrator\Desktop\系统软件\小黑封包助手.lnk` 保持指向固定入口并更新为 `.5` 图标；旧快捷方式备份为 `releases\shortcut-backups\小黑封包助手_20260830_222455.lnk`。
+- 发布后 `MountSpeedRunnerHarness` 全部测试、`MountRefineCompleteFixRegression`、`ReviewRegressionChecks`、Release `UiDesignRegression`、签名 `ClickOnceUpdateRegression`、三处 `mage -Verify` 和 `git diff --check` 均通过。发布时助手进程未运行；本轮未启动助手、操作模拟器、注入、抓包或发送真实封包，真实游戏结果仍需从现有桌面快捷方式启动 `.5` 后验收。
+
+## 2026-08-30 四坐骑洗炼实例绑定校验修复与签名热更新（2026.8.30.4）
+
+- 最新结构化日志确认“四坐骑洗炼”已在预检阶段读取完整 21 张卡、以 `refine_selected` 绑定专用实例 `2092100442933833731` 并通过当前 A050 出站协议验收，但 `MountRefineStateMachine` 的初始快照校验仍只接受 `isMounted=true + bound`，因此以 `mount_refine_current_ride_not_bound` 在发送前停止；该次运行 `send_result=0`、`bytesSent=0`。
+- 状态机现接受显式配置的 `SelectedRefineRideInstanceId`：必须同时满足 `rideBindingStatus=refine_selected` 和实例 ID 逐字一致。只有精确名称“四坐骑洗炼”的运行入口设置该配置；一、二、三坐骑未被扩大匹配，实例缺失或错配仍 fail-closed。
+- Release `MountSpeedRunnerHarness` 新增目标/非目标行为回归：四坐骑选中实例完成一次离线读、发送接口、刷新、命中循环；三坐骑面对相同 `refine_selected` 快照仍报 `mount_refine_current_ride_not_bound` 且发送记录为 0。`MountRefineCompleteFixRegression`、`ReviewRegressionChecks`、Release `UiDesignRegression`、签名 `ClickOnceUpdateRegression` 和 `git diff --check` 均通过。
+- 已生成签名本地 ClickOnce `releases\2026.8.30.4`，Release 构建 0 错误，仅保留 4 条既有 EasyHook `MSB3178` 警告；固定入口 `releases\小黑封包助手.application` 已更新。现有 `C:\Users\Administrator\Desktop\系统软件\小黑封包助手.lnk` 继续指向固定入口，图标更新到 `.4`，原快捷方式备份为 `releases\shortcut-backups\小黑封包助手_20260830_220345.lnk`。
+- 本轮未启动助手、未操作或重启模拟器、未注入、未抓包、未发送真实封包；真实游戏验收需用户从现有桌面快捷方式启动 `.4` 后执行“四坐骑洗炼”。
+
+## 2026-08-30 ClickOnce 组件缓存修复与签名热更新（2026.8.30.3）
+
+- 诊断确认桌面 `.appref-ms` 使用公钥标识 `cfc7999435ada7fc`，而旧固定入口和 `2026.8.30.2` 是未签名标识 `0000000000000000`；该身份不一致与安装提交阶段的 `0x800736B3` 相符。已使用 .NET 4.8 SDK 的 ClickOnce 缓存清理入口执行清理并返回成功；`Apps\2.0` 中仍存在物理残留文件，未手工删除，避免破坏组件存储索引。
+- 已生成签名本地 ClickOnce `releases\2026.8.30.3`，共 204 个文件、88 个 `.deploy` 文件；应用清单、版本部署清单和固定入口均通过 `mage -Verify`，三者版本和公钥标识均为 `.3` / `cfc7999435ada7fc`，固定入口依赖大小和 SHA-256 摘要与应用清单一致。旧 `releases\2026.8.30.2` 和 `C:\WPE64Cache\小黑封包助手.db` 保留未动。
+- 现有 `C:\Users\Administrator\Desktop\系统软件\小黑封包助手.lnk` 仍指向固定入口，图标已切换到 `.3`；原快捷方式备份为 `releases\shortcut-backups\小黑封包助手_20260830_214252.lnk`。桌面根目录只有 `.appref-ms`，其目标已核对为同一固定入口且公钥标识一致。
+- Release 构建 0 错误，仅保留 4 条既有 EasyHook `MSB3178` 警告；`ReviewRegressionChecks`、Release `UiDesignRegression`、`ClickOnceUpdateRegression`、清单审计和 `git diff --check` 均通过。本轮未启动助手、未注入、未抓包或发送真实封包；需从现有桌面快捷方式点击一次以完成实际首次激活验证。
+
+## 2026-08-30 三/四坐骑洗炼预设复制、目标读取与实例绑定
+
+- 已保留“三坐骑洗炼”GUID `4035C4AE-9EF3-4F59-84A1-514672159D93` 和“四坐骑洗炼”GUID `7258A346-31D0-4059-9B9A-41CAA37195DD` 的名称、分组、启用状态和授权状态；分别复制“一坐骑洗炼”“二坐骑洗炼”的完整 11 步 `MountSpeed|1|1..11` 指令及公共坐骑参数。目标预设保持独立，未建立 GUID 或策略联动。
+- 写入三坐骑目标前的数据库备份为 `C:\WPE64Cache\小黑封包助手.before-third-ride-target-20260830-181734.db`，写入四坐骑目标前的备份为 `C:\WPE64Cache\小黑封包助手.before-fourth-ride-target-20260830-195045.db`；本次实例绑定前另备份为 `C:\WPE64Cache\小黑封包助手.before-ride-instance-binding-20260830-210617.db`。
+- 通过只读 LuaJIT 内存读取器绑定三坐骑实例 `2092100442933833730`（`rideShapeId=9131`），返回完整 21 张卡；第一张卡片读取到高级枯木盘根（63111）、高级左右逢源（63119）、高级凌波微步（63120），成长率 `1.175`。该四项已写入“三坐骑洗炼”。
+- 通过只读 LuaJIT 内存读取器绑定四坐骑实例 `2092100442933833731`（`rideShapeId=9141`），返回完整 21 张卡；第一张卡片读取到高级乘奔御风（64103）、高级风激电飞（64101）、高级胡马驰骤（64102），成长率 `1.175`。该四项已写入“四坐骑洗炼”。
+- 数据库复核通过：三/四坐骑各 11 步且公共参数与来源一致，助手主记录、召唤兽记录和非目标预设未被改动，`PRAGMA integrity_check=ok`、`PRAGMA foreign_key_check` 为 0 行。源码已将四个精确坐骑洗炼名称接入同一识别入口，并保留目标不完整时的 fail-closed。
+- 已为四个预设分别写入经 A050 结构校验的 39 字节实例包：一号 `2092100442933833732`、二号 `2092100442933833729`、三号 `2092100442933833730`、四号 `2092100442933833731`。四个目标 JSON 的 3 个技能和成长率 `1.175` 保持正确，四个 `IsEnable=0`，GUID 与名称未变，主记录哈希和 11 条指令哈希均未变。绑定前发现当前表短暂缺少三/四两条坐骑参数行，已从已验证备份/既有目标记录恢复后再提交事务。
+- 本轮误触发的一号助手预检已在发送前因当前页未返回完整 21 张卡而 fail-closed；日志确认没有新的 A050 发送、没有写内存和没有炼化循环。当前旧版助手进程保持运行，未强制结束。
+- 已完成本地 ClickOnce 热更 `2026.8.30.2`：Release 构建 0 错误（保留 4 条既有 EasyHook `MSB3178` 警告），发布清单/依赖/映射文件、Release UI、Review、ClickOnce 和 `git diff --check` 校验通过。本次为未签名本地发布；现有 `C:\Users\Administrator\Desktop\系统软件\小黑封包助手.lnk` 已更新到固定入口并使用 `.2` 图标，快捷方式备份为 `releases\shortcut-backups\小黑封包助手_20260830_211411.lnk`。需关闭旧窗口后再点击该快捷方式，热更版本才会加载。
+
+## 2026-08-30 国子监藏宝图发送前置修复与热更新（2026.8.30.1）
+
+- 最新结构化运行日志确认 C6 识别正常，共处理 11 个目标，但每个 Jump 都在 native send 前被 `session_sequence_unavailable` 拦截，结果均为 `socket=0;bytes_sent=0;disposition=NotDispatched`，没有发送真实封包。
+- 数据库中的“国子监”GUID `95A4847B-D615-40C1-86DA-0686E0AFCC9C`、`Type=9` 连续藏宝图指令和发送授权均正常，`PRAGMA integrity_check=ok`。根因是该新预设未登记自己的发送策略，落回了严格模板/序号闸门。
+- 已为精确名称“国子监”增加独立策略工厂，允许它在当前路由和 Socket 重新校验通过后沿用复制来源的兼容发送边界；没有改动“紫零”或其他藏宝图预设，未登记名称仍保持严格策略。
+- `AssistantManagementRegression`、`TreasureC6StreamRegression`、`ReviewRegressionChecks`、Release `UiDesignRegression` 和完整 `git diff --check` 均通过；Release 构建为 0 错误，仅保留 4 条既有 EasyHook `MSB3178` 警告。程序集策略反射同时确认“国子监”为 `false/true`、“紫零”仍为 `false/true`，而非目标“国子监测试”为严格 `true/false`。
+- 已生成签名本地 ClickOnce `releases\2026.8.30.1`，固定入口 `releases\小黑封包助手.application` 已更新；应用清单、版本部署清单和全部发布文件依赖校验通过。
+- 已更新现有 `桌面\系统软件\小黑封包助手.lnk`，仍指向固定入口，图标切换到 `.1` 版本；旧快捷方式备份为 `releases\shortcut-backups\小黑封包助手_20260830_132659.lnk`。桌面根目录不存在标准快捷方式，未擅自创建。
+- 本轮未启动助手、未注入、未抓包或发送真实封包；需先关闭旧助手窗口，再从现有桌面快捷方式重新启动，修复才会加载，随后再进行实机验收。
+
+## 2026-08-30 国子监藏宝图预设独立复制
+
+- 用户已在助手的“挖宝”分组新建“国子监”。按现有数据库精确名称，“子零”对应“紫零”（GUID `113FC2F2-09C4-49C6-BA13-18465E095FFD`）；已将其 1 条 `Type=9`、`TREASURE_MAP_V2|mode=continuous` 指令复制到“国子监”（GUID `95A4847B-D615-40C1-86DA-0686E0AFCC9C`）。
+- 保留“国子监”自己的名称、GUID、`Folder=挖宝` 和 `IsEnable=False`，同步源预设的 `TreasureLiveSendAuthorized=True`；没有改动“紫零”或其他预设，也没有建立共享 GUID/联动关系。
+- 写入前已确认助手进程未运行（仅有模拟器宿主），数据库已备份为 `C:\WPE64Cache\小黑封包助手.db.backup-before-copy-guozijian-20260830-130441`；事务提交后 `PRAGMA integrity_check=ok`，源/目标指令逐项一致，非目标“一战倾城藏宝图”仍保持 1 条指令。
+- 本轮只修改用户数据库配置，未改源码、未生成新版本、未启动助手、未注入、未抓包或发送真实封包。重新打开助手后即可看到“国子监”；首次运行仍应按当前会话和发送闸门验收。
+
+## 2026-08-30 一战倾城藏宝图独立策略修复与热更新（2026.8.30.0）
+
+- 现场结构化日志确认 `一战倾城藏宝图` 的 C6 连接和目标识别正常，但当前注入会话没有可用序号；86 个目标的 Jump 全部在 native send 前被 `session_sequence_unavailable` 拦截，`bytes_sent=0`，未进入 AutoDig。
+- 藏宝图发送边界现按精确预设名称解析独立策略，不再通过一个共享兼容名单把多个预设绑在一起。“一战倾城藏宝图”拥有自己的模板/序号策略；“洛神赋”和“紫零”保留各自独立策略入口，后续修改其中一个不会自动扩大到其他预设。未登记特殊策略的藏宝图预设仍保持严格模板和序号闸门。
+- 正式 Release 构建为 0 错误，保留 4 条既有 EasyHook `MSB3178` 警告；`AssistantManagementRegression`、`TreasureC6StreamRegression`、`ReviewRegressionChecks`、Release `UiDesignRegression`、签名 `ClickOnceUpdateRegression` 和完整 `git diff --check` 已通过。
+- 已生成签名本地 ClickOnce `releases\2026.8.30.0`，共 204 个文件、88 个 `.deploy` 文件；应用清单、版本部署清单和固定入口均含签名，EXE/WPELibrary 及四处版本来源均为 `2026.8.30.0`。固定入口 `releases\小黑封包助手.application` 已更新。
+- 现有 `桌面\系统软件\小黑封包助手.lnk` 已保留固定入口并更新为 `.0` 图标，原快捷方式备份为 `releases\shortcut-backups\小黑封包助手_20260830_083626.lnk`；桌面根目录快捷方式不存在，未擅自创建。
+- 本轮未修改数据库，未启动或停止助手，未操作模拟器，未注入、抓包或发送真实封包。当前窗口仍是 `2026.8.29.1`；需由用户关闭旧助手后从现有桌面快捷方式启动 `.0`，再进行实机验收。
+
+## 2026-08-29 紫零藏宝图发送前置失败修复与热更新（2026.8.29.1）
+
+- 现场运行已确认 C6 握手和目标识别正常，当前连接与 Socket 解析也已通过；每次 Jump 都在 native send 前被 `session_sequence_unavailable` 拦截，因此 `bytes_sent=0`、游戏无动作。
+- 精确名称“紫零”现复用已有“洛神赋”的当前连接兼容发送器：仍在发送前重新解析当前路由和 Socket，有会话序号时继续正常递增；仅在当前会话没有序号时允许已编码 Jump 不虚构序号地进入现有发送边界。其他藏宝图预设保持严格模板和序号闸门。
+- 持续模式遇到 `Ambiguous`（包括 Hook 会话变化或发送结果不确定）现在立即结束并在 `finally` 释放独占控制器，不再把该目标标记为普通失败后继续显示运行；普通 `NotDispatched` 失败的既有跳过策略不变。
+- Debug WPELibrary、无发布清单的完整 Release 解决方案、Debug/Release `TreasureC6StreamRegression`、`AssistantManagementRegression`、`ReviewRegressionChecks`、Release `UiDesignRegression` 和 `git diff --check` 已通过；Release 仅保留 4 条既有 EasyHook `MSB3178` 警告。直接启用 ClickOnce 清单的普通 Release 构建因当前用户证书存储找不到签名证书而失败，正式热更新已按项目签名发布脚本成功完成。
+- 已生成签名本地 ClickOnce `releases\2026.8.29.1`，固定入口 `releases\小黑封包助手.application` 已更新；已有 `桌面\系统软件\小黑封包助手.lnk` 已指向固定入口和 `.1` 图标，备份为 `releases\shortcut-backups\小黑封包助手_20260829_234036.lnk`。桌面根目录标准 `.lnk` 不存在，未擅自新建。
+- 本轮未启动助手、未注入、未抓包、未发送真实游戏封包；当前旧模拟器进程仍在运行，需关闭旧助手窗口后从桌面固定入口重新启动 `.1`，再进行实机验收。
+
+## 2026-08-29 二坐骑洗炼预设接入
+
+- 保留数据库中现有“二坐骑洗炼”GUID `5348652D-87AC-4F0B-A0A9-E36AB7ECF77F`、名称、分组和禁用状态，完整 11 步与“一坐骑洗炼”相同。目标为高级蹑影追风（62119）、高级气贯长虹（62121）、高级梅花三弄（62102）和成长率 `1.175`。
+- 失败根因为旧的已安装 `2026.8.28.7` 未包含新增预设字段，保存数据库时擦除了 `RefinePacketHex`；同时旧读取只会绑定正在骑乘的一坐骑，无法把炼化页选中的二坐骑识别为当前 21 张卡对应的实例。
+- 二坐骑现从经严格 A050 结构校验的预设包取出 19 位实例 ID `2092100442933833729`，只有该 ID 唯一匹配 `LocalRide`、具有恰好 3 个当前技能、炼化页 `m_RideIns.m_RideId` 完全一致并读满 21 张卡时，才产生 `refine_selected` 快照；C# 桥接层再次核对实例 ID。未保存专用包的一坐骑仍走原有 `SHAPE + RIDEING` 绑定，其他发送、刷新等待、卡片变化和四项目标命中逻辑与一坐骑完全共用。
+- 数据库已恢复用户提供的 39 字节 A050，逐字节验证一致，数据库完整性为 `ok`；修复前备份为 `C:\WPE64Cache\小黑封包助手.before-second-ride-final-fix-20260829-220511.db`。
+- 已生成签名本地 ClickOnce `releases\2026.8.29.0`，固定入口 `releases\小黑封包助手.application` 已更新。现有桌面 `appref-ms` 和 `系统软件\小黑封包助手.lnk` 均指向该固定入口；桌面根目录的标准 `.lnk` 不存在，未擅自新建。
+- 主 Release 构建 0 错误，保留既有 4 条 EasyHook `MSB3178` 警告；隔离 WPELibrary Release 0 警告/0 错误。`MountSpeedRunnerHarness`、`MountRefineCompleteFixRegression`、`MountStatusLuaJitProbeRegression`、`ReviewRegressionChecks`、Release `UiDesignRegression`、签名 `ClickOnceUpdateRegression` 和 `git diff --check` 通过。本轮未启动助手、未注入、未抓包、未发送真实封包；实机验收需用户从固定入口启动新版本后进行。
+
+## 2026-08-28 坐骑炼化测试回退并热更新（2026.8.28.7）
+
+- 用户确认“两项命中”测试完成后，已从 `releases\backup-before-any-target-test-20260828-220141` 恢复原坐骑炼化核心源码和回归文件；当前恢复为同一张卡片必须同时命中成长率和 3 个目标技能，才允许停止。此前读取超时独立 120 秒上限、sequence/卡片变化校验和 fail-closed 安全边界均保留。
+- 当前 `.6` 两项测试状态另存于 `releases\backup-before-rollback-20260828-223024`，`.4`、`.5`、`.6` 发布目录及两项测试备份均保留，未删除或覆盖。
+- 已生成签名本地 ClickOnce `releases\2026.8.28.7`，固定入口 `releases\小黑封包助手.application` 已更新。主 Release 构建 0 错误、保留既有 4 条 EasyHook `MSB3178` 警告；隔离 WPELibrary Release、`MountSpeedRunnerHarness` 全部测试、`MountRefineCompleteFixRegression`、`ReviewRegressionChecks`、Release `UiDesignRegression`、签名 `ClickOnceUpdateRegression`、LuaJIT 探针回归和 `git diff --check` 均通过。
+- 桌面快捷方式 `C:\Users\Administrator\Desktop\小黑封包助手.lnk` 当前不存在，因此未创建或覆盖。本轮未由 Codex 启动助手、操作模拟器、注入、抓包或发送真实封包；若旧 `.6` 实例仍在运行，需先关闭后从固定入口启动 `.7`。
+
+## 2026-08-28 坐骑炼化任意两项目标命中临时测试（2026.8.28.6）
+
+- 当前测试规则改为：同一张卡片上的四项目标（成长率 + 3 个技能）中，任意两项命中即停止；仅命中一项不会停止。完整 21 张卡片快照、进程/会话/坐骑上下文一致、sequence 推进、卡片内容变化以及发送前后安全校验均未放宽。
+- 匹配保持技能一对一对应，支持“成长率 + 一个技能”或“两个技能”等组合；结果现在记录命中项数量和具体条件到界面、执行结果及结构化日志。
+- 当前 `.5` 任意一项测试版的源码、版本文件、固定入口、日志文件和相关回归文件已备份到 `releases\backup-before-two-target-test-20260828-221600`，备份文件 SHA-256 已校验；原 `.4` 全四项备份 `releases\backup-before-any-target-test-20260828-220141` 及 `.4`、`.5` 发布目录均保留。
+- 已生成签名本地 ClickOnce `releases\2026.8.28.6`，固定入口 `releases\小黑封包助手.application` 已更新。主 Release 构建 0 错误、保留既有 4 条 EasyHook `MSB3178` 警告；`MountSpeedRunnerHarness`、`MountRefineCompleteFixRegression`、`ReviewRegressionChecks`、Release `UiDesignRegression`、签名 `ClickOnceUpdateRegression`、LuaJIT 探针回归、隔离 WPELibrary Release 和 `git diff --check` 均通过。
+- 桌面快捷方式 `C:\Users\Administrator\Desktop\小黑封包助手.lnk` 当前不存在，因此未创建或覆盖。本轮仅完成源码/离线验证和本地发布，未由 Codex 启动助手、操作模拟器、注入、抓包或发送真实封包；`.6` 的实机结果待用户测试后记录。
+
+## 2026-08-28 坐骑炼化任意一项目标命中临时测试（2026.8.28.5）
+
+- 为测试技能/成长率命中准确性，当前坐骑炼化暂改为“成长率命中，或三个目标技能中的任意一个命中，即停止炼化”；完整 21 张卡片快照、进程/会话/坐骑上下文一致、sequence 推进、卡片内容变化和发送前后安全校验均未放宽。日志和界面会记录具体命中条件；该语义仅用于本轮实机测试，测试结束后必须回退。
+- 当前 `.4` 源码、版本文件、固定入口和相关回归文件已备份到 `releases\backup-before-any-target-test-20260828-220141`，备份文件 SHA-256 已校验；原 `releases\2026.8.28.4` 发布目录保留未动。
+- 已生成签名本地 ClickOnce `releases\2026.8.28.5`，固定入口 `releases\小黑封包助手.application` 已更新。发布构建 0 错误、保留既有 4 条 EasyHook `MSB3178` 警告；`MountSpeedRunnerHarness`、`MountRefineCompleteFixRegression`、`ReviewRegressionChecks`、Release `UiDesignRegression`、签名 `ClickOnceUpdateRegression`、LuaJIT 探针回归和隔离 Release 构建均通过。
+- 桌面快捷方式 `C:\Users\Administrator\Desktop\小黑封包助手.lnk` 当前不存在，因此未创建或覆盖。本轮由用户启动测试，`runId=61c63701-5c6b-4962-a186-4a14581338ba` 日志确认 A050 预检绑定成功，使用 `point` 路径读取到完整 21 张卡和 `sequence=2`；随后在发送前第 2 张卡命中成长率，状态为 `target_reached_before_send`，`matchedCardIndex=2`、`bytesSent=0`。这只验证了本地预检命中和安全停发，未验证发包后服务端业务接受；Codex 未操作模拟器、未注入、未抓包、未发送真实封包。`Accepted` 仅表示本地发送接口接受，不等于服务端业务成功。
+
+## 2026-08-28 坐骑炼化读取超时重启循环修复并热更新（2026.8.28.4）
+
+- `2026.8.28.3` 实机运行 `2de0662c-4577-474a-b56d-fc4a0303c1a8` 在第 7 次发送后仍保持单次发送，最后一次成功快照为 21:10:08；从 21:10:09 起全部进入 fallback，但每次读取都被 2.8 秒上限取消，长驻 Python 探针 PID 持续轮换，直到 21:20:28 用户手动停止并以 `UserStopped` 结束。期间手动炼化未被识别，也没有触发额外自动发送。
+- 根因是 3 秒刷新确认窗口把完整安全发现读取强制截断为最多 2.8 秒；探针被取消后，已提交给单线程 Root broker 的命令仍需自行结束，新探针随即再次撞上同一个短超时，形成取消、杀进程、重启循环。单次快照读取现改为独立 120 秒上限，不再受确认窗口剩余时间截断；3 秒窗口只用于等待日志和重试分段。真实读取失败、上下文变化、不完整快照、手动取消和“不重发”语义保持不变。
+- 新增“40ms 确认窗口、100ms 有效慢读取”的回归，证明读取不会被短窗口取消，仍只发送 1 次并正常命中；手动停止回归约 361ms 内结束。`MountRefineCompleteFixRegression`、`ReviewRegressionChecks`、LuaJIT 探针回归、`MountSpeedRunnerHarness` 全部通过，WPELibrary 隔离 Release 重建 0 错误。
+- 已使用项目现有发布脚本生成签名本地 ClickOnce `releases\2026.8.28.4`，固定入口 `releases\小黑封包助手.application` 已更新；旧发布、SQLite 数据库和用户配置保留。桌面快捷方式检查为不存在，因此未创建或覆盖。
+- 发布后 `ReviewRegressionChecks`、Release `UiDesignRegression`、签名 `ClickOnceUpdateRegression`、`MountRefineCompleteFixRegression`、LuaJIT 探针回归、隔离 WPELibrary Release 和 `git diff --check` 均通过；主发布构建保留既有 4 条 EasyHook `MSB3178` 警告、0 错误。未启动助手、未重启或操作模拟器、未注入、未抓包、未发送真实封包；需从固定入口重新启动后再做真实只读/炼化验收。
+
+## 2026-08-28 坐骑炼化 sequence 未推进过早停止修复并热更新（2026.8.28.3）
 
 - 新版本实机日志显示，发送后读取仍为完整 21 张卡且进程、会话和坐骑上下文未变，但 sequence 暂未推进；旧状态机把该合法等待态包装为 `mount_refine_snapshot_sequence_not_advanced` 读取失败，导致在第 9、19、2 次发送后过早停止。
 - `MountRefineStateMachine` 现在固定发送前快照为本轮基线。候选必须同时满足同 PID/startTicks/session/mount/activeRide、快照有效且完整 21 张卡、sequence 严格高于发送前基线，并且卡片内容相对发送前基线确实变化，才允许进入 verify、目标判断和下一轮。sequence 未推进，或 sequence 已推进但卡片内容仍未变化，分别写入有界 `snapshot_sequence_wait` / `snapshot_content_wait` 日志并继续可取消等待，不做目标匹配、不重发；同一推进序号下稍后出现真实卡片变化仍可恢复。真实读取失败、上下文变化、不完整快照和取消仍分别保持 fail-closed 或 `UserStopped`。
 - `MountSpeedRunnerHarness` 新增 point、fast、fallback 三路径的连续旧序号等待、sequence 已推进但卡片未变、随后同序号卡片变化恢复、等待中间态保持单次发送、等待取消、真实读取失败、换坐骑和不完整卡片回归；Python 探针路径回归、`MountRefineCompleteFixRegression`、`ReviewRegressionChecks`、隔离 WPELibrary Release、harness Release 和整套解决方案 Release 构建均通过。`git diff --check` 仍只报告本轮之前 `WPELibrary/Lib/Socket_Cache.cs:11206` 的尾随空格。
-- 本轮未发布 ClickOnce，未启动或停止助手，未操作游戏，未注入、未抓包、未发送真实封包；需关闭旧助手并用源码对应版本进行实机复测，确认真实 sequence 延迟后的恢复行为。
+- 已使用项目现有发布脚本生成签名本地 ClickOnce `releases\2026.8.28.3`，固定入口 `releases\小黑封包助手.application` 已更新；旧发布、SQLite 数据库和用户配置保留。
+- 发布后 `ReviewRegressionChecks`、Release `UiDesignRegression`、签名 `ClickOnceUpdateRegression`、`MountRefineCompleteFixRegression`、LuaJIT 探针回归、`MountSpeedRunnerHarness` 和隔离 Release 构建均通过；主解决方案 Release 构建 0 个错误，保留既有 4 条 EasyHook `MSB3178` 警告。
+- 桌面快捷方式预览显示 `C:\Users\Administrator\Desktop\小黑封包助手.lnk` 不存在，因此未创建或覆盖；本轮未启动助手、未操作游戏、未注入、未抓包、未发送真实封包。需从固定入口重新启动后，2026.8.28.3 才会加载并实测真实 sequence 延迟后的恢复行为。
 
 ## 2026-08-28 坐骑炼化提速及既有工作区改动本地 ClickOnce 热更新（2026.8.28.2，重新执行）
 
@@ -1681,3 +2113,21 @@
 - 炼化配置入口已从 `Injector_Form` 移除，统一放到 `Socket_RobotForm` 的“助手页 → 装备炼化预设”页签；选择预设或点击“打开总炼化设置”会打开 `EquipmentRefinePresetEditor`，保存后回写当前助手并调用现有 `SaveRobotList_ToDB()`，不启动炼化、不注入、不发送封包。
 - 总设置页的规则表改为固定属性/比较项：比较符只提供 `>=` 和 `=`；目标值为整数手动输入，百分比只填写数字，例如 `2` 保存为协议单位 `2`，对应 `2.0%`。预设加载、克隆、计划编解码和运行配置继续对未知属性、非法比较符、重复规则及 K/N 失败关闭。
 - 本轮独立验证：`EquipmentRefineRunnerHarness` 重建并运行 `PASS (42 tests)`；WPELibrary Debug Rebuild 通过；主程序 Debug Rebuild（`SignManifests=false`）通过，保留 4 个既有 `MSB3178` 警告。未执行真实游戏操作或发送封包。
+
+## 2026-09-25 LangSmith tracing
+
+- Python vision worker is configured to trace JSONL requests to `my-first-agent` when its API key is present in `%LOCALAPPDATA%\XNAS\WPE\vision-worker\langsmith.env`, outside the Git checkout.
+- Trace inputs and outputs are filtered to the worker method, boolean status flags, and elapsed time; screenshot data, OCR text, action coordinates, and authorization tokens are excluded.
+- Local syntax, dependency, redaction, and synthetic worker-ping checks pass; first remote trace is pending an API key in the local config file.
+
+## 2026-09-27 伙伴属性内存测试
+
+- 新增 tools/mount-reader/partner_panel_memory_test.py：按 HpMax、Atk、Speed 三项同时匹配当前面板，定位单一 LuaJIT 动态表；scan 只读，set 默认 dry-run，实际单次写入必须显式传 --write 并生成本地恢复 journal，restore 只在进程身份、表快照和当前 TValue 均匹配时恢复。
+- UI 字段依据 PartnerAttrView.GetPartnerDynamicInfo 调用链确认。已加入 WPE 输出内容项，离线回归覆盖 dry-run、单次写入、恢复、歧义拒绝和整数 TValue 编码。
+- LuaJIT GC/rehash 与 /proc/PID/mem 之间仍有无法消除的线程竞争。emulator-5554 的 com.gdoo.dhxy 曾与截图页吻合；PID 1664 扫描到 HpMax/Atk/Speed 各 2 个前驱值等于截图值的引用，并验证出两组 24 字节步长节点（每组都含三项），但 1 MiB 局部范围仍未找到父表，无法区分并校验唯一动态表，未执行真实内存写入。随后进程重启为 PID 1777；首次复扫时停在“技脉”页，截图三值匹配引用均为 0；旧地址已作废。设备安装 APK 哈希与静态分析用的新大话西游.apk 不同；线上/服务端属性行为未验收。
+- 用户恢复截图中的青衣仙子“属性”页后，PID 1777 的新只读扫描再次找到 HpMax/Atk/Speed 各 2 个原值引用，仍是两组同布局候选节点，局部父表命中均为 0；没有可唯一绑定到所选青衣仙子的 LuaJIT 表，因此未执行真实内存写入。
+- 修复该工具在 Android su shell 上的二进制读取：指定 `toybox dd` 并用 Base64 传输，避免 `0x0A` 被 shell 转成换行。PID 1777 退出后，PID 1681 的首次 set 扫描时游戏停在“技脉”页，未得到恰好一张三值匹配表而安全拒绝，未写内存、未生成 journal。
+- restore 改为按 journal 的进程身份、表地址、节点地址和完整 TValue 快照定点重验，不再额外扫描整个进程；面板与底层传输回归通过。用户切回青衣仙子“属性”页后，唯一表校验通过，现场仅将 HpMax 从 23818 写到 23819，工具立即读回验证并按 journal 恢复到 23818；恢复读回成功，最终截屏也显示气血 23818、攻击 2072、速度 158。该验证仅覆盖当前 Android 进程的内存写入/恢复，未验证服务端同步或业务结果。
+- 后续按用户要求在 PID 1681 的同一面板将 Speed 从 158 改为 10000；唯一表校验和写后读回均成功。此次修改按要求暂留供用户测试，恢复记录位于本机 `%LOCALAPPDATA%\Temp\partner-panel-speed-10000-20260927-wpe.json`，用户测试完成后可用原值 158 恢复。
+- 普通 su 持久 shell 仅在返回块数完整但存在短块时，扫描才关闭该会话并切换到逐块 Base64 的 exec-out 回退；关闭会话、异常或缺块直接 fail-closed。回退验证行数与解码长度，仍不完整即中止；root-broker/run-as 不跨通道回退。新增 0x0A/0x0D 数据及不完整 shell 批次回退回归。
+- 按用户后续请求，PID 1681 的伙伴属性表 HpMax 已由 23818 写为 1000000；Speed 10000、Atk 2072 保持。写后读回及 HP journal dry-run 成功，按请求暂留供测试；对应恢复 journal 为本机 `%LOCALAPPDATA%\Temp\partner-panel-hp-1000000-20260927-wpe.json`。因 journal 校验完整三值快照，后续恢复时须按修改的反序先还原 HP，再还原 Speed。该现场验证不代表服务端同步。

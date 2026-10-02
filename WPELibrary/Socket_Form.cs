@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
 using System.IO;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -12,9 +13,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml.Linq;
+using Newtonsoft.Json.Linq;
 using WPELibrary.Lib;
 using WPELibrary.Lib.EquipmentRefine;
 using WPELibrary.Lib.NativeMethods;
+using WPELibrary.Lib.TypeSafe;
 using WPELibrary.Lib.Vision;
 using WPELibrary.TextComparison;
 
@@ -52,6 +55,7 @@ namespace WPELibrary
         private ToolStripMenuItem cmsSendFolderMoveUp;
         private ToolStripMenuItem cmsSendFolderMoveDown;
         private ToolStripMenuItem cmsSocketListPacketDetails;
+        private ToolStripMenuItem cmsSocketListJevAnalyze;
         private ToolStripMenuItem cmsSocketListShowOnlyHeader;
         private ToolStripMenuItem cmsHexBox_DynamicVariable;
         private ToolStripMenuItem cmsHexBox_AddDynamicField;
@@ -70,6 +74,8 @@ namespace WPELibrary
         private GroupBox gbReadableContent;
         private Label lReadableContentMeta;
         private RichTextBox rtbReadableContent;
+        private CancellationTokenSource jevAnalysisCancellation;
+        private int jevAnalysisVersion;
         private bool robotSettingsPageActive;
         private ToolStripDropDownButton tsRobotListMore;
         private ToolStripDropDownButton tsFilterListMore;
@@ -88,8 +94,22 @@ namespace WPELibrary
         private ToolStripMenuItem cmsAssistantButtonMoveToGroup;
         private ContextMenuStrip cmsRobotFolder;
         private string selectedRobotFolder = "常用";
-        private Socket_Robot activeAssistantRobot;
-        private Guid activeAssistantRobotId = Guid.Empty;
+        private sealed class ActiveAssistantRun
+        {
+            public ActiveAssistantRun(Guid robotId, Socket_Robot robot, AssistantRunKind kind)
+            {
+                this.RobotId = robotId;
+                this.Robot = robot;
+                this.Kind = kind;
+            }
+
+            public readonly Guid RobotId;
+            public readonly Socket_Robot Robot;
+            public readonly AssistantRunKind Kind;
+        }
+
+        private readonly Dictionary<Guid, ActiveAssistantRun> activeAssistantRuns =
+            new Dictionary<Guid, ActiveAssistantRun>();
         private Guid assistantStartingRobotId = Guid.Empty;
         private bool assistantStartPending;
         private Socket_RobotInfo assistantMoveSourceRobot;
@@ -737,7 +757,7 @@ namespace WPELibrary
             this.cmsRobotFolder.Items.Add(UiText("UI_DeleteGroup"), null, this.DeleteRobotFolder_Click);
             this.cmsRobotFolder.Opening += delegate(object sender, CancelEventArgs e)
             {
-                e.Cancel = this.activeAssistantRobot != null;
+                e.Cancel = this.HasActiveAssistantRuns;
             };
             this.tvRobotFolders.ContextMenuStrip = this.cmsRobotFolder;
 
@@ -815,7 +835,7 @@ namespace WPELibrary
 
         private void cmsAssistantButton_Opening(object sender, CancelEventArgs e)
         {
-            if (this.activeAssistantRobot != null)
+            if (this.HasActiveAssistantRuns || this.assistantStartPending)
             {
                 e.Cancel = true;
                 return;
@@ -873,7 +893,8 @@ namespace WPELibrary
             }
             this.assistantMoveSourceRobot = null;
             string folder = item == null ? string.Empty : item.Tag as string;
-            if (robot == null || string.IsNullOrWhiteSpace(folder) || this.activeAssistantRobot != null)
+            if (robot == null || string.IsNullOrWhiteSpace(folder) ||
+                this.HasActiveAssistantRuns || this.assistantStartPending)
             {
                 return;
             }
@@ -952,7 +973,9 @@ namespace WPELibrary
             this.tlpAssistantButtons.Controls.Clear();
             this.assistantButtons.Clear();
             List<Socket_RobotInfo> robots = Socket_Cache.RobotList.lstRobot
-                .Where(robot => string.Equals(robot.RFolder, this.selectedRobotFolder, StringComparison.Ordinal))
+                .Where(robot =>
+                    string.Equals(robot.RFolder, this.selectedRobotFolder, StringComparison.Ordinal) ||
+                    this.activeAssistantRuns.ContainsKey(robot.RID))
                 .ToList();
             this.tlpAssistantButtons.RowCount = Math.Max(1, (robots.Count + 4) / 5);
             this.tlpAssistantButtons.RowStyles.Clear();
@@ -1010,16 +1033,27 @@ namespace WPELibrary
             {
                 return;
             }
-            if (this.activeAssistantRobot != null)
+            ActiveAssistantRun activeRun;
+            if (this.activeAssistantRuns.TryGetValue(robot.RID, out activeRun))
             {
-                if (this.activeAssistantRobotId == robot.RID)
-                {
-                    this.activeAssistantRobot.StopRobot();
-                }
+                activeRun.Robot.StopRobot();
+                return;
+            }
+
+            if (this.bgwRobotList.IsBusy)
+            {
                 return;
             }
 
             if (this.assistantStartPending)
+            {
+                return;
+            }
+
+            AssistantRunKind candidateKind = GetAssistantRunKind(robot);
+            if (!AssistantRunConcurrencyPolicy.CanStart(
+                this.activeAssistantRuns.Values.Select(run => run.Kind),
+                candidateKind))
             {
                 return;
             }
@@ -1067,8 +1101,10 @@ namespace WPELibrary
                 return;
             }
 
+            bool hasShimenTaskInstruction = HasShimenTaskInstruction(robot);
             Dictionary<string, object> parameters = hasTreasureMapInstruction ||
-                hasEquipmentRefineInstruction
+                hasEquipmentRefineInstruction ||
+                hasShimenTaskInstruction
                 ? new Dictionary<string, object>
                 {
                     { "TreasureLiveSendEnabled", robot.TreasureLiveSendAuthorized }
@@ -1097,6 +1133,40 @@ namespace WPELibrary
                     }
                 }
             }
+            if (hasShimenTaskInstruction)
+            {
+                ShimenTaskPacketTemplateSlots packetSlots =
+                    new ShimenTaskPacketTemplateSlots();
+                if (!packetSlots.IsComplete)
+                {
+                    Socket_Operation.ShowMessageBox(
+                        "师门任务封包模板不完整，已停止启动。\r\n请先补齐六项采购包以及提交、取消、领取包。\r\n"
+                        + "不会发送任何封包。");
+                    return;
+                }
+
+                ShimenTaskSocketRouteTemplate routeTemplate;
+                string routeError;
+                if (!ShimenTaskSocketRouteTemplate.TryCreate(
+                        Socket_Cache.SocketList.spiSelect,
+                        out routeTemplate,
+                        out routeError))
+                {
+                    Socket_Operation.ShowMessageBox(
+                        "师门任务真实发送需要先在当前注入会话选择一条出站封包。\r\n"
+                        + "请确认已抓到游戏出站包，并在封包列表中选中它。\r\n"
+                        + "当前未发送任何封包。\r\n原因：" + routeError);
+                    return;
+                }
+
+                ShimenTaskLiveSendAuthorization authorization =
+                    ShimenTaskLiveSendAuthorization.CreateForInteractiveStart();
+
+                parameters["ShimenTaskPacketTemplateSlots"] = packetSlots;
+                parameters["ShimenTaskSocketRouteTemplate"] = routeTemplate;
+                parameters["ShimenTaskLiveSendAuthorizationToken"] = authorization;
+                parameters["ShimenTaskLiveSendAuthorization"] = true;
+            }
             if (HasVisionSystemInputAction(robot))
             {
                 DialogResult confirmation = MessageBox.Show(
@@ -1121,6 +1191,7 @@ namespace WPELibrary
             this.assistantStartPending = true;
             this.assistantStartingRobotId = robot.RID;
             this.UpdateAssistantButtonState();
+            this.UpdateRobotToolbarState();
             try
             {
                 // 普通机器人按现有游戏连接启动；藏宝图指令执行到自身时再懒加载 C6。
@@ -1135,8 +1206,10 @@ namespace WPELibrary
                     return;
                 }
 
-                this.activeAssistantRobot = running;
-                this.activeAssistantRobotId = robot.RID;
+                this.activeAssistantRuns[robot.RID] = new ActiveAssistantRun(
+                    robot.RID,
+                    running,
+                    candidateKind);
                 running.Worker.RunWorkerCompleted += this.AssistantRobot_RunWorkerCompleted;
                 if (!running.Worker.IsBusy)
                 {
@@ -1149,6 +1222,7 @@ namespace WPELibrary
                 this.assistantStartPending = false;
                 this.assistantStartingRobotId = Guid.Empty;
                 this.UpdateAssistantButtonState();
+                this.UpdateRobotToolbarState();
             }
         }
 
@@ -1177,6 +1251,105 @@ namespace WPELibrary
             }
 
             return false;
+        }
+
+        private static bool HasShimenTaskInstruction(Socket_RobotInfo robot)
+        {
+            if (robot == null || robot.RInstruction == null ||
+                !robot.RInstruction.Columns.Contains("Type"))
+            {
+                return false;
+            }
+
+            foreach (System.Data.DataRow row in robot.RInstruction.Rows)
+            {
+                try
+                {
+                    if (Convert.ToInt32(row["Type"]) ==
+                        (int)Socket_Cache.Robot.InstructionType.ShimenTask)
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // The normal robot validator reports malformed instruction rows.
+                }
+            }
+
+            return false;
+        }
+
+        private bool HasActiveAssistantRuns
+        {
+            get { return this.activeAssistantRuns.Count > 0; }
+        }
+
+        private static AssistantRunKind GetAssistantRunKind(Socket_RobotInfo robot)
+        {
+            return AssistantRunConcurrencyPolicy.Classify(
+                HasTreasureMapInstruction(robot) ||
+                    (robot != null && string.Equals(
+                        (robot.RName ?? string.Empty).Trim(),
+                        Socket_Cache.Robot.TreasureMapPresetName,
+                        StringComparison.Ordinal)),
+                robot != null && Socket_Cache.Robot.IsRideRefinePresetName(robot.RName),
+                HasOnlyMountSpeedHoldInstruction(robot),
+                HasOnlyDelayInstructions(robot));
+        }
+
+        private static bool HasOnlyMountSpeedHoldInstruction(Socket_RobotInfo robot)
+        {
+            if (robot == null || robot.RInstruction == null ||
+                !robot.RInstruction.Columns.Contains("Type") ||
+                robot.RInstruction.Rows.Count != 1)
+            {
+                return false;
+            }
+
+            try
+            {
+                return Convert.ToInt32(robot.RInstruction.Rows[0]["Type"]) ==
+                    (int)Socket_Cache.Robot.InstructionType.MountSpeedHold;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool HasOnlyDelayInstructions(Socket_RobotInfo robot)
+        {
+            if (robot == null || robot.RInstruction == null ||
+                !robot.RInstruction.Columns.Contains("Type") ||
+                robot.RInstruction.Rows.Count == 0)
+            {
+                return false;
+            }
+
+            bool hasDelay = false;
+            foreach (System.Data.DataRow row in robot.RInstruction.Rows)
+            {
+                try
+                {
+                    int type = Convert.ToInt32(row["Type"]);
+                    if (type == (int)Socket_Cache.Robot.InstructionType.Delay)
+                    {
+                        hasDelay = true;
+                    }
+                    else if (type != (int)Socket_Cache.Robot.InstructionType.LoopStart &&
+                        type != (int)Socket_Cache.Robot.InstructionType.LoopEnd)
+                    {
+                        return false;
+                    }
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            return hasDelay;
         }
 
         private static bool HasEquipmentRefineInstruction(Socket_RobotInfo robot)
@@ -1247,7 +1420,7 @@ namespace WPELibrary
             ToolStripItem item = sender as ToolStripItem;
             Button button = item == null ? sender as Button : this.cmsAssistantButton.SourceControl as Button;
             Socket_RobotInfo robot = button == null ? null : button.Tag as Socket_RobotInfo;
-            if (robot != null && this.activeAssistantRobot == null && !this.assistantStartPending)
+            if (robot != null && !this.HasActiveAssistantRuns && !this.assistantStartPending)
             {
                 Socket_Operation.ShowRobotForm_Dialog(robot);
                 this.RefreshAssistantFolders();
@@ -1259,7 +1432,7 @@ namespace WPELibrary
             ToolStripItem item = sender as ToolStripItem;
             Button button = item == null ? sender as Button : this.cmsAssistantButton.SourceControl as Button;
             Socket_RobotInfo robot = button == null ? null : button.Tag as Socket_RobotInfo;
-            if (robot == null || this.activeAssistantRobot != null)
+            if (robot == null || this.HasActiveAssistantRuns || this.assistantStartPending)
             {
                 return;
             }
@@ -1310,15 +1483,17 @@ namespace WPELibrary
                 return;
             }
 
-            if (this.activeAssistantRobot != null && ReferenceEquals(sender, this.activeAssistantRobot.Worker))
+            ActiveAssistantRun completedRun = this.activeAssistantRuns.Values
+                .FirstOrDefault(run => run != null && run.Robot != null &&
+                    ReferenceEquals(sender, run.Robot.Worker));
+            if (completedRun != null)
             {
-                Socket_Robot completedRobot = this.activeAssistantRobot;
-                Guid completedRobotId = this.activeAssistantRobotId;
+                Socket_Robot completedRobot = completedRun.Robot;
+                Guid completedRobotId = completedRun.RobotId;
                 Socket_RobotInfo completedRobotInfo = Socket_Cache.RobotList.lstRobot
                     .FirstOrDefault(item => item != null && item.RID == completedRobotId);
-                this.activeAssistantRobot = null;
-                this.activeAssistantRobotId = Guid.Empty;
-                this.UpdateAssistantButtonState();
+                this.activeAssistantRuns.Remove(completedRobotId);
+                this.RenderAssistantButtons();
 
                 Socket_Robot.TreasureMapRunState treasureState =
                     completedRobot.GetTreasureMapRunState();
@@ -1375,22 +1550,31 @@ namespace WPELibrary
                             completedRobot.LastRunFailureReason));
                 }
             }
+
+            this.UpdateRobotToolbarState();
         }
 
         private void UpdateAssistantButtonState()
         {
-            bool assistantRunning = this.activeAssistantRobot != null;
+            bool assistantRunning = this.HasActiveAssistantRuns;
+            bool batchRunning = this.bgwRobotList.IsBusy;
             foreach (KeyValuePair<Guid, Button> pair in this.assistantButtons)
             {
-                bool active = pair.Key == this.activeAssistantRobotId && assistantRunning;
+                bool active = this.activeAssistantRuns.ContainsKey(pair.Key);
                 bool starting = pair.Key == this.assistantStartingRobotId && this.assistantStartPending;
-                bool enabled = !this.assistantStartPending && (!assistantRunning || active);
                 Socket_RobotInfo robot = pair.Value.Tag as Socket_RobotInfo;
                 string robotName = robot == null ? string.Empty : robot.RName;
+                AssistantRunKind candidateKind = GetAssistantRunKind(robot);
+                bool compatible = !assistantRunning ||
+                    AssistantRunConcurrencyPolicy.CanStart(
+                        this.activeAssistantRuns.Values.Select(run => run.Kind),
+                        candidateKind);
+                bool enabled = !this.assistantStartPending && !batchRunning && (active || compatible);
+                bool visible = active || starting || compatible;
                 string stateText = starting
                     ? UiText("ByteSweep_LogStarting")
                     : active ? UiText("ByteSweep_LogRunning") : robotName;
-                pair.Value.Visible = !assistantRunning || active;
+                pair.Value.Visible = visible;
                 pair.Value.Enabled = enabled;
                 pair.Value.BackColor = active
                     ? Color.FromArgb(255, 223, 124)
@@ -1434,7 +1618,7 @@ namespace WPELibrary
 
         private void AddRobotFolder_Click(object sender, EventArgs e)
         {
-            if (this.activeAssistantRobot != null)
+            if (this.HasActiveAssistantRuns)
             {
                 return;
             }
@@ -1465,7 +1649,7 @@ namespace WPELibrary
 
         private void RenameRobotFolder_Click(object sender, EventArgs e)
         {
-            if (this.activeAssistantRobot != null)
+            if (this.HasActiveAssistantRuns)
             {
                 return;
             }
@@ -1514,7 +1698,7 @@ namespace WPELibrary
 
         private void MoveRobotFolderUp_Click(object sender, EventArgs e)
         {
-            if (this.activeAssistantRobot != null)
+            if (this.HasActiveAssistantRuns)
             {
                 return;
             }
@@ -1534,7 +1718,7 @@ namespace WPELibrary
 
         private void MoveRobotFolderDown_Click(object sender, EventArgs e)
         {
-            if (this.activeAssistantRobot != null)
+            if (this.HasActiveAssistantRuns)
             {
                 return;
             }
@@ -1554,7 +1738,7 @@ namespace WPELibrary
 
         private void DeleteRobotFolder_Click(object sender, EventArgs e)
         {
-            if (this.activeAssistantRobot != null)
+            if (this.HasActiveAssistantRuns)
             {
                 return;
             }
@@ -1768,6 +1952,16 @@ namespace WPELibrary
 
             int sendIndex = this.cmsSocketList.Items.IndexOf(this.cmsSocketList_Send);
             this.cmsSocketList.Items.Insert(sendIndex + 1, this.cmsSocketListPacketDetails);
+
+            this.cmsSocketListJevAnalyze = new ToolStripMenuItem
+            {
+                Name = "cmsSocketList_JevAnalyze",
+                Text = UiText("UI_JevAnalyze"),
+                ImageScaling = ToolStripItemImageScaling.None
+            };
+            this.cmsSocketList.Items.Insert(
+                this.cmsSocketList.Items.IndexOf(this.cmsSocketListPacketDetails) + 1,
+                this.cmsSocketListJevAnalyze);
 
             this.cmsSocketListShowOnlyHeader = new ToolStripMenuItem
             {
@@ -2784,6 +2978,7 @@ namespace WPELibrary
 
         private void Socket_Form_FormClosing(object sender, FormClosingEventArgs e)
         {
+            this.CancelJevAnalysis();
             this.CommitPacketDataEdits();
             this.StopByteSweep();
             this.SaveConfigs_Parameter();
@@ -2840,6 +3035,14 @@ namespace WPELibrary
             {
                 WPELibrary.Lib.WebAPI.MobileSendRuntime.Stop();
                 WPELibrary.Lib.WebAPI.MobileAssistantRuntime.Stop();
+
+                foreach (ActiveAssistantRun assistantRun in this.activeAssistantRuns.Values.ToList())
+                {
+                    if (assistantRun != null && assistantRun.Robot != null)
+                    {
+                        assistantRun.Robot.StopRobot();
+                    }
+                }
 
                 foreach (Socket_Send manualSend in this.manualSendOperations.Values.ToList())
                 {
@@ -3718,6 +3921,8 @@ namespace WPELibrary
 
         private void ReleasePacketDataEditor()
         {
+            this.CancelJevAnalysis();
+
             IByteProvider provider = hbPacketData.ByteProvider;
             if (provider != null)
             {
@@ -4862,7 +5067,7 @@ namespace WPELibrary
                 if (e.RowIndex >= 0 && e.ColumnIndex >= 0 &&
                     dgvRobotList.Columns[e.ColumnIndex] is DataGridViewCheckBoxColumn)
                 {
-                    if (this.bgwRobotList.IsBusy || this.activeAssistantRobot != null ||
+                    if (this.bgwRobotList.IsBusy || this.HasActiveAssistantRuns || this.assistantStartPending ||
                         e.RowIndex >= Socket_Cache.RobotList.lstRobot.Count)
                     {
                         return;
@@ -5125,6 +5330,278 @@ namespace WPELibrary
         {
             this.CommitPacketDataEdits();
             return this.packetDataEditingPacket ?? Socket_Cache.SocketList.spiSelect;
+        }
+
+        private async void AnalyzeSelectedPacketWithJevAsync()
+        {
+            Socket_PacketInfo packet;
+            try
+            {
+                packet = this.GetCurrentEditedPacket();
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.ToString());
+                Socket_Operation.ShowMessageBox(UiText("UI_JevFailed"));
+                return;
+            }
+
+            if (packet == null)
+            {
+                Socket_Operation.ShowMessageBox(UiText("UI_JevSelectPacket"));
+                return;
+            }
+
+            if (packet.PacketBuffer == null || packet.PacketBuffer.Length == 0)
+            {
+                Socket_Operation.ShowMessageBox(UiText("UI_JevEmptyPacket"));
+                return;
+            }
+
+            if (this.jevAnalysisCancellation != null)
+            {
+                return;
+            }
+
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            this.jevAnalysisCancellation = cancellation;
+            int analysisVersion = ++this.jevAnalysisVersion;
+            if (this.cmsSocketListJevAnalyze != null)
+            {
+                this.cmsSocketListJevAnalyze.Enabled = false;
+            }
+
+            try
+            {
+                JObject state = BuildJevPacketState(packet);
+                IDictionary<string, JevQuestion> questions = BuildJevQuestions();
+                using (JevClient client = new JevClient())
+                {
+                    JevResponse response = await client.EvaluateAsync(
+                        state,
+                        questions,
+                        cancellation.Token);
+
+                    if (cancellation.IsCancellationRequested ||
+                        analysisVersion != this.jevAnalysisVersion ||
+                        (!ReferenceEquals(packet, this.packetDataEditingPacket) &&
+                         !ReferenceEquals(packet, Socket_Cache.SocketList.spiSelect)))
+                    {
+                        return;
+                    }
+
+                    this.ShowJevResponse(response);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                if (!cancellation.IsCancellationRequested)
+                {
+                    this.ShowJevFailure(new TimeoutException("The TypeSafe Jev request timed out."));
+                }
+            }
+            catch (JevRequestException ex)
+            {
+                this.ShowJevFailure(ex);
+            }
+            catch (Exception ex)
+            {
+                this.ShowJevFailure(ex);
+            }
+            finally
+            {
+                if (ReferenceEquals(this.jevAnalysisCancellation, cancellation))
+                {
+                    this.jevAnalysisCancellation = null;
+                }
+
+                cancellation.Dispose();
+                if (!this.IsDisposed && !this.Disposing &&
+                    this.cmsSocketListJevAnalyze != null &&
+                    analysisVersion == this.jevAnalysisVersion)
+                {
+                    this.cmsSocketListJevAnalyze.Enabled =
+                        Socket_Cache.SocketList.spiSelect != null;
+                }
+            }
+        }
+
+        private static JObject BuildJevPacketState(Socket_PacketInfo packet)
+        {
+            const int maxAnalyzedBytes = 4096;
+            byte[] buffer = packet.PacketBuffer ?? new byte[0];
+
+            // ponytail: cap remote analysis input at 4096 bytes; add chunking only if whole-packet classification is required.
+            return new JObject
+            {
+                ["packet_type"] = packet.PacketType.ToString(),
+                ["packet_from"] = packet.PacketFrom ?? string.Empty,
+                ["packet_to"] = packet.PacketTo ?? string.Empty,
+                ["packet_length"] = buffer.Length,
+                ["packet_hex"] = Socket_Operation.GetPacketData_Hex(
+                    buffer.AsSpan(),
+                    maxAnalyzedBytes),
+                ["packet_hex_truncated"] = buffer.Length > maxAnalyzedBytes
+            };
+        }
+
+        private static IDictionary<string, JevQuestion> BuildJevQuestions()
+        {
+            return new Dictionary<string, JevQuestion>(StringComparer.Ordinal)
+            {
+                {
+                    "packet_role",
+                    JevQuestion.Choice(
+                        "What is the most likely role of this packet in the observed session?",
+                        new Dictionary<string, string>(StringComparer.Ordinal)
+                        {
+                            { "request", "A request or command sent to the peer." },
+                            { "response", "A response or result returned by the peer." },
+                            { "control", "A handshake, keepalive, framing, or control packet." },
+                            { "unknown", "The role cannot be determined from this state." }
+                        })
+                },
+                {
+                    "is_text_like",
+                    JevQuestion.Noul(
+                        "Is the packet payload likely to contain human-readable text or a text-based protocol?",
+                        "The payload is likely text-like.",
+                        "The payload is likely binary or not text-like.")
+                },
+                {
+                    "automation_risk",
+                    JevQuestion.Score(
+                        "How risky would it be to automate a response based only on this packet?",
+                        new List<string> { "low", "medium", "high" })
+                }
+            };
+        }
+
+        private static string FormatJevResponse(JevResponse response)
+        {
+            StringBuilder content = new StringBuilder();
+            content.AppendLine("Model: " + response.Model);
+            content.AppendLine(
+                "Usage: input_tokens=" + response.Usage.InputTokens +
+                ", output_tokens=" + response.Usage.OutputTokens);
+
+            foreach (KeyValuePair<string, JevAnswer> entry in response.Answers)
+            {
+                JevAnswer answer = entry.Value;
+                content.AppendLine();
+                content.AppendLine(entry.Key + " [" + answer.Type + "]");
+                if (string.Equals(answer.Type, "choice", StringComparison.Ordinal))
+                {
+                    content.AppendLine("  choice: " + answer.Choice);
+                    content.AppendLine("  confidence: " + FormatJevNumber(answer.Confidence));
+                }
+                else if (string.Equals(answer.Type, "score", StringComparison.Ordinal))
+                {
+                    content.AppendLine("  score: " + FormatJevNumber(answer.Score));
+                    content.AppendLine("  confidence: " + FormatJevNumber(answer.Confidence));
+                }
+                else if (string.Equals(answer.Type, "noul", StringComparison.Ordinal))
+                {
+                    content.AppendLine("  noul: " + FormatJevNumber(answer.Noul));
+                }
+
+                if (answer.Probabilities != null)
+                {
+                    foreach (KeyValuePair<string, double> probability in answer.Probabilities)
+                    {
+                        string label = probability.Key;
+                        if (answer.Legend != null && answer.Legend.ContainsKey(probability.Key))
+                        {
+                            label = probability.Key + " (" + answer.Legend[probability.Key] + ")";
+                        }
+
+                        content.AppendLine(
+                            "  probability[" + label + "] = " +
+                            FormatJevNumber(probability.Value));
+                    }
+                }
+            }
+
+            return content.ToString();
+        }
+
+        private static string FormatJevNumber(double? value)
+        {
+            return value.HasValue
+                ? value.Value.ToString("0.###", CultureInfo.InvariantCulture)
+                : "-";
+        }
+
+        private void ShowJevResponse(JevResponse response)
+        {
+            using (Form resultForm = new Form())
+            using (RichTextBox resultBox = new RichTextBox())
+            using (Button closeButton = new Button())
+            {
+                resultForm.Text = UiText("UI_JevResultTitle");
+                resultForm.StartPosition = FormStartPosition.CenterParent;
+                resultForm.FormBorderStyle = FormBorderStyle.Sizable;
+                resultForm.ClientSize = new System.Drawing.Size(720, 480);
+                resultForm.MinimizeBox = false;
+                resultForm.MaximizeBox = true;
+                resultForm.ShowInTaskbar = false;
+                resultForm.Font = this.Font;
+
+                closeButton.Text = UiText("UI_OK");
+                closeButton.DialogResult = DialogResult.OK;
+                closeButton.Dock = DockStyle.Bottom;
+                closeButton.Height = 34;
+
+                resultBox.Dock = DockStyle.Fill;
+                resultBox.ReadOnly = true;
+                resultBox.DetectUrls = false;
+                resultBox.WordWrap = false;
+                resultBox.ScrollBars = RichTextBoxScrollBars.Both;
+                resultBox.BackColor = SystemColors.Window;
+                resultBox.Font = new Font("Consolas", 9F);
+                resultBox.Text = FormatJevResponse(response);
+
+                resultForm.Controls.Add(resultBox);
+                resultForm.Controls.Add(closeButton);
+                resultForm.AcceptButton = closeButton;
+                resultForm.CancelButton = closeButton;
+                resultForm.ShowDialog(this);
+            }
+        }
+
+        private void ShowJevFailure(Exception exception)
+        {
+            JevRequestException requestException = exception as JevRequestException;
+            string message;
+            if (requestException != null)
+            {
+                message = string.Format(
+                    UiText("UI_JevRequestFailed"),
+                    requestException.StatusCode);
+            }
+            else if (exception is InvalidOperationException &&
+                exception.Message.IndexOf("TYPESAFE_API_KEY", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                message = UiText("UI_JevNoKey");
+            }
+            else
+            {
+                message = UiText("UI_JevFailed");
+            }
+
+            Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, exception.ToString());
+            Socket_Operation.ShowMessageBox(message);
+        }
+
+        private void CancelJevAnalysis()
+        {
+            this.jevAnalysisVersion++;
+            CancellationTokenSource cancellation = this.jevAnalysisCancellation;
+            this.jevAnalysisCancellation = null;
+            if (cancellation != null)
+            {
+                cancellation.Cancel();
+            }
         }
 
         #endregion        
@@ -5746,6 +6223,12 @@ namespace WPELibrary
             {
                 this.cmsSocketListShowOnlyHeader.Enabled = Socket_Cache.SocketList.spiSelect != null;
             }
+            if (this.cmsSocketListJevAnalyze != null)
+            {
+                this.cmsSocketListJevAnalyze.Enabled =
+                    Socket_Cache.SocketList.spiSelect != null &&
+                    this.jevAnalysisCancellation == null;
+            }
         }
 
         private void cmsSocketList_SendTarget_Click(object sender, EventArgs e)
@@ -5824,6 +6307,12 @@ namespace WPELibrary
                         case "cmsSocketList_PacketDetails":
 
                             Socket_Operation.ShowSendForm(this.GetCurrentEditedPacket());
+
+                            break;
+
+                        case "cmsSocketList_JevAnalyze":
+
+                            this.AnalyzeSelectedPacketWithJevAsync();
 
                             break;
 
@@ -6537,7 +7026,11 @@ namespace WPELibrary
                 }
 
                 Socket_Cache.SocketList.CurrentSocketRoutesResolution resolution =
-                    Socket_Cache.SocketList.ResolveCurrentRoutes(item.SCollection);
+                    Socket_Cache.SocketList.ResolveCurrentRoutes(
+                        item.SCollection,
+                        item.SSystemSocket
+                            ? Socket_Cache.System.ManualSystemSocket
+                            : 0);
                 for (int index = 0; index < resolution.Items.Count; index++)
                 {
                     Socket_Cache.SocketList.LogCurrentRouteResolution(
@@ -6711,6 +7204,11 @@ namespace WPELibrary
 
         private void tsRobotList_Start_Click(object sender, EventArgs e)
         {
+            if (this.HasActiveAssistantRuns || this.assistantStartPending)
+            {
+                return;
+            }
+
             if (dgvRobotList.Rows.Count > 0)
             {
                 if (!this.bgwRobotList.IsBusy)
@@ -6719,6 +7217,7 @@ namespace WPELibrary
 
                     this.bgwRobotList.RunWorkerAsync();
                     this.UpdateRobotToolbarState();
+                    this.UpdateAssistantButtonState();
                 }
             }
         }
@@ -6730,7 +7229,7 @@ namespace WPELibrary
 
         private void tsRobotList_Add_Click(object sender, EventArgs e)
         {
-            if (this.bgwRobotList.IsBusy || this.activeAssistantRobot != null)
+            if (this.bgwRobotList.IsBusy || this.HasActiveAssistantRuns || this.assistantStartPending)
             {
                 return;
             }
@@ -6779,7 +7278,7 @@ namespace WPELibrary
         private void UpdateRobotToolbarState()
         {
             bool batchRunning = this.bgwRobotList.IsBusy;
-            bool assistantRunning = this.activeAssistantRobot != null;
+            bool assistantRunning = this.HasActiveAssistantRuns || this.assistantStartPending;
             this.tsRobotList_Start.Enabled = !batchRunning && !assistantRunning && this.dgvRobotList.Rows.Count > 0;
             this.tsRobotList_Stop.Enabled = batchRunning;
             this.tsRobotList_Add.Enabled = !batchRunning && !assistantRunning;
@@ -6860,6 +7359,7 @@ namespace WPELibrary
             try
             {
                 this.UpdateRobotToolbarState();
+                this.UpdateAssistantButtonState();
             }
             catch (Exception ex)
             {

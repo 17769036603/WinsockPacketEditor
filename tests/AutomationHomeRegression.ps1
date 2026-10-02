@@ -24,9 +24,39 @@ function Assert-NotContains {
 }
 
 $form = Read-SourceFile "WPELibrary\Socket_Form.cs"
+$assistantConcurrency = Read-SourceFile "WPELibrary\AssistantRunConcurrencyPolicy.cs"
 $robotInfo = Read-SourceFile "WPELibrary\Lib\Socket_RobotInfo.cs"
 $cache = Read-SourceFile "WPELibrary\Lib\Socket_Cache.cs"
 $resources = Read-SourceFile "WPELibrary\Properties\Resources.resx"
+
+Add-Type -Path (Join-Path $RepositoryRoot "WPELibrary\AssistantRunConcurrencyPolicy.cs")
+
+$assistantStartMethodStart = $form.IndexOf("private async void AssistantButton_Click")
+$assistantStartMethodEnd = $form.IndexOf(
+    "private static bool HasTreasureMapInstruction",
+    $assistantStartMethodStart)
+$assistantStartMethod = $form.Substring(
+    $assistantStartMethodStart,
+    $assistantStartMethodEnd - $assistantStartMethodStart)
+$batchStartMethodStart = $form.IndexOf("private void tsRobotList_Start_Click")
+$batchStartMethodEnd = $form.IndexOf(
+    "private void tsRobotList_Stop_Click",
+    $batchStartMethodStart)
+$batchStartMethod = $form.Substring(
+    $batchStartMethodStart,
+    $batchStartMethodEnd - $batchStartMethodStart)
+$batchCompletedMethodStart = $form.IndexOf("private void bgwRobotList_RunWorkerCompleted")
+$batchCompletedMethodEnd = $form.IndexOf("#endregion", $batchCompletedMethodStart)
+$batchCompletedMethod = $form.Substring(
+    $batchCompletedMethodStart,
+    $batchCompletedMethodEnd - $batchCompletedMethodStart)
+$assistantCompletedMethodStart = $form.IndexOf("private void AssistantRobot_RunWorkerCompleted")
+$assistantCompletedMethodEnd = $form.IndexOf(
+    "private void UpdateAssistantButtonState",
+    $assistantCompletedMethodStart)
+$assistantCompletedMethod = $form.Substring(
+    $assistantCompletedMethodStart,
+    $assistantCompletedMethodEnd - $assistantCompletedMethodStart)
 
 Assert-Contains $form "private void InitAutomationHomeUI()" `
     "The homepage automation host must be initialized explicitly."
@@ -73,14 +103,94 @@ Assert-Contains $form "Size = new Size(84, 34)" `
     "Assistant buttons must use the compact 84x34px size."
 Assert-Contains $form "AutoEllipsis = true" `
     "Long assistant names must remain usable in compact buttons."
-Assert-Contains $form "Socket_Cache.Robot.DoRobot(robot.RID, null)" `
+Assert-Contains $form "Socket_Cache.Robot.DoRobotAsync(robot.RID, parameters)" `
     "An assistant button must start only its own assistant."
-Assert-Contains $form "this.activeAssistantRobot.StopRobot()" `
-    "The active assistant button must stop its own assistant."
-Assert-Contains $form "pair.Value.Visible = !assistantRunning || active" `
-    "Other assistant buttons must be hidden while one assistant runs."
+Assert-Contains $form "activeRun.Robot.StopRobot()" `
+    "Each active assistant button must stop only its own assistant."
+Assert-Contains $form "private readonly Dictionary<Guid, ActiveAssistantRun> activeAssistantRuns" `
+    "The assistant page must track concurrent runs by preset identity."
+Assert-Contains $form "AssistantRunConcurrencyPolicy.CanStart(" `
+    "The assistant page must enforce the explicit concurrency policy before starting."
+Assert-Contains $form "HasOnlyMountSpeedHoldInstruction(robot)" `
+    "Only a standalone mount-speed-hold assistant may use the mount-speed-hold run slot."
+Assert-Contains $form "HasOnlyDelayInstructions(robot)" `
+    "Only assistants that contain delays and no game actions may use the delay-only run slot."
+Assert-Contains $form "bool visible = active || starting || compatible;" `
+    "Only active, starting, or policy-compatible assistant buttons may stay visible."
 Assert-Contains $form "pair.Value.Enabled = enabled" `
-    "The active assistant button must remain enabled while one assistant runs."
+    "Each active assistant button must remain independently stoppable."
+Assert-Contains $form "this.RenderAssistantButtons();" `
+    "Completing a cross-folder run must rebuild the current folder button set."
+Assert-Contains $assistantConcurrency `
+    "left == AssistantRunKind.TreasureMap && right == AssistantRunKind.MountRefine" `
+    "Treasure-map and mount-refine must remain an explicitly compatible pair."
+Assert-Contains $assistantConcurrency `
+    "left == AssistantRunKind.MountRefine && right == AssistantRunKind.TreasureMap" `
+    "Treasure-map and mount-refine compatibility must be symmetric."
+Assert-Contains $assistantConcurrency `
+    "left == AssistantRunKind.MountSpeedHold && right == AssistantRunKind.DelayOnly" `
+    "Mount-speed hold may run with a delay-only assistant."
+Assert-Contains $assistantConcurrency `
+    "left == AssistantRunKind.DelayOnly && right == AssistantRunKind.MountSpeedHold" `
+    "Mount-speed hold and delay-only compatibility must be symmetric."
+Assert-Contains $assistantConcurrency "hasTreasureMapInstruction == isMountRefinePreset" `
+    "Mixed or unclassified presets must remain in the exclusive Other group."
+
+$mountSpeedHold = [WPELibrary.AssistantRunConcurrencyPolicy]::Classify($false, $false, $true, $false)
+$delayOnly = [WPELibrary.AssistantRunConcurrencyPolicy]::Classify($false, $false, $false, $true)
+$treasureMap = [WPELibrary.AssistantRunConcurrencyPolicy]::Classify($true, $false, $false, $false)
+$mountRefine = [WPELibrary.AssistantRunConcurrencyPolicy]::Classify($false, $true, $false, $false)
+$other = [WPELibrary.AssistantRunConcurrencyPolicy]::Classify($false, $false, $false, $false)
+$mixed = [WPELibrary.AssistantRunConcurrencyPolicy]::Classify($false, $false, $true, $true)
+if ($mountSpeedHold -ne [WPELibrary.AssistantRunKind]::MountSpeedHold -or
+    $delayOnly -ne [WPELibrary.AssistantRunKind]::DelayOnly -or
+    $treasureMap -ne [WPELibrary.AssistantRunKind]::TreasureMap -or
+    $mountRefine -ne [WPELibrary.AssistantRunKind]::MountRefine -or
+    $other -ne [WPELibrary.AssistantRunKind]::Other -or
+    $mixed -ne [WPELibrary.AssistantRunKind]::Other -or
+    [WPELibrary.AssistantRunConcurrencyPolicy]::Classify($true, $true, $false, $false) -ne
+        [WPELibrary.AssistantRunKind]::Other -or
+    [WPELibrary.AssistantRunConcurrencyPolicy]::Classify($true, $false, $true, $false) -ne
+        [WPELibrary.AssistantRunKind]::Other -or
+    [WPELibrary.AssistantRunConcurrencyPolicy]::Classify($true, $false, $false, $true) -ne
+        [WPELibrary.AssistantRunKind]::Other) {
+    throw "Standalone hold/delay assistants must be classified strictly."
+}
+if (-not [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether($treasureMap, $mountRefine) -or
+    -not [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether($mountSpeedHold, $delayOnly) -or
+    -not [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether($delayOnly, $mountSpeedHold) -or
+    [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether($mountSpeedHold, $mountSpeedHold) -or
+    [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether($mountSpeedHold, $other) -or
+    [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether($mountSpeedHold, $treasureMap) -or
+    [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether($delayOnly, $treasureMap) -or
+    [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether($delayOnly, $mountRefine) -or
+    [WPELibrary.AssistantRunConcurrencyPolicy]::CanRunTogether($mountSpeedHold, $mountRefine)) {
+    throw "Mount-speed hold may run only with a delay-only assistant."
+}
+if ([WPELibrary.AssistantRunConcurrencyPolicy]::CanStart(
+        [WPELibrary.AssistantRunKind[]]@($mountSpeedHold, $delayOnly),
+        [WPELibrary.AssistantRunKind]::TreasureMap) -or
+    -not [WPELibrary.AssistantRunConcurrencyPolicy]::CanStart(
+        [WPELibrary.AssistantRunKind[]]@($mountSpeedHold),
+        $delayOnly)) {
+    throw "The assistant policy must allow exactly the approved pair and reject a third run."
+}
+Assert-Contains $assistantStartMethod "if (this.bgwRobotList.IsBusy)" `
+    "Homepage assistants must not start while the legacy robot batch is running."
+Assert-Contains $batchStartMethod "if (this.HasActiveAssistantRuns || this.assistantStartPending)" `
+    "Legacy robot batches must not start while a homepage assistant is active or starting."
+Assert-Contains $form "bool batchRunning = this.bgwRobotList.IsBusy;" `
+    "Homepage assistant buttons must reflect a running legacy robot batch."
+Assert-Contains $form "!this.assistantStartPending && !batchRunning && (active || compatible)" `
+    "Homepage assistant start buttons must be disabled during a legacy robot batch."
+Assert-Contains $batchStartMethod "this.UpdateAssistantButtonState();" `
+    "Starting a legacy robot batch must refresh homepage assistant button state."
+Assert-Contains $batchCompletedMethod "this.UpdateAssistantButtonState();" `
+    "Completing a legacy robot batch must refresh homepage assistant button state."
+Assert-Contains $assistantStartMethod "this.UpdateRobotToolbarState();" `
+    "Starting or admitting a homepage assistant must refresh legacy batch controls."
+Assert-Contains $assistantCompletedMethod "this.UpdateRobotToolbarState();" `
+    "Completing a homepage assistant must refresh legacy batch controls."
 Assert-Contains $form "UI_AssistantEmpty" `
     "Empty assistant groups must show an explicit empty state."
 Assert-Contains $form "MoveAssistantToFolder_Click" `

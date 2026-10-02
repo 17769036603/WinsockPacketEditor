@@ -22,6 +22,7 @@ namespace WPELibrary.Lib
 
         private CancellationTokenSource cts;
         private int resolvedSystemSocket;
+        private int preferredRouteSocket;
         private bool usePacketSockets;
         private bool refreshCurrentRouteBeforeEachSend;
         private bool stopOnRouteOrSendFailure;
@@ -117,7 +118,8 @@ namespace WPELibrary.Lib
                 SendCollection,
                 protectPanguIronSale,
                 protectPanguIronSale,
-                protectPanguIronSale);
+                protectPanguIronSale,
+                0);
         }
 
         public bool StartSend(string SendName, int ResolvedSystemSocket, int LoopCNT, int LoopINT, BindingList<Socket_PacketInfo> SendCollection)
@@ -132,7 +134,8 @@ namespace WPELibrary.Lib
                 SendCollection,
                 protectPanguIronSale,
                 protectPanguIronSale,
-                protectPanguIronSale);
+                protectPanguIronSale,
+                0);
         }
 
         public bool StartSendWithPacketSockets(
@@ -147,7 +150,8 @@ namespace WPELibrary.Lib
                 LoopINT,
                 SendCollection,
                 false,
-                false);
+                false,
+                0);
         }
 
         public bool StartSendWithPacketSockets(
@@ -157,6 +161,25 @@ namespace WPELibrary.Lib
             BindingList<Socket_PacketInfo> SendCollection,
             bool refreshCurrentRouteBeforeEachSend,
             bool stopOnRouteOrSendFailure)
+        {
+            return this.StartSendWithPacketSockets(
+                SendName,
+                LoopCNT,
+                LoopINT,
+                SendCollection,
+                refreshCurrentRouteBeforeEachSend,
+                stopOnRouteOrSendFailure,
+                0);
+        }
+
+        public bool StartSendWithPacketSockets(
+            string SendName,
+            int LoopCNT,
+            int LoopINT,
+            BindingList<Socket_PacketInfo> SendCollection,
+            bool refreshCurrentRouteBeforeEachSend,
+            bool stopOnRouteOrSendFailure,
+            int preferredRouteSocket)
         {
             bool protectPanguIronSale = RequiresPanguIronSaleTransportProtection(SendName);
             return this.StartSendCore(
@@ -168,7 +191,8 @@ namespace WPELibrary.Lib
                 SendCollection,
                 true,
                 refreshCurrentRouteBeforeEachSend || protectPanguIronSale,
-                stopOnRouteOrSendFailure || protectPanguIronSale);
+                stopOnRouteOrSendFailure || protectPanguIronSale,
+                preferredRouteSocket);
         }
 
         private bool StartSendCore(
@@ -180,7 +204,8 @@ namespace WPELibrary.Lib
             BindingList<Socket_PacketInfo> SendCollection,
             bool usePacketSockets,
             bool refreshCurrentRouteBeforeEachSend,
-            bool stopOnRouteOrSendFailure)
+            bool stopOnRouteOrSendFailure,
+            int preferredRouteSocket)
         {
             try
             {
@@ -204,6 +229,7 @@ namespace WPELibrary.Lib
                 this.SendName = SendName;
                 this.SystemSocket = SystemSocket;
                 this.resolvedSystemSocket = Math.Max(0, ResolvedSystemSocket);
+                this.preferredRouteSocket = Math.Max(0, preferredRouteSocket);
                 this.usePacketSockets = usePacketSockets;
                 this.refreshCurrentRouteBeforeEachSend = refreshCurrentRouteBeforeEachSend;
                 this.stopOnRouteOrSendFailure = stopOnRouteOrSendFailure;
@@ -293,6 +319,19 @@ namespace WPELibrary.Lib
                 return true;
             }
             return this.sendStopped.Wait(Math.Max(0, millisecondsTimeout));
+        }
+
+        public bool WaitForCompletion(CancellationToken cancellationToken)
+        {
+            try
+            {
+                this.sendStopped.Wait(cancellationToken);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
         }
 
         public bool PauseSend()
@@ -627,7 +666,9 @@ namespace WPELibrary.Lib
             try
             {
                 Socket_Cache.SocketList.CurrentSocketRouteResolution resolution =
-                    Socket_Cache.SocketList.ResolveCurrentRoute(packet);
+                    Socket_Cache.SocketList.ResolveCurrentRoute(
+                        packet,
+                        this.preferredRouteSocket);
                 if (resolution == null || !resolution.Succeeded || resolution.Route == null)
                 {
                     // The treasure sender keeps a session-scoped socket after

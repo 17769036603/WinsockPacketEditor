@@ -240,6 +240,7 @@ namespace WPELibrary.Lib.EquipmentRefine
         private readonly EquipmentRefinePresetEditorModel _model;
         private readonly ComboBox _slotBox = new ComboBox();
         private readonly Button _readBag = new Button();
+        private readonly Button _viewBagMemory = new Button();
         private readonly DataGridView _rules = new DataGridView();
         private readonly Button _save = new Button();
         private readonly Button _confirm = new Button();
@@ -248,6 +249,7 @@ namespace WPELibrary.Lib.EquipmentRefine
         private readonly Func<CancellationToken, Task<EquipmentRefineDetector.EquipmentInventory>>
             _bagInventoryProvider;
         private CancellationTokenSource _bagInventoryCancellation;
+        private EquipmentRefineDetector.EquipmentInventory _lastBagInventory;
 
         public event Action<EquipmentRefinePreset> PresetSaved;
 
@@ -278,6 +280,10 @@ namespace WPELibrary.Lib.EquipmentRefine
             this._readBag.Text = "读取背包";
             this._readBag.AutoSize = true;
             this._readBag.Click += this.ReadBagClick;
+            this._viewBagMemory.Text = "查看内存指针";
+            this._viewBagMemory.AutoSize = true;
+            this._viewBagMemory.Enabled = false;
+            this._viewBagMemory.Click += this.ViewBagMemoryClick;
             this._save.Text = "保存";
             this._save.Click += this.SaveClick;
             this._confirm.Text = "确定";
@@ -314,17 +320,19 @@ namespace WPELibrary.Lib.EquipmentRefine
             TableLayoutPanel targetChooser = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 2,
+                ColumnCount = 3,
                 RowCount = 1,
                 Margin = new Padding(0),
                 Padding = new Padding(0)
             };
             targetChooser.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             targetChooser.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            targetChooser.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             this._slotBox.DropDownStyle = ComboBoxStyle.DropDownList;
             this._slotBox.Dock = DockStyle.Fill;
             targetChooser.Controls.Add(this._slotBox, 0, 0);
             targetChooser.Controls.Add(this._readBag, 1, 0);
+            targetChooser.Controls.Add(this._viewBagMemory, 2, 0);
             layout.Controls.Add(targetChooser, 1, 0);
             layout.Controls.Add(this._rules, 0, 1);
             layout.SetColumnSpan(this._rules, 2);
@@ -551,11 +559,14 @@ namespace WPELibrary.Lib.EquipmentRefine
             }
             this._bagInventoryCancellation = new CancellationTokenSource();
             this._readBag.Enabled = false;
+            this._viewBagMemory.Enabled = false;
+            this._lastBagInventory = null;
             try
             {
                 EquipmentRefineDetector.EquipmentInventory inventory =
                     await this._bagInventoryProvider(this._bagInventoryCancellation.Token);
-                if (inventory == null || !inventory.IsUsableFor(EquipmentTargetMode.Bag))
+                if (inventory == null || inventory.Items == null ||
+                    !inventory.IsUsableFor(EquipmentTargetMode.Bag))
                 {
                     MessageBox.Show(
                         this,
@@ -566,6 +577,8 @@ namespace WPELibrary.Lib.EquipmentRefine
                     return;
                 }
 
+                this._lastBagInventory = inventory;
+                this._viewBagMemory.Enabled = true;
                 IList<EquipmentRefineBagOption> options = BuildBagEquipmentOptions(inventory);
                 this.SetAvailableBagEquipmentOptions(options);
                 if (options.Count == 0)
@@ -594,6 +607,28 @@ namespace WPELibrary.Lib.EquipmentRefine
             finally
             {
                 this._readBag.Enabled = true;
+                this._viewBagMemory.Enabled = this._lastBagInventory != null;
+            }
+        }
+
+        private void ViewBagMemoryClick(object sender, EventArgs e)
+        {
+            EquipmentRefineDetector.EquipmentInventory inventory = this._lastBagInventory;
+            if (inventory == null || inventory.Items == null ||
+                !inventory.IsUsableFor(EquipmentTargetMode.Bag))
+            {
+                MessageBox.Show(
+                    this,
+                    "请先读取当前背包快照，再查看其中的内存指针。",
+                    "尚无背包快照",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            using (BagMemoryPointerViewerForm viewer = new BagMemoryPointerViewerForm(inventory))
+            {
+                viewer.ShowDialog(this);
             }
         }
 

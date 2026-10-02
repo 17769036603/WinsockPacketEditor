@@ -244,7 +244,10 @@ namespace WPELibrary
                                     this.SendName,
                                     iLoopCNT,
                                     iLoopINT,
-                                    this.SendCollection);
+                                    this.SendCollection,
+                                    false,
+                                    false,
+                                    Socket_Cache.System.ManualSystemSocket);
                             }
                             else
                             {
@@ -350,7 +353,11 @@ namespace WPELibrary
         private bool TryApplyCurrentRoutes()
         {
             Socket_Cache.SocketList.CurrentSocketRoutesResolution resolution =
-                Socket_Cache.SocketList.ResolveCurrentRoutes(this.SendCollection);
+                Socket_Cache.SocketList.ResolveCurrentRoutes(
+                    this.SendCollection,
+                    this.cbSystemSocket.Checked
+                        ? Socket_Cache.System.ManualSystemSocket
+                        : 0);
             for (int index = 0; index < resolution.Items.Count; index++)
             {
                 Socket_Cache.SocketList.LogCurrentRouteResolution(

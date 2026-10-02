@@ -42,8 +42,11 @@ Assert-Contains $cacheSource `
     'usePanguIronSaleTransportProtection,' `
     "The sale preset must opt into the fail-closed send worker policy."
 Assert-Contains $workerSource `
-    'Socket_Cache.SocketList.ResolveCurrentRoute(packet)' `
+    'Socket_Cache.SocketList.ResolveCurrentRoute(' `
     "The protected send path must refresh the current route before each send."
+Assert-Contains $workerSource `
+    'this.preferredRouteSocket' `
+    "The protected send path must retain the selected route preference for refreshes."
 Assert-Contains $workerSource `
     'TreasurePacketRuntime.ResolveCurrentSessionSocket(' `
     "The protected sale preset must borrow the current-session socket fallback used by treasure sending."

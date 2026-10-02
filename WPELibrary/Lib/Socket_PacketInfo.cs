@@ -12,6 +12,10 @@ namespace WPELibrary.Lib
 
         public int SortOrder { get; set; }
 
+        // Current-session route evidence only. This is deliberately internal
+        // so it cannot become part of persisted SendCollection data.
+        internal string RouteEvidenceFingerprint { get; set; }
+
         #region//时间戳
 
         protected DateTime packettime;

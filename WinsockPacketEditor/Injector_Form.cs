@@ -5,6 +5,7 @@ using WPELibrary.Lib;
 using EasyHook;
 using System.Reflection;
 using System.Diagnostics;
+using WPELibrary.Lib.NativeMethods;
 
 namespace WinsockPacketEditor
 {
@@ -15,7 +16,7 @@ namespace WinsockPacketEditor
         private string ProcessPath = string.Empty;        
 
         private readonly ToolTip tt = new ToolTip();
-        private Button bRemoteSettings;
+        private Button bShowEmulator;
         private Button bMobileAccountSettings;
         private bool autoInjectLastProcess;
 
@@ -53,16 +54,16 @@ namespace WinsockPacketEditor
                 new System.Windows.Forms.ColumnStyle(
                     System.Windows.Forms.SizeType.Absolute,
                     100F));
-            this.bRemoteSettings = new Button
+            this.bShowEmulator = new Button
             {
-                Name = "bRemoteSettings",
-                Text = "远程设置",
+                Name = "bShowEmulator",
+                Text = MultiLanguage.GetDefaultLanguage(new[] { "显示模拟器", "Show emulator" }),
                 AutoSize = true,
                 UseVisualStyleBackColor = true,
-                AccessibleName = "远程设置"
+                AccessibleName = MultiLanguage.GetDefaultLanguage(new[] { "显示模拟器", "Show emulator" })
             };
-            this.bRemoteSettings.Click += this.bRemoteSettings_Click;
-            this.tlpProcessInject.Controls.Add(this.bRemoteSettings, 4, 0);
+            this.bShowEmulator.Click += this.bShowEmulator_Click;
+            this.tlpProcessInject.Controls.Add(this.bShowEmulator, 4, 0);
 
             this.bMobileAccountSettings = new Button
             {
@@ -94,12 +95,14 @@ namespace WinsockPacketEditor
             this.AcceptButton = this.bInject;
         }
 
-        private void bRemoteSettings_Click(object sender, EventArgs e)
+        private void bShowEmulator_Click(object sender, EventArgs e)
         {
-            using (SystemMode_Form form = new SystemMode_Form())
+            using (ProcessList_Form form = new ProcessList_Form(true))
             {
                 form.ShowDialog(this);
             }
+
+            this.ShowSelectProcess();
         }
 
         private void bMobileAccountSettings_Click(object sender, EventArgs e)
@@ -205,11 +208,6 @@ namespace WinsockPacketEditor
         {
             try
             {
-                if (this.TrySelectSingleEmulator())
-                {
-                    return;
-                }
-
                 ProcessList_Form plf = new ProcessList_Form();
                 plf.ShowDialog();
 
@@ -218,63 +216,6 @@ namespace WinsockPacketEditor
             catch (Exception ex)
             {
                 ShowLog(ex.Message);
-            }
-        }
-
-        private bool TrySelectSingleEmulator()
-        {
-            Process selected = null;
-            int matchCount = 0;
-
-            try
-            {
-                if (this.TryBindLatestPreferredProcess())
-                {
-                    return true;
-                }
-
-                foreach (Process process in Process.GetProcesses())
-                {
-                    try
-                    {
-                        if (!ProcessList_Form.IsSupportedInjectionProcess(process.ProcessName))
-                        {
-                            process.Dispose();
-                            continue;
-                        }
-
-                        selected?.Dispose();
-                        selected = process;
-                        matchCount++;
-                    }
-                    catch (Exception ex)
-                    {
-                        Socket_Operation.DoLog(
-                            nameof(TrySelectSingleEmulator),
-                            string.Format("读取进程 {0} 失败：{1}", process.Id, ex.Message));
-                        process.Dispose();
-                    }
-                }
-
-                if (matchCount != 1 || selected == null)
-                {
-                    return false;
-                }
-
-                Program.PID = selected.Id;
-                Program.PNAME = selected.ProcessName;
-                Program.PATH = string.Empty;
-                this.ShowSelectProcess();
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Socket_Operation.DoLog(nameof(TrySelectSingleEmulator), ex.Message);
-                return false;
-            }
-            finally
-            {
-                selected?.Dispose();
             }
         }
 
@@ -404,6 +345,8 @@ namespace WinsockPacketEditor
 
                     this.bInject.Enabled = false;
 
+                    ProcessInjectionAccess.EnsureAccess(ProcessID);
+
                     ShowLog(DateTime.Now.ToString("G"));
                     ShowLog(string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_7), ProcessName));
 
@@ -421,7 +364,6 @@ namespace WinsockPacketEditor
             catch (Exception ex)
             {  
                 ShowLog(string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_11), ex.Message));
-                ShowLog(string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_102), Socket_Cache.System.WPE64_URL));
                 this.bInject.Enabled = true;
             }
 

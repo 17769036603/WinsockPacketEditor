@@ -288,7 +288,7 @@ $cache = Read-SourceFile "WPELibrary\Lib\Socket_Cache.cs"
 $controller = Read-SourceFile "WPELibrary\Lib\WebAPI\MobileSync_Controller.cs"
 Assert-Contains $cache '"runtime_route_ambiguous"' `
     "Desktop route resolution must expose runtime_route_ambiguous for mobile clients."
-Assert-Contains $cache "Socket_Cache.SocketList.ResolveCurrentRoutes(sendCollection)" `
+Assert-Contains $cache "Socket_Cache.SocketList.ResolveCurrentRoutes(" `
     "Every mobile send preset must resolve current matching sockets instead of reusing stale PacketSocket values."
 Assert-Contains $cache "routeResolution.Items[index].Route" `
     "Every mobile send packet must receive the socket and addresses resolved for the current capture session."

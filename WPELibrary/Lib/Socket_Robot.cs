@@ -2,7 +2,9 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
+using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -20,6 +22,7 @@ public class Socket_Robot
         public int Instruction_Index = 0;
         public int Total_Instruction = 0;
         public string RobotName = string.Empty;
+        public Guid RobotPresetId { get; private set; } = Guid.Empty;
         public string LastStartFailureReason { get; private set; } = string.Empty;
         public string LastRunFailureReason { get; private set; } = string.Empty;
         public string ReadOnlySnapshotStatus { get; private set; } = string.Empty;
@@ -50,6 +53,17 @@ public class Socket_Robot
         private WPELibrary.Lib.MountSpeed.MountRefineStateMachine activeMountRefineStateMachine;
         private WPELibrary.Lib.MountSpeed.MountRefineRunLogStore mountRefineRunLogStore;
         private Guid mountRefineRunId;
+        private bool mountSpeedHoldCleanupFailed;
+        private bool mountSpeedHoldLogUnavailableReported;
+        private bool mountGrowthRateHoldCleanupFailed;
+
+        private static readonly Guid FastCompletionWaitRobotPresetId =
+            new Guid("BDEE8CE8-6B2D-485D-9A88-4C9A9261A8DF");
+
+        private const int DefaultTreasureMapTargetStabilityMilliseconds = 20;
+        private const int ZiqiDonglaiTreasureMapTargetStabilityMilliseconds = 80;
+        private const int DefaultTreasureMapTargetStabilitySampleCount = 0;
+        private const int ZiqiDonglaiTreasureMapTargetStabilitySampleCount = 3;
 
         // 藏宝图运行控制
         private TreasureMapRunState treasureRunState;
@@ -81,6 +95,19 @@ public class Socket_Robot
 
         public bool StartRobot(string RobotName, DataTable dtRobotInstruction, Dictionary<string, object> parameters)
         {
+            return this.StartRobot(
+                RobotName,
+                Guid.Empty,
+                dtRobotInstruction,
+                parameters);
+        }
+
+        public bool StartRobot(
+            string RobotName,
+            Guid robotPresetId,
+            DataTable dtRobotInstruction,
+            Dictionary<string, object> parameters)
+        {
             try
             {
                 this.LastStartFailureReason = string.Empty;
@@ -96,6 +123,8 @@ public class Socket_Robot
 
                 this.Total_Instruction = 0;
                 this.LastRunFailureReason = string.Empty;
+                this.mountSpeedHoldCleanupFailed = false;
+                this.mountGrowthRateHoldCleanupFailed = false;
                 this.ReadOnlySnapshotStatus = string.Empty;
                 this.LastEquipmentRefineResult = null;
                 this.LastEquipmentRefineResultMessage = string.Empty;
@@ -107,6 +136,7 @@ public class Socket_Robot
                 this.currentPetSkillSnapshot = null;
                 this.currentPetSkillReadOnlyState = null;
                 this.RobotName = RobotName;
+                this.RobotPresetId = robotPresetId;
                 this.RobotInstruction = dtRobotInstruction.Copy();
 
                 if (parameters != null)
@@ -123,12 +153,14 @@ public class Socket_Robot
                 // next preflight.
                 this._parameters.Remove("MountStatusReadOnlySnapshot");
                 this._parameters.Remove("MountStatusAndroidReadOnlySnapshot");
+                this._parameters.Remove("MountSpeedHoldPreflightSnapshot");
                 // Route/template binding is rebuilt from the current capture
                 // after injection; never reuse an automatically derived A050
                 // binding from an earlier assistant run.
                 this._parameters.Remove("MountRefineA050PacketTemplate");
                 this._parameters.Remove("MountRefineA050RouteTemplate");
                 this._parameters.Remove("MountRefineA050CaptureError");
+                this._parameters.Remove("MountRefinePreferredRideInstanceId");
 
                 this.ownedVisionProfile = this.GetParameter("OwnVisionProfile", false)
                     ? this.GetParameter("VisionProfile") as Socket_VisionProfile
@@ -142,6 +174,37 @@ public class Socket_Robot
                         iReturn + 1);
                     string sLog = string.Format(MultiLanguage.GetDefaultLanguage(MultiLanguage.MutiLan_123), iReturn + 1, this.RobotName);
                     Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, sLog);
+                    this.DisposeOwnedVisionResources();
+                    return false;
+                }
+
+                if (this.HasShimenTaskInstructionRows() &&
+                    !this.TryPrepareShimenTaskRuntime())
+                {
+                    this.DisposeOwnedVisionResources();
+                    return false;
+                }
+
+                // The six database rows are an exact task catalog, not six
+                // repeated execution steps. The runtime flow has already
+                // read once and made one branch decision above.
+                if (this.HasShimenTaskInstructionRows() &&
+                    !this.GetParameter("ShimenTaskLiveLoopEnabled", false))
+                {
+                    this.DisposeOwnedVisionResources();
+                    return true;
+                }
+
+                if (this.HasMountSpeedHoldInstructionRows() &&
+                    !this.TryPrepareMountSpeedHoldRuntime())
+                {
+                    this.DisposeOwnedVisionResources();
+                    return false;
+                }
+
+                if (this.HasMountGrowthRateHoldInstructionRows() &&
+                    !this.TryPrepareMountGrowthRateHoldRuntime())
+                {
                     this.DisposeOwnedVisionResources();
                     return false;
                 }
@@ -333,12 +396,75 @@ public class Socket_Robot
 
         #endregion
 
+        private void RunShimenTaskLoop(DoWorkEventArgs e)
+        {
+            IShimenTaskMemoryReader reader = this.GetParameter(
+                "ShimenTaskMemoryReader") as IShimenTaskMemoryReader;
+            IShimenTaskPacketSender sender = this.GetParameter(
+                "ShimenTaskPacketSender") as IShimenTaskPacketSender;
+            if (reader == null || sender == null)
+            {
+                throw new InvalidOperationException(
+                    "师门任务循环缺少只读读取器或封包发送器，已停止。");
+            }
+
+            Stopwatch startupStopwatch = this.GetParameter(
+                "ShimenTaskStartupStopwatch") as Stopwatch;
+            ShimenTaskMemorySnapshot initialSnapshot = this.GetParameter(
+                "ShimenTaskInitialSnapshot") as ShimenTaskMemorySnapshot;
+            ShimenTaskLoopOptions options = new ShimenTaskLoopOptions
+            {
+                RefreshPollMilliseconds = Math.Max(
+                    0,
+                    this.GetParameter("ShimenTaskRefreshPollMilliseconds", 100)),
+                RefreshTimeoutMilliseconds = Math.Max(
+                    1,
+                    this.GetParameter("ShimenTaskRefreshTimeoutMilliseconds", 10000)),
+                MaxCycles = Math.Max(
+                    1,
+                    this.GetParameter("ShimenTaskMaxCycles", 1000))
+            };
+            ShimenTaskLoopResult loopResult = new ShimenTaskLoopRunner().Run(
+                reader,
+                sender,
+                this.GetParameter("ShimenTaskLiveSendAuthorization", false),
+                this.cts == null ? CancellationToken.None : this.cts.Token,
+                options,
+                startupStopwatch,
+                initialSnapshot);
+            this._parameters["ShimenTaskLoopResult"] = loopResult;
+            this.ReadOnlySnapshotStatus = loopResult.Describe();
+            Socket_Operation.DoLog(
+                "ShimenTaskLoop",
+                this.ReadOnlySnapshotStatus.Replace("\r\n", " "));
+            if (loopResult.State == ShimenTaskLoopState.Stopped &&
+                (this.Worker.CancellationPending ||
+                 (this.cts != null && this.cts.IsCancellationRequested)))
+            {
+                e.Cancel = true;
+                return;
+            }
+            if (!loopResult.Succeeded)
+            {
+                this.LastRunFailureReason = string.IsNullOrWhiteSpace(loopResult.Error)
+                    ? "师门任务循环执行失败。"
+                    : loopResult.Error;
+                throw new InvalidOperationException(this.LastRunFailureReason);
+            }
+        }
+
         #region//执行指令集
 
         private void Robot_DoWork(object sender, DoWorkEventArgs e)
         {
             try
             {
+                if (this.GetParameter("ShimenTaskLiveLoopEnabled", false))
+                {
+                    this.RunShimenTaskLoop(e);
+                    return;
+                }
+
                 if (this.RobotInstruction.Rows.Count > 0)
                 {
                     Stack<int> sLoopStart = new Stack<int>();
@@ -370,23 +496,36 @@ public class Socket_Robot
                                             throw new InvalidOperationException("机器人发送预设 GUID 无效。");
                                         }
 
-                                        Socket_Send ss = Socket_Cache.Send.DoSend(SID);
+                                Socket_Send ss = Socket_Cache.Send.DoSend(SID);
 
-                                        if (ss != null)
+                                if (ss != null)
+                                {
+                                    if (this.ShouldUseFastCompletionWait())
+                                    {
+                                        if (!ss.WaitForCompletion(this.cts.Token))
                                         {
-                                            while (ss.Worker.IsBusy)
+                                            ss.StopSend();
+
+                                            e.Cancel = true;
+                                            return;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        while (ss.Worker.IsBusy)
+                                        {
+                                            if (this.Worker.CancellationPending)
                                             {
-                                                if (this.Worker.CancellationPending)
-                                                {
-                                                    ss.StopSend();
+                                                ss.StopSend();
 
-                                                    e.Cancel = true;
-                                                    return;
-                                                }
-
-                                                Thread.Sleep(100);
+                                                e.Cancel = true;
+                                                return;
                                             }
-                                        }                                        
+
+                                            Thread.Sleep(100);
+                                        }
+                                    }
+                                }
                                     }
 
                                     break;
@@ -731,6 +870,18 @@ public class Socket_Robot
 
                                     break;
 
+                                case Socket_Cache.Robot.InstructionType.MountSpeedHold:
+
+                                    this.RunMountSpeedHoldInstruction(sContent);
+
+                                    break;
+
+                                case Socket_Cache.Robot.InstructionType.MountGrowthRateHold:
+
+                                    this.RunMountGrowthRateHoldInstruction(sContent);
+
+                                    break;
+
                                 case Socket_Cache.Robot.InstructionType.FiveElementUpgrade:
 
                                     this.RunFiveElementUpgradePlanInstruction(sContent);
@@ -775,6 +926,10 @@ public class Socket_Robot
                 if (this.Worker.CancellationPending ||
                     (this.cts != null && this.cts.IsCancellationRequested))
                 {
+                    if (this.mountSpeedHoldCleanupFailed || this.mountGrowthRateHoldCleanupFailed)
+                    {
+                        throw;
+                    }
                     e.Cancel = true;
                     return;
                 }
@@ -783,6 +938,11 @@ public class Socket_Robot
         }
 
         #endregion
+
+        private bool ShouldUseFastCompletionWait()
+        {
+            return this.RobotPresetId == FastCompletionWaitRobotPresetId;
+        }
 
         private void RunSummonedPetSkillBookPlanInstruction(string instructionContent)
         {
@@ -832,6 +992,623 @@ public class Socket_Robot
             return false;
         }
 
+        private bool HasMountSpeedHoldInstructionRows()
+        {
+            return this.RobotInstruction != null && this.RobotInstruction.Rows.Cast<DataRow>()
+                .Any(row => row != null && row["Type"] != DBNull.Value &&
+                    Convert.ToInt32(row["Type"]) ==
+                    (int)Socket_Cache.Robot.InstructionType.MountSpeedHold);
+        }
+
+        private bool TryPrepareMountSpeedHoldRuntime()
+        {
+            DataRow[] rows = this.RobotInstruction.Rows.Cast<DataRow>()
+                .Where(row => row != null && row["Type"] != DBNull.Value &&
+                    Convert.ToInt32(row["Type"]) ==
+                    (int)Socket_Cache.Robot.InstructionType.MountSpeedHold)
+                .ToArray();
+            Guid runId = Guid.NewGuid();
+            this._parameters["MountSpeedHoldRunId"] = runId;
+            this._parameters["MountSpeedHoldLogPath"] =
+                WPELibrary.Lib.MountSpeed.MountSpeedHoldProcess.RunLogPath;
+            this.mountSpeedHoldLogUnavailableReported = false;
+            this.LogMountSpeedHold("preflightStarted", new
+            {
+                instructionCount = rows.Length,
+                presetName = this.RobotName,
+                presetId = this.RobotPresetId.ToString("D"),
+                logPath = WPELibrary.Lib.MountSpeed.MountSpeedHoldProcess.RunLogPath
+            });
+
+            double target;
+            if (rows.Length != 1 ||
+                !Socket_Cache.Robot.TryParseMountSpeedHoldTarget(
+                    rows.Length == 1 ? Convert.ToString(rows[0]["Content"]) : null,
+                    out target))
+            {
+                return this.FailMountSpeedHoldPreflight(
+                    "坐骑速度保持预设必须且只能包含一条有效目标速度指令。",
+                    null);
+            }
+            this._parameters["MountSpeedHoldTarget"] = target;
+
+            WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader reader =
+                this.GetParameter("MountStatusAndroidSnapshotReader") as
+                WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader;
+            if (reader == null)
+            {
+                string gamePackage = System.Environment.GetEnvironmentVariable(
+                    "WPE_MOUNT_STATUS_GAME_PACKAGE");
+                if (string.IsNullOrWhiteSpace(gamePackage))
+                {
+                    gamePackage = "com.gdoo.dhxy";
+                }
+                reader = new WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader(
+                    gamePackage: gamePackage);
+                this._parameters["MountStatusAndroidSnapshotReader"] = reader;
+            }
+
+            this.LogMountSpeedHold("preflightReadStarted", new
+            {
+                targetSpeed = target,
+                readMode = "speedOnly",
+                logPath = WPELibrary.Lib.MountSpeed.MountSpeedHoldProcess.RunLogPath
+            });
+            WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReadResult result;
+            try
+            {
+                result = reader.ReadSpeedOnlySnapshotAsync(CancellationToken.None).GetAwaiter().GetResult();
+            }
+            catch (Exception exception)
+            {
+                return this.FailMountSpeedHoldPreflight(
+                    "坐骑速度保持启动前读取失败：" + exception.Message,
+                    null);
+            }
+            WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotLaunchContext context =
+                reader.LastSuccessfulLaunchContext;
+            if (result == null || !result.Succeeded)
+            {
+                return this.FailMountSpeedHoldPreflight("坐骑速度保持启动前读取失败：" +
+                    (result == null || string.IsNullOrWhiteSpace(result.Error)
+                        ? "Android 读取器未返回有效结果。"
+                        : result.Error), result);
+            }
+
+            if (result.Snapshot == null || !result.Snapshot.IsValid)
+            {
+                return this.FailMountSpeedHoldPreflight("坐骑速度保持启动前快照无效。" +
+                    (string.IsNullOrWhiteSpace(result.Error) ? string.Empty : " " + result.Error), result);
+            }
+
+            if (result.Snapshot.IsMounted != true)
+            {
+                return this.FailMountSpeedHoldPreflight("坐骑速度保持启动前检查失败：请先骑乘并确认已绑定坐骑。" +
+                    (string.IsNullOrWhiteSpace(result.Error) ? string.Empty : " " + result.Error), result);
+            }
+
+            if (!result.Snapshot.MountId.HasValue)
+            {
+                return this.FailMountSpeedHoldPreflight("坐骑速度保持启动前未能确认当前坐骑 ID。" +
+                    (string.IsNullOrWhiteSpace(result.Error) ? string.Empty : " " + result.Error), result);
+            }
+
+            if (result.Snapshot.Process == null || context == null ||
+                context.ProcessId != result.Snapshot.Process.Pid)
+            {
+                return this.FailMountSpeedHoldPreflight("坐骑速度保持启动前进程绑定不符：快照进程与读取器启动进程不一致。" +
+                    (string.IsNullOrWhiteSpace(result.Error) ? string.Empty : " " + result.Error), result);
+            }
+
+            this._parameters["MountSpeedHoldMountId"] = result.Snapshot.MountId.Value;
+            this._parameters["MountSpeedHoldLaunchContext"] = context;
+            this._parameters["MountSpeedHoldPreflightSnapshot"] = result.Snapshot;
+            string mountSpeedHoldPreflightStatus = DescribeCurrentMountSnapshot(result.Snapshot);
+            this.LogMountSpeedHold("preflightReadCompleted", new
+            {
+                success = true,
+                targetSpeed = target,
+                mountId = result.Snapshot.MountId.Value,
+                logPath = WPELibrary.Lib.MountSpeed.MountSpeedHoldProcess.RunLogPath,
+                diagnostics = DescribeMountSpeedHoldDiagnostics(result.Diagnostics),
+                snapshot = DescribeMountSpeedHoldSnapshot(result.Snapshot)
+            });
+            Socket_Operation.DoLog(
+                "MountSpeedHold",
+                "启动前只读检查完成：" + mountSpeedHoldPreflightStatus.Replace("\r\n", " ") +
+                "；详细日志：" + WPELibrary.Lib.MountSpeed.MountSpeedHoldProcess.RunLogPath);
+            // The probe worker owns the single RootBroker client connection.
+            // Release it after preflight so the long-running hold child can
+            // use the same retained root session through its pipe.
+            reader.ReleaseProbeWorkerForExternalClient();
+            return true;
+        }
+
+        private bool FailMountSpeedHoldPreflight(
+            string reason,
+            WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReadResult result)
+        {
+            this.LastStartFailureReason = reason;
+            this.LogMountSpeedHold("preflightFailed", new
+            {
+                success = false,
+                error = reason,
+                logPath = WPELibrary.Lib.MountSpeed.MountSpeedHoldProcess.RunLogPath,
+                diagnostics = result == null
+                    ? null
+                    : DescribeMountSpeedHoldDiagnostics(result.Diagnostics),
+                snapshot = result == null || result.Snapshot == null
+                    ? null
+                    : DescribeMountSpeedHoldSnapshot(result.Snapshot)
+            });
+            return false;
+        }
+
+        private void LogMountSpeedHold(string eventName, object data)
+        {
+            string error;
+            if (!WPELibrary.Lib.MountSpeed.MountSpeedHoldProcess.TryAppendRunLog(
+                    this.GetParameter("MountSpeedHoldRunId", Guid.Empty),
+                    this.RobotPresetId,
+                    this.RobotName,
+                    "desktop",
+                    eventName,
+                    data,
+                    out error) && !this.mountSpeedHoldLogUnavailableReported)
+            {
+                this.mountSpeedHoldLogUnavailableReported = true;
+                Socket_Operation.DoLog("MountSpeedHold", "速度保持结构化日志写入失败：" + error);
+            }
+        }
+
+        private static object DescribeMountSpeedHoldDiagnostics(
+            WPELibrary.Lib.MountSpeed.MountStatusReadDiagnostics diagnostics)
+        {
+            if (diagnostics == null)
+            {
+                return null;
+            }
+            return new
+            {
+                readPath = diagnostics.ReadPath,
+                rootAdbMs = diagnostics.RootAdbMilliseconds,
+                probeMs = diagnostics.ProbeMilliseconds,
+                cardParseMs = diagnostics.CardParseMilliseconds,
+                protocolParseMs = diagnostics.ProtocolParseMilliseconds,
+                totalMs = diagnostics.TotalMilliseconds
+            };
+        }
+
+        private static object DescribeMountSpeedHoldSnapshot(
+            WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot snapshot)
+        {
+            if (snapshot == null)
+            {
+                return null;
+            }
+            return new
+            {
+                sessionId = snapshot.SessionId,
+                sequence = snapshot.Sequence,
+                candidateCount = snapshot.CandidateCount,
+                diagnosticCode = snapshot.DiagnosticCode,
+                readAtUtc = snapshot.ReadAt.ToUniversalTime().ToString("O"),
+                process = snapshot.Process == null
+                    ? null
+                    : new
+                    {
+                        pid = snapshot.Process.Pid,
+                        startTicks = snapshot.Process.StartTicks,
+                        exe = snapshot.Process.Executable
+                    },
+                playerId = snapshot.PlayerId,
+                isLocalPlayer = snapshot.IsLocalPlayer,
+                isMounted = snapshot.IsMounted,
+                mountId = snapshot.MountId,
+                roleMoveSpeed = snapshot.RoleMoveSpeed,
+                speedAddress = snapshot.RoleMoveSpeedMemoryAddress.HasValue
+                    ? "0x" + snapshot.RoleMoveSpeedMemoryAddress.Value.ToString("X", CultureInfo.InvariantCulture)
+                    : null,
+                gx = snapshot.Gx,
+                gy = snapshot.Gy
+            };
+        }
+
+        private void RunMountSpeedHoldInstruction(string instructionContent)
+        {
+            double target;
+            if (!Socket_Cache.Robot.TryParseMountSpeedHoldTarget(instructionContent, out target))
+            {
+                throw new InvalidOperationException("坐骑速度保持目标无效，已停止。" );
+            }
+
+            WPELibrary.Lib.MountSpeed.MountSpeedHoldProcess hold = null;
+            try
+            {
+                hold = new WPELibrary.Lib.MountSpeed.MountSpeedHoldProcess(
+                    this.GetParameter("MountSpeedHoldLaunchContext") as
+                        WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotLaunchContext,
+                    target,
+                    this.GetParameter("MountSpeedHoldMountId", 0L),
+                    this.GetParameter("MountSpeedHoldPreflightSnapshot") as
+                        WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot,
+                    this.GetParameter("MountSpeedHoldRunId", Guid.Empty),
+                    this.RobotPresetId,
+                    this.RobotName);
+                hold.Start();
+                hold.WaitForStop(this.cts == null ? CancellationToken.None : this.cts.Token);
+            }
+            catch (Exception ex)
+            {
+                this.mountSpeedHoldCleanupFailed = true;
+                this.LastRunFailureReason = ex.Message;
+                throw;
+            }
+            finally
+            {
+                if (hold != null)
+                {
+                    try
+                    {
+                        hold.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        this.mountSpeedHoldCleanupFailed = true;
+                        this.LastRunFailureReason = ex.Message;
+                        throw;
+                    }
+                }
+            }
+        }
+
+        private bool HasMountGrowthRateHoldInstructionRows()
+        {
+            return this.RobotInstruction != null && this.RobotInstruction.Rows.Cast<DataRow>()
+                .Any(row => row != null && row["Type"] != DBNull.Value &&
+                    Convert.ToInt32(row["Type"]) ==
+                    (int)Socket_Cache.Robot.InstructionType.MountGrowthRateHold);
+        }
+
+        private bool TryPrepareMountGrowthRateHoldRuntime()
+        {
+            DataRow[] rows = this.RobotInstruction.Rows.Cast<DataRow>()
+                .Where(row => row != null && row["Type"] != DBNull.Value &&
+                    Convert.ToInt32(row["Type"]) ==
+                    (int)Socket_Cache.Robot.InstructionType.MountGrowthRateHold)
+                .ToArray();
+            double target;
+            if (rows.Length != 1 ||
+                !Socket_Cache.Robot.TryParseMountGrowthRateHoldTarget(
+                    rows.Length == 1 ? Convert.ToString(rows[0]["Content"]) : null,
+                    out target) ||
+                target != 100.0)
+            {
+                this.LastStartFailureReason = "坐骑成长率保持预设必须且只能包含一条目标为 100.0 的指令。";
+                return false;
+            }
+
+            WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader reader =
+                this.GetParameter("MountStatusAndroidSnapshotReader") as
+                WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader;
+            if (reader == null)
+            {
+                string gamePackage = System.Environment.GetEnvironmentVariable(
+                    "WPE_MOUNT_STATUS_GAME_PACKAGE");
+                if (string.IsNullOrWhiteSpace(gamePackage))
+                {
+                    gamePackage = "com.gdoo.dhxy";
+                }
+                reader = new WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader(
+                    gamePackage: gamePackage);
+                this._parameters["MountStatusAndroidSnapshotReader"] = reader;
+            }
+
+            WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReadResult result =
+                reader.ReadSnapshotAsync(CancellationToken.None).GetAwaiter().GetResult();
+            WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotLaunchContext context =
+                reader.LastSuccessfulLaunchContext;
+            if (result == null || !result.Succeeded || result.Snapshot == null ||
+                !result.Snapshot.IsValid)
+            {
+                this.LastStartFailureReason = "坐骑成长率保持启动前读取失败：" +
+                    (result == null || string.IsNullOrWhiteSpace(result.Error)
+                        ? "Android 读取器未返回有效结果。"
+                        : result.Error);
+                return false;
+            }
+
+            WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot snapshot = result.Snapshot;
+            if (snapshot.CandidateCount != 1 ||
+                snapshot.IsMounted != true || !snapshot.MountId.HasValue ||
+                snapshot.MountId.Value <= 0 ||
+                snapshot.PlayerId <= 0 ||
+                !string.Equals(snapshot.RideBindingStatus, "bound", StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(snapshot.ActiveRideInstanceId))
+            {
+                this.LastStartFailureReason = "坐骑成长率保持启动前检查失败：请先骑乘并确认当前坐骑绑定唯一。";
+                return false;
+            }
+
+            WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot[] currentRides =
+                (snapshot.RideInstances ?? new List<WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot>())
+                    .Where(ride => ride != null && ride.IsCurrent == true)
+                    .ToArray();
+            WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot currentRide =
+                currentRides.Length == 1 ? currentRides[0] : null;
+            if (currentRide == null || currentRide.IsRiding != true ||
+                !string.Equals(currentRide.RideInstanceId, snapshot.ActiveRideInstanceId, StringComparison.Ordinal) ||
+                currentRide.RideInstanceId.Length != 19 ||
+                !currentRide.RideInstanceId.All(character => character >= '0' && character <= '9') ||
+                !currentRide.GrowthRate.HasValue ||
+                double.IsNaN(currentRide.GrowthRate.Value) ||
+                double.IsInfinity(currentRide.GrowthRate.Value) ||
+                currentRide.GrowthRate.Value < 0 ||
+                !currentRide.GrowthRateMemoryAddress.HasValue ||
+                currentRide.GrowthRateMemoryAddress.Value == 0)
+            {
+                this.LastStartFailureReason = "坐骑成长率保持启动前检查失败：当前坐骑的 GROWUP 字段未能唯一确认。";
+                return false;
+            }
+
+            if (snapshot.Process == null || snapshot.Process.Pid <= 0 ||
+                snapshot.Process.StartTicks <= 0 ||
+                string.IsNullOrWhiteSpace(snapshot.Process.Executable) ||
+                context == null || context.ProcessId != snapshot.Process.Pid)
+            {
+                this.LastStartFailureReason = "坐骑成长率保持启动前进程绑定不符：快照进程与读取器启动进程不一致。";
+                return false;
+            }
+
+            this._parameters["MountGrowthRateHoldTarget"] = target;
+            this._parameters["MountGrowthRateHoldStartupGrowthRate"] = currentRide.GrowthRate.Value;
+            this._parameters["MountGrowthRateHoldStartupGrowthAddress"] = currentRide.GrowthRateMemoryAddress.Value;
+            this._parameters["MountGrowthRateHoldPlayerId"] = snapshot.PlayerId;
+            this._parameters["MountGrowthRateHoldMountId"] = snapshot.MountId.Value;
+            this._parameters["MountGrowthRateHoldRideInstanceId"] = snapshot.ActiveRideInstanceId;
+            this._parameters["MountGrowthRateHoldStartTicks"] = snapshot.Process.StartTicks;
+            this._parameters["MountGrowthRateHoldExecutable"] = snapshot.Process.Executable;
+            this._parameters["MountGrowthRateHoldLaunchContext"] = context;
+            Socket_Operation.DoLog(
+                "MountGrowthRateHold",
+                "启动前坐骑绑定核对完成；停止时将按原值及当前坐骑身份安全恢复。");
+            reader.ReleaseProbeWorkerForExternalClient();
+            return true;
+        }
+
+        private void RunMountGrowthRateHoldInstruction(string instructionContent)
+        {
+            double target;
+            if (!Socket_Cache.Robot.TryParseMountGrowthRateHoldTarget(instructionContent, out target) ||
+                target != this.GetParameter("MountGrowthRateHoldTarget", 100.0))
+            {
+                throw new InvalidOperationException("坐骑成长率保持目标无效，已停止执行。");
+            }
+
+            try
+            {
+                string journalPath = Path.Combine(
+                    Path.GetTempPath(),
+                    "mount-growth-rate-hold-" + Guid.NewGuid().ToString("N") + ".json");
+                string resultJson = WPELibrary.Lib.MountSpeed.MountGrowthRateHoldProcess.SetAndRestore(
+                    this.GetParameter("MountGrowthRateHoldLaunchContext") as
+                        WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotLaunchContext,
+                    this.GetParameter("MountGrowthRateHoldStartTicks", 0L),
+                    this.GetParameter("MountGrowthRateHoldExecutable", string.Empty),
+                    this.GetParameter("MountGrowthRateHoldPlayerId", 0),
+                    this.GetParameter("MountGrowthRateHoldMountId", 0L),
+                    this.GetParameter("MountGrowthRateHoldRideInstanceId", string.Empty),
+                    this.GetParameter("MountGrowthRateHoldStartupGrowthRate", 0.0),
+                    this.GetParameter("MountGrowthRateHoldStartupGrowthAddress", 0UL),
+                    journalPath,
+                    this.cts == null ? CancellationToken.None : this.cts.Token);
+                Newtonsoft.Json.Linq.JObject result =
+                    Newtonsoft.Json.Linq.JObject.Parse(resultJson);
+                string setStatus = result.Value<string>("setStatus") ?? "unknown";
+                string restoreStatus = result.Value<string>("restoreStatus") ?? "unknown";
+                Newtonsoft.Json.Linq.JObject setResultForError = result["setResult"] as
+                    Newtonsoft.Json.Linq.JObject;
+                Newtonsoft.Json.Linq.JObject restoreResultForError = result["restoreResult"] as
+                    Newtonsoft.Json.Linq.JObject;
+                string operationError = result.Value<string>("error");
+                if (string.IsNullOrWhiteSpace(operationError) && restoreResultForError != null)
+                {
+                    operationError = restoreResultForError.Value<string>("error");
+                }
+                if (string.IsNullOrWhiteSpace(operationError) && setResultForError != null)
+                {
+                    operationError = setResultForError.Value<string>("error");
+                }
+                Socket_Operation.DoLog(
+                    "MountGrowthRateHold",
+                    "成长率运行结果：写入=" + setStatus + "，停止恢复=" + restoreStatus + "。" +
+                    (string.IsNullOrWhiteSpace(operationError)
+                        ? string.Empty
+                        : " " + operationError));
+
+                if (!string.Equals(setStatus, "field_verified", StringComparison.Ordinal))
+                {
+                    bool writeAttempted = setResultForError != null &&
+                        setResultForError.Value<bool?>("writeAttempted") == true;
+                    bool restored = string.Equals(restoreStatus, "restored", StringComparison.Ordinal);
+                    if (writeAttempted && !restored)
+                    {
+                        this.mountGrowthRateHoldCleanupFailed = true;
+                    }
+                    this.LastRunFailureReason = "坐骑成长率写入未能确认：" + setStatus +
+                        (string.IsNullOrWhiteSpace(operationError)
+                            ? string.Empty
+                            : "；" + operationError) +
+                        (writeAttempted && !restored
+                            ? "；恢复日志：" + journalPath
+                            : string.Empty);
+                    throw new InvalidOperationException(this.LastRunFailureReason);
+                }
+
+                if (!string.Equals(restoreStatus, "restored", StringComparison.Ordinal))
+                {
+                    bool writeAttemptedForSuccess = setResultForError != null &&
+                        setResultForError.Value<bool?>("writeAttempted") == true;
+                    bool noRestoreNeeded = string.Equals(
+                            restoreStatus,
+                            "not_needed",
+                            StringComparison.Ordinal) &&
+                        !writeAttemptedForSuccess &&
+                        string.Equals(setStatus, "field_verified", StringComparison.Ordinal);
+                    if (noRestoreNeeded)
+                    {
+                        return;
+                    }
+                    this.mountGrowthRateHoldCleanupFailed = true;
+                    this.LastRunFailureReason = "停止后坐骑成长率恢复未能确认：" + restoreStatus +
+                        (string.IsNullOrWhiteSpace(operationError)
+                            ? string.Empty
+                            : "；" + operationError) +
+                        "；恢复日志：" + journalPath;
+                    throw new InvalidOperationException(this.LastRunFailureReason);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (string.IsNullOrWhiteSpace(this.LastRunFailureReason))
+                {
+                    // A subprocess error can follow a write attempt. Keep the
+                    // run marked as requiring inspection instead of hiding it
+                    // behind BackgroundWorker cancellation.
+                    this.mountGrowthRateHoldCleanupFailed = true;
+                    this.LastRunFailureReason = ex.Message;
+                }
+                throw;
+            }
+        }
+
+        private bool HasShimenTaskInstructionRows()
+        {
+            if (this.RobotInstruction == null || this.RobotInstruction.Rows.Count <= 0)
+            {
+                return false;
+            }
+
+            foreach (DataRow row in this.RobotInstruction.Rows)
+            {
+                if (row == null || row["Type"] == null || row["Type"] == DBNull.Value)
+                {
+                    continue;
+                }
+
+                if (Convert.ToInt32(row["Type"]) ==
+                    (int)Socket_Cache.Robot.InstructionType.ShimenTask)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool TryPrepareShimenTaskRuntime()
+        {
+            object configuredReader;
+            IShimenTaskMemoryReader reader = this._parameters.TryGetValue(
+                    "ShimenTaskMemoryReader",
+                    out configuredReader)
+                ? configuredReader as IShimenTaskMemoryReader
+                : null;
+            if (reader == null)
+            {
+                this.LastStartFailureReason =
+                    "师门任务未配置 Android LuaJIT 只读任务读取器，已停止且不会发送。";
+                Socket_Operation.DoLog(
+                    nameof(TryPrepareShimenTaskRuntime),
+                    this.LastStartFailureReason);
+                return false;
+            }
+
+            object configuredSlots;
+            ShimenTaskPacketTemplateSlots packetSlots = this._parameters.TryGetValue(
+                    "ShimenTaskPacketTemplateSlots",
+                    out configuredSlots)
+                ? configuredSlots as ShimenTaskPacketTemplateSlots
+                : null;
+            if (packetSlots == null)
+            {
+                packetSlots = new ShimenTaskPacketTemplateSlots();
+                this._parameters["ShimenTaskPacketTemplateSlots"] = packetSlots;
+            }
+
+            object configuredRoute;
+            ShimenTaskSocketRouteTemplate routeTemplate = this._parameters.TryGetValue(
+                    "ShimenTaskSocketRouteTemplate",
+                    out configuredRoute)
+                ? configuredRoute as ShimenTaskSocketRouteTemplate
+                : null;
+            object configuredAuthorization;
+            ShimenTaskLiveSendAuthorization authorization = this._parameters.TryGetValue(
+                    "ShimenTaskLiveSendAuthorizationToken",
+                    out configuredAuthorization)
+                ? configuredAuthorization as ShimenTaskLiveSendAuthorization
+                : null;
+
+            object configuredSender;
+            IShimenTaskPacketSender sender = this._parameters.TryGetValue(
+                    "ShimenTaskPacketSender",
+                    out configuredSender)
+                ? configuredSender as IShimenTaskPacketSender
+                : null;
+            if (sender == null && authorization != null && routeTemplate != null)
+            {
+                sender = new ShimenTaskSocketPacketSender(
+                    packetSlots,
+                    routeTemplate,
+                    authorization,
+                    this.GetParameter("ShimenTaskPresetId", Guid.Empty));
+            }
+            if (sender == null)
+            {
+                sender = new FailClosedShimenTaskPacketSender();
+            }
+            this._parameters["ShimenTaskPacketSender"] = sender;
+            bool allowLiveSend = this.GetParameter(
+                    "ShimenTaskLiveSendAuthorization",
+                    false) ||
+                authorization != null;
+            bool senderConfigured = false;
+            try
+            {
+                senderConfigured = sender != null && sender.IsConfigured;
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(
+                    nameof(TryPrepareShimenTaskRuntime),
+                    "师门任务封包发送器配置检查失败：" + ex.Message);
+            }
+            Stopwatch startupStopwatch = this.GetParameter(
+                "ShimenTaskStartupStopwatch") as Stopwatch;
+            ShimenTaskFlowResult result = new ShimenTaskFlowRunner().Run(
+                reader,
+                sender,
+                false,
+                CancellationToken.None,
+                startupStopwatch);
+            this._parameters["ShimenTaskFlowResult"] = result;
+            this._parameters["ShimenTaskInitialSnapshot"] = result.Snapshot;
+            this._parameters["ShimenTaskLiveLoopEnabled"] =
+                allowLiveSend && senderConfigured;
+            this.ReadOnlySnapshotStatus = result.Describe();
+            Socket_Operation.DoLog(
+                "ShimenTaskFlow",
+                this.ReadOnlySnapshotStatus.Replace("\r\n", " "));
+            if (!result.Succeeded)
+            {
+                this.LastStartFailureReason = string.IsNullOrWhiteSpace(result.Error)
+                    ? "师门任务内存流程校验失败。"
+                    : result.Error;
+                return false;
+            }
+            return true;
+        }
+
         private bool TryPrepareMountSpeedRuntime()
         {
             // Callers that still provide an explicit Windows layout keep the
@@ -854,6 +1631,36 @@ public class Socket_Robot
                     "开始读取当前坐骑、21 张炼化卡并绑定本次 A050 出站方向。",
                     null,
                     null);
+            }
+            string preferredRefineRideInstanceId = string.Empty;
+            if (hasMountRefineTarget &&
+                !string.IsNullOrWhiteSpace(preset.RefinePacketHex))
+            {
+                WPELibrary.Lib.MountSpeed.MountRefineA050PacketTemplate configuredTemplate;
+                string configuredTemplateError;
+                if (!WPELibrary.Lib.MountSpeed.MountRefineA050PacketTemplate.TryCreateFromHex(
+                        preset.RefinePacketHex,
+                        "preset-read-binding",
+                        out configuredTemplate,
+                        out configuredTemplateError))
+                {
+                    this.LastStartFailureReason =
+                        "坐骑炼化预设发送包无效：" + configuredTemplateError +
+                        "；已停止且不会发送。";
+                    Socket_Operation.DoLog(
+                        nameof(TryPrepareMountSpeedRuntime),
+                        this.LastStartFailureReason);
+                    this.WriteMountRefineDiagnostic(
+                        "preflight_failed",
+                        "mount_refine_a050_preset_invalid",
+                        this.LastStartFailureReason,
+                        null,
+                        false);
+                    return false;
+                }
+                preferredRefineRideInstanceId = configuredTemplate.RideInstanceId;
+                this._parameters["MountRefinePreferredRideInstanceId"] =
+                    preferredRefineRideInstanceId;
             }
             WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader reader =
                 this.GetParameter("MountStatusAndroidSnapshotReader") as
@@ -883,7 +1690,8 @@ public class Socket_Robot
             {
                 result = this.ReadMountPreflightSnapshot(
                     reader,
-                    hasMountRefineTarget);
+                    hasMountRefineTarget,
+                    preferredRefineRideInstanceId);
             }
             catch (Exception ex)
             {
@@ -921,7 +1729,9 @@ public class Socket_Robot
 
             WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot androidSnapshot =
                 result.Snapshot;
-            if (androidSnapshot.IsMounted == true)
+            bool usesSelectedRefineRide =
+                !string.IsNullOrWhiteSpace(preferredRefineRideInstanceId);
+            if (androidSnapshot.IsMounted == true || usesSelectedRefineRide)
             {
                 WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot current =
                     (androidSnapshot.RideInstances ??
@@ -932,14 +1742,24 @@ public class Socket_Robot
                             instance.RideInstanceId,
                             androidSnapshot.ActiveRideInstanceId,
                             StringComparison.Ordinal));
-                if (!string.Equals(
+                string requiredBindingStatus = usesSelectedRefineRide
+                    ? "refine_selected"
+                    : "bound";
+                bool bindingMatches = string.Equals(
                         androidSnapshot.RideBindingStatus,
-                        "bound",
-                        StringComparison.Ordinal) ||
-                    current == null || current.Skills == null || current.Skills.Count == 0)
+                        requiredBindingStatus,
+                        StringComparison.Ordinal) &&
+                    current != null && current.Skills != null && current.Skills.Count == 3 &&
+                    (!usesSelectedRefineRide || string.Equals(
+                        androidSnapshot.ActiveRideInstanceId,
+                        preferredRefineRideInstanceId,
+                        StringComparison.Ordinal));
+                if (!bindingMatches)
                 {
                     this.LastStartFailureReason =
-                        "当前坐骑技能只读读取失败：无法唯一绑定正在骑乘的坐骑实例或技能列表为空。";
+                        usesSelectedRefineRide
+                            ? "当前坐骑技能只读读取失败：无法把炼化页面选中坐骑唯一绑定到预设发送包实例。"
+                            : "当前坐骑技能只读读取失败：无法唯一绑定正在骑乘的坐骑实例或技能列表为空。";
                     Socket_Operation.DoLog(
                         nameof(TryPrepareMountSpeedRuntime),
                         this.LastStartFailureReason);
@@ -1034,7 +1854,8 @@ public class Socket_Robot
         private WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReadResult
             ReadMountPreflightSnapshot(
                 WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader reader,
-                bool requireCompleteRefineCards)
+                bool requireCompleteRefineCards,
+                string preferredRefineRideInstanceId)
         {
             const int maxAttempts = 3;
             WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReadResult result = null;
@@ -1042,7 +1863,8 @@ public class Socket_Robot
             {
                 result = reader.ReadSnapshotAsync(
                         CancellationToken.None,
-                        requireCompleteRefineCards)
+                        requireCompleteRefineCards,
+                        preferredRefineRideInstanceId)
                     .GetAwaiter()
                     .GetResult();
                 bool incompleteCards = requireCompleteRefineCards &&
@@ -1142,8 +1964,13 @@ public class Socket_Robot
             }
 
             this._parameters["MountRefineRuntimeEnabled"] = true;
+            string preferredRefineRideInstanceId = this.GetParameter<string>(
+                "MountRefinePreferredRideInstanceId",
+                string.Empty);
             this._parameters["MountRefineSnapshotSource"] =
-                new WPELibrary.Lib.MountSpeed.MountAndroidRefineSnapshotSource(reader);
+                new WPELibrary.Lib.MountSpeed.MountAndroidRefineSnapshotSource(
+                    reader,
+                    preferredRefineRideInstanceId);
             this._parameters["MountRideRefineTargetPreview"] = refinePreview;
 
             WPELibrary.Lib.MountSpeed.MountRefineA050PacketTemplate packetTemplate = null;
@@ -1190,6 +2017,29 @@ public class Socket_Robot
 
             if (captureBound)
             {
+                if (!string.IsNullOrWhiteSpace(preset.RefinePacketHex))
+                {
+                    WPELibrary.Lib.MountSpeed.MountRefineA050PacketTemplate configuredTemplate;
+                    string packetHexError;
+                    if (!WPELibrary.Lib.MountSpeed.MountRefineA050PacketTemplate.TryCreateFromHex(
+                            preset.RefinePacketHex,
+                            evidenceId + "-preset",
+                            out configuredTemplate,
+                            out packetHexError))
+                    {
+                        captureBound = false;
+                        bindingError = packetHexError;
+                        bindingDiagnostics = "预设发送包十六进制校验失败，发送闸门保持关闭。";
+                    }
+                    else
+                    {
+                        packetTemplate = configuredTemplate;
+                    }
+                }
+            }
+
+            if (captureBound)
+            {
                 this._parameters["MountRefineA050PacketTemplate"] = packetTemplate;
                 this._parameters["MountRefineA050RouteTemplate"] = routeTemplate;
                 string bindingStatus = string.Format(
@@ -1200,8 +2050,8 @@ public class Socket_Robot
                     routeTemplate.PacketTo);
                 if (autoSendRequested)
                 {
-                    // Starting the explicitly selected first-ride refine
-                    // assistant is the user's run-scoped authorization. A
+                    // Starting an explicitly selected ride-refine assistant
+                    // is the user's run-scoped authorization. A
                     // valid current outbound capture completes protocol
                     // acceptance for this run only; no flag is persisted.
                     this._parameters["MountRefineProtocolVerified"] = true;
@@ -1718,8 +2568,13 @@ public class Socket_Robot
                     WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader;
                 if (reader != null)
                 {
+                    string preferredRefineRideInstanceId = this.GetParameter<string>(
+                        "MountRefinePreferredRideInstanceId",
+                        string.Empty);
                     snapshotSource =
-                        new WPELibrary.Lib.MountSpeed.MountAndroidRefineSnapshotSource(reader);
+                        new WPELibrary.Lib.MountSpeed.MountAndroidRefineSnapshotSource(
+                            reader,
+                            preferredRefineRideInstanceId);
                 }
             }
 
@@ -1729,10 +2584,32 @@ public class Socket_Robot
                     "坐骑炼化只读读取器未配置，已停止且不会发送。");
             }
 
+            string robotName = (this.RobotName ?? string.Empty).Trim();
+            string selectedRefineRideInstanceId = string.Empty;
+            if (string.Equals(
+                robotName,
+                Socket_Cache.Robot.ThirdRideRefinePresetName,
+                StringComparison.Ordinal))
+            {
+                selectedRefineRideInstanceId = this.GetParameter<string>(
+                    "MountRefinePreferredRideInstanceId",
+                    string.Empty);
+            }
+            else if (string.Equals(
+                robotName,
+                Socket_Cache.Robot.FourthRideRefinePresetName,
+                StringComparison.Ordinal))
+            {
+                selectedRefineRideInstanceId = this.GetParameter<string>(
+                    "MountRefinePreferredRideInstanceId",
+                    string.Empty);
+            }
+
             WPELibrary.Lib.MountSpeed.MountRefineConfiguration configuration =
                 new WPELibrary.Lib.MountSpeed.MountRefineConfiguration
                 {
                     Preset = preset,
+                    SelectedRefineRideInstanceId = selectedRefineRideInstanceId,
                     // 默认不按炼化次数自动停止；只有命中目标、手动停止或安全故障才结束。
                     MaxAttempts = this.GetParameter("MountRefineMaxAttempts", 0),
                     ResultConfirmTimeoutMs = this.GetParameter(
@@ -2182,16 +3059,17 @@ public class Socket_Robot
             bool hasCurrentAutoDigPacket = TreasurePacketRuntime.HasCurrentAutoDigPacket();
             bool useNativeAutoDig = hasCurrentAutoDigPacket &&
                 (!hasCurrentUseTemplate || !hasCurrentJumpTemplate);
-            bool isLuoshenFuPreset = this.IsLuoshenFuTreasureMapPreset();
+            TreasureMapPresetSendPolicy presetSendPolicy =
+                this.GetTreasureMapPresetSendPolicy();
             bool isXiangjuChangAnPreset = this.IsXiangjuChangAnTreasureMapPreset();
 
             TreasureMapPresetOptions options = new TreasureMapPresetOptions
             {
                 LiveSendEnabled = liveSendEnabled,
-                // 洛神赋沿用已复制的藏宝图指令，但其当前客户端运行日志
-                // 没有提供 0x5828 Jump 模板；仅对这一预设开放现有的
-                // 当前连接编码兼容路径，其他预设继续严格要求会话模板。
-                RequireCurrentPacketTemplates = !isLuoshenFuPreset,
+                // 每个藏宝图预设按精确名称解析自己的发送策略。一个预设的
+                // 兼容边界不得通过共享名称列表隐式影响其他预设。
+                RequireCurrentPacketTemplates =
+                    presetSendPolicy.RequireCurrentPacketTemplates,
                 Mode = mode,
                 Version = instruction.Version,
                 ControlMode = instruction.Control,
@@ -2207,7 +3085,12 @@ public class Socket_Robot
                 UseNativeAutoDig = useNativeAutoDig,
                 RequireActionTemplateBeforeJump = isXiangjuChangAnPreset,
                 ArrivalEvidenceTimeoutMilliseconds = 1000,
-                TargetStabilityMilliseconds = 20,
+                // 首次只对“紫气东来”延长目标稳定确认窗口；仍校验同一
+                // member/package/scene/x/y，不改变模板、路由或发送规则。
+                TargetStabilityMilliseconds =
+                    presetSendPolicy.TargetStabilityMilliseconds,
+                TargetStabilitySampleCount =
+                    presetSendPolicy.TargetStabilitySampleCount,
                 // 现场正常客户端样本的 Jump→Use 间隔至少约 1.6 秒；原先
                 // 300ms 会在地图状态尚未稳定时继续发 Use，连续多张后容易
                 // 触发服务端断线。生产入口留出保守缓冲，不改离线默认值。
@@ -2271,7 +3154,7 @@ public class Socket_Robot
                         stream,
                         new TreasureMapRuntimePacketSender(
                             isXiangjuChangAnPreset,
-                            isLuoshenFuPreset),
+                            presetSendPolicy.AllowMissingSessionSequence),
                         () => TreasurePacketRuntime.GetCurrentRoute(),
                         entry => {
                             if (entry.RunId != Guid.Empty)
@@ -2561,6 +3444,30 @@ public class Socket_Robot
 
         private void DisposeOwnedVisionResources()
         {
+            IDisposable shimenTaskReader = this.GetParameter(
+                "ShimenTaskMemoryReader") as IDisposable;
+            bool ownsShimenTaskReader = this.GetParameter(
+                "OwnShimenTaskMemoryReader",
+                false);
+            if (ownsShimenTaskReader)
+            {
+                this._parameters.Remove("ShimenTaskMemoryReader");
+                this._parameters.Remove("OwnShimenTaskMemoryReader");
+                if (shimenTaskReader != null)
+                {
+                    try
+                    {
+                        shimenTaskReader.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        Socket_Operation.DoLog(
+                            nameof(DisposeOwnedVisionResources),
+                            ex.Message);
+                    }
+                }
+            }
+
             IDisposable mountStatusReader = this.GetParameter(
                 "MountStatusAndroidSnapshotReader") as IDisposable;
             this._parameters.Remove("MountStatusAndroidSnapshotReader");
@@ -2633,10 +3540,112 @@ public class Socket_Robot
             return name.StartsWith("相聚长安", StringComparison.Ordinal);
         }
 
-        private bool IsLuoshenFuTreasureMapPreset()
+        private sealed class TreasureMapPresetSendPolicy
+        {
+            public TreasureMapPresetSendPolicy(
+                bool requireCurrentPacketTemplates,
+                bool allowMissingSessionSequence,
+                int targetStabilityMilliseconds,
+                int targetStabilitySampleCount)
+            {
+                this.RequireCurrentPacketTemplates = requireCurrentPacketTemplates;
+                this.AllowMissingSessionSequence = allowMissingSessionSequence;
+                this.TargetStabilityMilliseconds = targetStabilityMilliseconds;
+                this.TargetStabilitySampleCount = targetStabilitySampleCount;
+            }
+
+            public bool RequireCurrentPacketTemplates { get; private set; }
+            public bool AllowMissingSessionSequence { get; private set; }
+            public int TargetStabilityMilliseconds { get; private set; }
+            public int TargetStabilitySampleCount { get; private set; }
+        }
+
+        private TreasureMapPresetSendPolicy GetTreasureMapPresetSendPolicy()
         {
             string name = (this.RobotName ?? string.Empty).Trim();
-            return string.Equals(name, "洛神赋", StringComparison.Ordinal);
+            if (string.Equals(name, "洛神赋", StringComparison.Ordinal))
+            {
+                return CreateLuoshenFuTreasureMapSendPolicy();
+            }
+            if (string.Equals(name, "紫零", StringComparison.Ordinal))
+            {
+                return CreateZilingTreasureMapSendPolicy();
+            }
+            if (string.Equals(name, "紫气东来", StringComparison.Ordinal))
+            {
+                return CreateZiqiDonglaiTreasureMapSendPolicy();
+            }
+            if (string.Equals(name, "国子监", StringComparison.Ordinal))
+            {
+                return CreateGuozijianTreasureMapSendPolicy();
+            }
+            if (string.Equals(name, "照山河", StringComparison.Ordinal))
+            {
+                return CreateZhaoshanheTreasureMapSendPolicy();
+            }
+            if (string.Equals(name, "一战倾城藏宝图", StringComparison.Ordinal))
+            {
+                return CreateYizhanQingchengTreasureMapSendPolicy();
+            }
+            return new TreasureMapPresetSendPolicy(
+                true,
+                false,
+                DefaultTreasureMapTargetStabilityMilliseconds,
+                DefaultTreasureMapTargetStabilitySampleCount);
+        }
+
+        private static TreasureMapPresetSendPolicy CreateLuoshenFuTreasureMapSendPolicy()
+        {
+            return new TreasureMapPresetSendPolicy(
+                false,
+                true,
+                DefaultTreasureMapTargetStabilityMilliseconds,
+                DefaultTreasureMapTargetStabilitySampleCount);
+        }
+
+        private static TreasureMapPresetSendPolicy CreateZilingTreasureMapSendPolicy()
+        {
+            return new TreasureMapPresetSendPolicy(
+                false,
+                true,
+                DefaultTreasureMapTargetStabilityMilliseconds,
+                DefaultTreasureMapTargetStabilitySampleCount);
+        }
+
+        private static TreasureMapPresetSendPolicy CreateZiqiDonglaiTreasureMapSendPolicy()
+        {
+            return new TreasureMapPresetSendPolicy(
+                false,
+                true,
+                ZiqiDonglaiTreasureMapTargetStabilityMilliseconds,
+                ZiqiDonglaiTreasureMapTargetStabilitySampleCount);
+        }
+
+        private static TreasureMapPresetSendPolicy CreateGuozijianTreasureMapSendPolicy()
+        {
+            return new TreasureMapPresetSendPolicy(
+                false,
+                true,
+                DefaultTreasureMapTargetStabilityMilliseconds,
+                DefaultTreasureMapTargetStabilitySampleCount);
+        }
+
+        private static TreasureMapPresetSendPolicy CreateZhaoshanheTreasureMapSendPolicy()
+        {
+            return new TreasureMapPresetSendPolicy(
+                false,
+                true,
+                DefaultTreasureMapTargetStabilityMilliseconds,
+                DefaultTreasureMapTargetStabilitySampleCount);
+        }
+
+        private static TreasureMapPresetSendPolicy CreateYizhanQingchengTreasureMapSendPolicy()
+        {
+            return new TreasureMapPresetSendPolicy(
+                false,
+                true,
+                DefaultTreasureMapTargetStabilityMilliseconds,
+                DefaultTreasureMapTargetStabilitySampleCount);
         }
 
         #region//藏宝图运行控制

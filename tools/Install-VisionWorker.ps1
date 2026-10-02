@@ -65,6 +65,10 @@ if ($python -ne $embeddedPython) {
 }
 
 if (-not $Offline) {
+    if ($python -eq $embeddedPython) {
+        & $venvPython -m pip install -r (Join-Path $workerDirectory "requirements.txt")
+        if ($LASTEXITCODE -ne 0) { throw "Vision worker dependency installation failed." }
+    }
     & $venvPython -m pip check
     if ($LASTEXITCODE -ne 0) { throw "Vision worker dependency check failed." }
 }

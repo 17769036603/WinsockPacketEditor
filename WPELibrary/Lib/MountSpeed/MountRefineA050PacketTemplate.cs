@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
 
 namespace WPELibrary.Lib.MountSpeed
 {
@@ -26,6 +29,23 @@ namespace WPELibrary.Lib.MountSpeed
         public byte[] FixtureBytes
         {
             get { return (byte[])_fixtureBytes.Clone(); }
+        }
+
+        /// <summary>
+        /// 预设帧中经过结构校验的 19 位坐骑实例 ID。
+        /// 该值只用于把只读炼化页绑定到同一个实例，不用于改写封包。
+        /// </summary>
+        public string RideInstanceId
+        {
+            get
+            {
+                return _fixtureBytes == null || _fixtureBytes.Length != FrameLength
+                    ? string.Empty
+                    : Encoding.ASCII.GetString(
+                        _fixtureBytes,
+                        RideInstanceIdOffset,
+                        RideInstanceIdLength);
+            }
         }
 
         public bool IsValid
@@ -103,6 +123,66 @@ namespace WPELibrary.Lib.MountSpeed
 
             template = new MountRefineA050PacketTemplate(capturedPacket, evidenceId.Trim());
             return true;
+        }
+
+        /// <summary>
+        /// 从预设保存的十六进制文本创建模板。解析和 A050 结构校验均为离线操作，
+        /// 不读取进程、不解析 Socket，也不执行发送。
+        /// </summary>
+        public static bool TryCreateFromHex(
+            string hex,
+            string evidenceId,
+            out MountRefineA050PacketTemplate template,
+            out string error)
+        {
+            template = null;
+            error = string.Empty;
+            if (string.IsNullOrWhiteSpace(hex))
+            {
+                error = "mount_refine_a050_hex_empty";
+                return false;
+            }
+
+            string[] tokens = hex.Split(
+                new[] { ' ', '\t', '\r', '\n', ',', ';', ':', '-' },
+                StringSplitOptions.RemoveEmptyEntries);
+            List<byte> bytes = new List<byte>();
+            foreach (string rawToken in tokens)
+            {
+                string token = (rawToken ?? string.Empty).Trim();
+                if (token.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                {
+                    token = token.Substring(2);
+                }
+
+                if (token.Length == 0)
+                {
+                    continue;
+                }
+
+                if ((token.Length & 1) != 0)
+                {
+                    error = "mount_refine_a050_hex_odd_length";
+                    return false;
+                }
+
+                for (int index = 0; index < token.Length; index += 2)
+                {
+                    byte value;
+                    if (!byte.TryParse(
+                            token.Substring(index, 2),
+                            NumberStyles.AllowHexSpecifier,
+                            CultureInfo.InvariantCulture,
+                            out value))
+                    {
+                        error = "mount_refine_a050_hex_invalid";
+                        return false;
+                    }
+                    bytes.Add(value);
+                }
+            }
+
+            return TryCreate(bytes.ToArray(), evidenceId, out template, out error);
         }
 
         /// <summary>

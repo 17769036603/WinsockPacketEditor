@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -28,6 +29,8 @@ namespace TreasureC6StreamRegression
                 TestDirectTargetPreparation();
                 TestCurrentSessionUseTemplateBinding();
                 TestRobotInstructionContract();
+                TestTreasureMapPresetPolicyIsolation();
+                TestRunnerRequiresConsecutiveStableSnapshots();
                 TestInstructionCodec();
                 TestEvidenceDecoder();
                 TestPersistentRunLogStore();
@@ -37,6 +40,7 @@ namespace TreasureC6StreamRegression
                 TestRunnerDoesNotJumpWithoutCompleteActionTemplate();
                 TestRunnerKeepsJumpWhenUseTemplateIsMissing();
                 TestRunnerUsesGuardedJumpWithValidatedAutoDig();
+                TestRunnerStopsAndReleasesControllerAfterAmbiguousSend();
                 TestRunnerExclusiveControlRejectsConcurrentRun();
                 TestRunnerUsesOriginalSlotWhenSnapshotChangesAfterJump();
                 TestRunnerDoesNotWaitForC6EventBeforeUse();
@@ -1770,6 +1774,86 @@ namespace TreasureC6StreamRegression
                 "a transport failure is not silently skipped as an ordinary target failure");
         }
 
+        private static void TestRunnerStopsAndReleasesControllerAfterAmbiguousSend()
+        {
+            RegressionStream stream = new RegressionStream
+            {
+                Snapshot = new TreasureC6InventorySnapshot(
+                    "c6-ambiguous-session",
+                    "ambiguous-snapshot",
+                    new[] { new TreasureC6InventoryItem("member-a", 13, 1009, 19, 65) },
+                    "31531|7373672|/system/bin/app_process64",
+                    "bagmgr:fixture/m_ItemDict:fixture")
+            };
+            RegressionSender sender = new RegressionSender
+            {
+                FailuresRemaining = 0,
+                FailureOnCall = 1,
+                FailureCode = "synthetic_ambiguous_send",
+                FailureDisposition = TreasureMapPacketSendDisposition.Ambiguous,
+                Stream = stream
+            };
+            List<TreasureMapLogEntry> logs = new List<TreasureMapLogEntry>();
+            TreasureMapPresetOptions options = new TreasureMapPresetOptions
+            {
+                LiveSendEnabled = true,
+                Mode = TreasureMapExecutionMode.Continuous,
+                ControlMode = TreasureControlMode.Exclusive,
+                StopContinuousOnTransportFailure = false
+            };
+            TreasureMapPresetRunner runner = new TreasureMapPresetRunner(
+                stream,
+                sender,
+                () => new TreasurePacketRoute(
+                    Socket_Cache.SocketPacket.PacketType.WS2_Send,
+                    "127.0.0.1:50000",
+                    "127.0.0.1:12345"),
+                logs.Add,
+                options);
+
+            runner.Run();
+
+            Assert(sender.Calls == 1,
+                "an ambiguous send is never retried or skipped");
+            Assert(runner.CurrentState == TreasureMapState.Ambiguous,
+                "continuous mode preserves the ambiguous terminal state");
+            Assert(runner.LastError == "synthetic_ambiguous_send",
+                "the ambiguous action exposes its exact failure code");
+            Assert(logs.Any(entry =>
+                    entry.Code == "stopped_after_ambiguous:synthetic_ambiguous_send" &&
+                    !entry.Success),
+                "continuous mode records why it stopped after ambiguity");
+            Assert(!logs.Any(entry => entry.Code == "target_failed_skipped"),
+                "an ambiguous action is not treated as an ordinary failed target");
+
+            TreasureMapPresetRunner nextRunner = new TreasureMapPresetRunner(
+                new RegressionStream
+                {
+                    Snapshot = new TreasureC6InventorySnapshot(
+                        "c6-after-ambiguous-session",
+                        "after-ambiguous-snapshot",
+                        new TreasureC6InventoryItem[0],
+                        "31531|7373672|/system/bin/app_process64",
+                        "bagmgr:fixture/m_ItemDict:fixture")
+                },
+                new RegressionSender { FailuresRemaining = 0 },
+                () => new TreasurePacketRoute(
+                    Socket_Cache.SocketPacket.PacketType.WS2_Send,
+                    "127.0.0.1:50000",
+                    "127.0.0.1:12345"),
+                entry => { },
+                new TreasureMapPresetOptions
+                {
+                    LiveSendEnabled = true,
+                    Mode = TreasureMapExecutionMode.CurrentSnapshot,
+                    ControlMode = TreasureControlMode.Exclusive
+                });
+            nextRunner.Run();
+
+            Assert(nextRunner.CurrentState != TreasureMapState.ControllerConflict,
+                "the ambiguous runner releases the exclusive controller lease");
+        }
+
         private static void TestRunnerExclusiveControlRejectsConcurrentRun()
         {
             CancellationTokenSource firstCancellation = new CancellationTokenSource();
@@ -1952,6 +2036,160 @@ namespace TreasureC6StreamRegression
             Assert(Socket_Cache.Robot.GetName_ByInstructionType(
                 Socket_Cache.Robot.InstructionType.TreasureMap) == "藏宝图流程",
                 "TreasureMap instruction display name");
+        }
+
+        private static void TestTreasureMapPresetPolicyIsolation()
+        {
+            Socket_Robot robot = new Socket_Robot();
+            MethodInfo policyMethod = typeof(Socket_Robot).GetMethod(
+                "GetTreasureMapPresetSendPolicy",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert(policyMethod != null, "treasure-map policy resolver exists");
+
+            AssertTreasureMapPresetPolicy(
+                robot,
+                policyMethod,
+                "紫气东来",
+                false,
+                true,
+                80,
+                3,
+                "紫气东来 uses its own compatible send policy");
+            AssertTreasureMapPresetPolicy(
+                robot,
+                policyMethod,
+                "紫零",
+                false,
+                true,
+                20,
+                0,
+                "紫零 keeps its independent compatible send policy");
+            AssertTreasureMapPresetPolicy(
+                robot,
+                policyMethod,
+                "照山河",
+                false,
+                true,
+                20,
+                0,
+                "照山河 uses its own compatible send policy");
+            AssertTreasureMapPresetPolicy(
+                robot,
+                policyMethod,
+                "紫气东来测试",
+                true,
+                false,
+                20,
+                0,
+                "unregistered similar names retain the strict default policy");
+        }
+
+        private static void TestRunnerRequiresConsecutiveStableSnapshots()
+        {
+            CancellationTokenSource cancellation = new CancellationTokenSource();
+            RegressionStream stream = new RegressionStream
+            {
+                StopSource = cancellation,
+                Snapshot = new TreasureC6InventorySnapshot(
+                    "c6-stability-sample-session",
+                    "stability-snapshot-1",
+                    new[] { new TreasureC6InventoryItem("member-a", 13, 1009, 19, 65) },
+                    "31531|7373672|/system/bin/app_process64",
+                    "bagmgr:fixture/m_ItemDict:fixture")
+            };
+            RegressionSender sender = new RegressionSender
+            {
+                FailuresRemaining = 0,
+                Stream = stream,
+                UsesBeforeConsumption = 1
+            };
+            TreasurePacketRoute route = new TreasurePacketRoute(
+                Socket_Cache.SocketPacket.PacketType.WS2_Send,
+                "127.0.0.1:50000",
+                "127.0.0.1:12345");
+            TreasureMapPresetOptions options = new TreasureMapPresetOptions
+            {
+                UseNativeAutoDig = false,
+                JumpUseDelayMilliseconds = 0,
+                NextTargetDelayMilliseconds = 0,
+                TargetStabilityMilliseconds = 120,
+                TargetStabilitySampleCount = 3,
+                ConsumptionConfirmTimeoutMilliseconds = 1000,
+                FailedTargetCooldownMilliseconds = 1,
+                LiveSendEnabled = true,
+                Mode = TreasureMapExecutionMode.CurrentSnapshot
+            };
+            List<TreasureMapLogEntry> logs = new List<TreasureMapLogEntry>();
+            TreasureMapPresetRunner runner = new TreasureMapPresetRunner(
+                stream,
+                sender,
+                () => route,
+                logs.Add,
+                options);
+
+            Task snapshotPublisher = Task.Run(() =>
+            {
+                Thread.Sleep(30);
+                stream.Snapshot = new TreasureC6InventorySnapshot(
+                    "c6-stability-sample-session",
+                    "stability-snapshot-2",
+                    stream.Snapshot.Items,
+                    stream.Snapshot.ProcessIdentity,
+                    stream.Snapshot.ContainerIdentity);
+                Thread.Sleep(30);
+                stream.Snapshot = new TreasureC6InventorySnapshot(
+                    "c6-stability-sample-session",
+                    "stability-snapshot-3",
+                    stream.Snapshot.Items,
+                    stream.Snapshot.ProcessIdentity,
+                    stream.Snapshot.ContainerIdentity);
+            });
+
+            runner.Run(cancellation.Token);
+            snapshotPublisher.Wait();
+
+            Assert(sender.Calls == 2,
+                "runner sends Jump and Use only after three stable snapshots");
+            Assert(logs.Any(entry => entry.Step == "target_stable" &&
+                                     entry.Code.IndexOf("samples:3", StringComparison.Ordinal) >= 0),
+                "runner records the required consecutive stable snapshot count");
+            Assert(!logs.Any(entry => entry.Code.StartsWith(
+                                       "target_stability_samples_insufficient",
+                                       StringComparison.Ordinal)),
+                "three distinct snapshot IDs satisfy the stability sample gate");
+        }
+
+        private static void AssertTreasureMapPresetPolicy(
+            Socket_Robot robot,
+            MethodInfo policyMethod,
+            string name,
+            bool expectedRequireCurrentTemplates,
+            bool expectedAllowMissingSequence,
+            int expectedTargetStabilityMilliseconds,
+            int expectedTargetStabilitySampleCount,
+            string description)
+        {
+            robot.RobotName = name;
+            object policy = policyMethod.Invoke(robot, null);
+            Assert(policy != null, description + ": policy exists");
+            Type policyType = policy.GetType();
+            PropertyInfo requireProperty = policyType.GetProperty(
+                "RequireCurrentPacketTemplates");
+            PropertyInfo sequenceProperty = policyType.GetProperty(
+                "AllowMissingSessionSequence");
+            PropertyInfo stabilityProperty = policyType.GetProperty(
+                "TargetStabilityMilliseconds");
+            PropertyInfo sampleCountProperty = policyType.GetProperty(
+                "TargetStabilitySampleCount");
+            Assert(requireProperty != null && sequenceProperty != null &&
+                   stabilityProperty != null && sampleCountProperty != null,
+                description + ": policy properties exist");
+            Assert(
+                (bool)requireProperty.GetValue(policy, null) == expectedRequireCurrentTemplates &&
+                (bool)sequenceProperty.GetValue(policy, null) == expectedAllowMissingSequence &&
+                (int)stabilityProperty.GetValue(policy, null) == expectedTargetStabilityMilliseconds &&
+                (int)sampleCountProperty.GetValue(policy, null) == expectedTargetStabilitySampleCount,
+                description);
         }
 
         private static JObject ReadyIdentity()

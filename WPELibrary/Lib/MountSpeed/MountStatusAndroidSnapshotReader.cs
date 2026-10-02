@@ -57,6 +57,16 @@ namespace WPELibrary.Lib.MountSpeed
         }
     }
 
+    public sealed class MountStatusAndroidSnapshotLaunchContext
+    {
+        public string AdbPath { get; internal set; }
+        public string PythonPath { get; internal set; }
+        public string ProbePath { get; internal set; }
+        public string Serial { get; internal set; }
+        public string RootBrokerPipe { get; internal set; }
+        public int ProcessId { get; internal set; }
+    }
+
     /// <summary>
     /// Windows-to-ADB/Python bridge for the Android LuaJIT read-only mount
     /// probe. The bridge only launches the probe and validates its snapshot;
@@ -89,6 +99,12 @@ namespace WPELibrary.Lib.MountSpeed
         private bool hasSuccessfulRead;
         private string lastProbeCachePath;
         private MountStatusReadDiagnostics lastReadDiagnostics;
+        private MountStatusAndroidSnapshotLaunchContext lastSuccessfulLaunchContext;
+
+        public MountStatusAndroidSnapshotLaunchContext LastSuccessfulLaunchContext
+        {
+            get { return this.lastSuccessfulLaunchContext; }
+        }
 
         public MountStatusAndroidSnapshotReader()
             : this(null, null, null, null, null)
@@ -121,6 +137,40 @@ namespace WPELibrary.Lib.MountSpeed
             CancellationToken cancellationToken,
             bool requireCompleteRefineCards)
         {
+            return await this.ReadSnapshotAsync(
+                cancellationToken,
+                requireCompleteRefineCards,
+                null).ConfigureAwait(false);
+        }
+
+        public async Task<MountStatusAndroidSnapshotReadResult> ReadSnapshotAsync(
+            CancellationToken cancellationToken,
+            bool requireCompleteRefineCards,
+            string preferredRefineRideInstanceId)
+        {
+            return await this.ReadSnapshotAsync(
+                cancellationToken,
+                requireCompleteRefineCards,
+                preferredRefineRideInstanceId,
+                false).ConfigureAwait(false);
+        }
+
+        public Task<MountStatusAndroidSnapshotReadResult> ReadSpeedOnlySnapshotAsync(
+            CancellationToken cancellationToken)
+        {
+            return this.ReadSnapshotAsync(
+                cancellationToken,
+                false,
+                null,
+                true);
+        }
+
+        private async Task<MountStatusAndroidSnapshotReadResult> ReadSnapshotAsync(
+            CancellationToken cancellationToken,
+            bool requireCompleteRefineCards,
+            string preferredRefineRideInstanceId,
+            bool speedOnly)
+        {
             bool gateEntered = false;
             Stopwatch totalStopwatch = Stopwatch.StartNew();
             try
@@ -139,12 +189,15 @@ namespace WPELibrary.Lib.MountSpeed
                         0,
                         false,
                         requireCompleteRefineCards,
-                        0),
+                        0,
+                        0,
+                        preferredRefineRideInstanceId,
+                        speedOnly),
                     CancellationToken.None).ConfigureAwait(false);
                 MountStatusReadDiagnostics diagnostics = this.lastReadDiagnostics ??
                     new MountStatusReadDiagnostics();
                 diagnostics.TotalMilliseconds = totalStopwatch.Elapsed.TotalMilliseconds;
-                if (snapshot != null &&
+                if (!speedOnly && snapshot != null &&
                     string.IsNullOrWhiteSpace(error) &&
                     !string.IsNullOrWhiteSpace(this.lastProbeCachePath) &&
                     File.Exists(this.lastProbeCachePath) &&
@@ -194,20 +247,14 @@ namespace WPELibrary.Lib.MountSpeed
                 return;
             }
 
-            MountStatusProbeWorker worker;
+            this.ReleaseProbeWorkerForExternalClient();
             AndroidRootShellSessionLease rootLease;
             lock (this.probeWorkerSync)
             {
-                worker = this.probeWorker;
-                this.probeWorker = null;
                 rootLease = this.rootSessionLease;
                 this.rootSessionLease = null;
                 this.rootSessionAdb = null;
                 this.rootSessionSerial = null;
-            }
-            if (worker != null)
-            {
-                worker.Dispose();
             }
             if (rootLease != null)
             {
@@ -217,6 +264,20 @@ namespace WPELibrary.Lib.MountSpeed
             // release itself after the worker has been cancelled. The reader
             // is no longer reachable after its owner releases it, so the
             // managed gate can be reclaimed normally.
+        }
+
+        internal void ReleaseProbeWorkerForExternalClient()
+        {
+            MountStatusProbeWorker worker;
+            lock (this.probeWorkerSync)
+            {
+                worker = this.probeWorker;
+                this.probeWorker = null;
+            }
+            if (worker != null)
+            {
+                worker.Dispose();
+            }
         }
 
         private AdbCommandResult RunProbeWorker(
@@ -287,10 +348,20 @@ namespace WPELibrary.Lib.MountSpeed
             bool forceDiscovery = false,
             bool requireCompleteRefineCards = false,
             int refineCardRetry = 0,
-            int cachedPlanRetry = 0)
+            int cachedPlanRetry = 0,
+            string preferredRefineRideInstanceId = null,
+            bool speedOnly = false)
         {
             error = string.Empty;
             cancellationToken.ThrowIfCancellationRequested();
+
+            preferredRefineRideInstanceId =
+                (preferredRefineRideInstanceId ?? string.Empty).Trim();
+            if (!IsValidRideInstanceId(preferredRefineRideInstanceId, true))
+            {
+                error = "预设 A050 中的坐骑实例 ID 无效。";
+                return null;
+            }
 
             string adbPath = ResolveAdbPath(this.configuredAdbPath);
             if (string.IsNullOrWhiteSpace(adbPath))
@@ -363,6 +434,8 @@ namespace WPELibrary.Lib.MountSpeed
                 probeRequest["cachePath"] = cachePath;
                 probeRequest["cacheOnly"] = cacheOnly;
                 probeRequest["requireCompleteRefineCards"] = requireCompleteRefineCards;
+                probeRequest["speedOnly"] = speedOnly;
+                probeRequest["preferredRefineRideInstanceId"] = preferredRefineRideInstanceId;
                 probeRequest["readTimeout"] = 8.0;
                 probe = this.RunProbeWorker(
                     pythonPath,
@@ -396,9 +469,18 @@ namespace WPELibrary.Lib.MountSpeed
                     {
                         probeArguments.Add("--cache-only");
                     }
+                    if (speedOnly)
+                    {
+                        probeArguments.Add("--speed-only");
+                    }
                     if (requireCompleteRefineCards)
                     {
                         probeArguments.Add("--require-complete-refine-cards");
+                    }
+                    if (!string.IsNullOrWhiteSpace(preferredRefineRideInstanceId))
+                    {
+                        probeArguments.Add("--preferred-refine-ride-instance-id");
+                        probeArguments.Add(preferredRefineRideInstanceId);
                     }
                     probe = RunProcess(
                         pythonPath,
@@ -436,7 +518,9 @@ namespace WPELibrary.Lib.MountSpeed
                         false,
                         requireCompleteRefineCards,
                         refineCardRetry,
-                        cachedPlanRetry + 1);
+                        cachedPlanRetry + 1,
+                        preferredRefineRideInstanceId,
+                        speedOnly);
                 }
 
                 this.hasSuccessfulRead = false;
@@ -447,7 +531,9 @@ namespace WPELibrary.Lib.MountSpeed
                     true,
                     requireCompleteRefineCards,
                     refineCardRetry,
-                    cachedPlanRetry);
+                    cachedPlanRetry,
+                    preferredRefineRideInstanceId,
+                    speedOnly);
             }
             if (requireCompleteRefineCards &&
                 IsRefineCardDiscoveryRequired(probe.Output))
@@ -468,7 +554,9 @@ namespace WPELibrary.Lib.MountSpeed
                         true,
                         requireCompleteRefineCards,
                         refineCardRetry + 1,
-                        cachedPlanRetry);
+                        cachedPlanRetry,
+                        preferredRefineRideInstanceId,
+                        speedOnly);
                 }
 
                 error = "坐骑只读探针未返回完整 21 张炼化卡。";
@@ -513,6 +601,20 @@ namespace WPELibrary.Lib.MountSpeed
                 return null;
             }
 
+            if (!string.IsNullOrWhiteSpace(preferredRefineRideInstanceId) &&
+                (!string.Equals(
+                    snapshot.RideBindingStatus,
+                    "refine_selected",
+                    StringComparison.Ordinal) ||
+                 !string.Equals(
+                    snapshot.ActiveRideInstanceId,
+                    preferredRefineRideInstanceId,
+                    StringComparison.Ordinal)))
+            {
+                error = "炼化页面选中坐骑与预设 A050 实例 ID 不一致。";
+                return null;
+            }
+
             if (requireCompleteRefineCards && !HasCompleteRefineCards(snapshot))
             {
                 this.hasSuccessfulRead = false;
@@ -531,7 +633,9 @@ namespace WPELibrary.Lib.MountSpeed
                         true,
                         requireCompleteRefineCards,
                         refineCardRetry + 1,
-                        cachedPlanRetry);
+                        cachedPlanRetry,
+                        preferredRefineRideInstanceId,
+                        speedOnly);
                 }
 
                 error = string.Format(
@@ -546,7 +650,7 @@ namespace WPELibrary.Lib.MountSpeed
             // before the active ride pointer and its formal skill list have
             // converged. Treat that narrow state as transient; never replace
             // the final fail-closed validation with guessed ride data.
-            if (IsTransientMountedSnapshot(snapshot) &&
+            if (!speedOnly && IsTransientMountedSnapshot(snapshot) &&
                 mountedSnapshotRetry < TransientMountedSnapshotRetryCount)
             {
                 if (cancellationToken.WaitHandle.WaitOne(
@@ -562,8 +666,20 @@ namespace WPELibrary.Lib.MountSpeed
                     forceDiscovery,
                     requireCompleteRefineCards,
                     refineCardRetry,
-                    cachedPlanRetry);
+                    cachedPlanRetry,
+                    preferredRefineRideInstanceId,
+                    speedOnly);
             }
+
+            this.lastSuccessfulLaunchContext = new MountStatusAndroidSnapshotLaunchContext
+            {
+                AdbPath = adbPath,
+                PythonPath = pythonPath,
+                ProbePath = probePath,
+                Serial = serial,
+                RootBrokerPipe = rootBrokerPipe,
+                ProcessId = gamePid
+            };
 
             return snapshot;
         }
@@ -648,6 +764,15 @@ namespace WPELibrary.Lib.MountSpeed
                         instance.RideInstanceId,
                         snapshot.ActiveRideInstanceId,
                         StringComparison.Ordinal));
+            if (string.Equals(
+                snapshot.RideBindingStatus,
+                "refine_selected",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return current == null ||
+                    current.Skills == null ||
+                    current.Skills.Count != 3;
+            }
             return !string.Equals(
                     snapshot.RideBindingStatus,
                     "bound",
@@ -663,6 +788,26 @@ namespace WPELibrary.Lib.MountSpeed
             return snapshot != null &&
                 snapshot.RideRefineCards != null &&
                 snapshot.RideRefineCards.Count == 21;
+        }
+
+        private static bool IsValidRideInstanceId(string value, bool allowEmpty)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return allowEmpty;
+            }
+            if (value.Length != MountRefineA050PacketTemplate.RideInstanceIdLength)
+            {
+                return false;
+            }
+            foreach (char character in value)
+            {
+                if (character < '0' || character > '9')
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private static bool TryFindGameProcess(

@@ -41,6 +41,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Prefer32Bit>false</Prefer32Bit>
   </PropertyGroup>
+  <PropertyGroup Condition=" '$(CleanPresets)' == 'true' ">
+    <DefineConstants>$(DefineConstants);WPE_CLEAN_PACKAGE</DefineConstants>
+  </PropertyGroup>
   <PropertyGroup>
     <SignAssembly>false</SignAssembly>
   </PropertyGroup>
@@ -146,9 +149,16 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AssistantRunConcurrencyPolicy.cs" />
+    <Compile Include="Lib\TypeSafe\JevClient.cs" />
+    <Compile Include="Lib\ShimenTaskPresetPlan.cs" />
+    <Compile Include="Lib\ShimenTaskRuntime.cs" />
+    <Compile Include="Lib\ShimenTaskAndroidSnapshotReader.cs" />
+    <Compile Include="Lib\ShimenTaskSocketPacketSender.cs" />
     <Compile Include="Lib\IconExtractor\IconExtractor.cs" />
     <Compile Include="Lib\IconExtractor\IconUtil.cs" />
     <Compile Include="Lib\NativeMethods\Kernel32.cs" />
+    <Compile Include="Lib\NativeMethods\ProcessInjectionAccess.cs" />
     <Compile Include="Lib\Android\AndroidRootShellSession.cs" />
     <Compile Include="Lib\Memory\ReadOnlyProcessMemoryReader.cs" />
     <Compile Include="Lib\Memory\MemoryTraceLogStore.cs" />
@@ -170,6 +180,7 @@
     <Compile Include="Lib\EquipmentRefine\EquipmentRefineRunner.cs" />
     <Compile Include="Lib\EquipmentRefine\EquipmentRefinePresetEditor.cs" />
     <Compile Include="Lib\EquipmentRefine\EquipmentInventoryAndroidSnapshotReader.cs" />
+    <Compile Include="Lib\EquipmentRefine\BagMemoryPointerViewerForm.cs" />
     <Compile Include="Lib\EquipmentRefine\EquipmentRefineRunnerFactory.cs" />
     <Compile Include="Lib\EquipmentRefine\EquipmentRefineHost.cs" />
     <Compile Include="Lib\EquipmentRefine\JsonFixtureRefineResponseAdapter.cs" />
@@ -211,6 +222,8 @@
     <Compile Include="Lib\MountSpeed\MountStatusMemoryReader.cs" />
     <Compile Include="Lib\MountSpeed\MountStatusReadOnlySnapshot.cs" />
     <Compile Include="Lib\MountSpeed\MountStatusAndroidSnapshotReader.cs" />
+    <Compile Include="Lib\MountSpeed\MountSpeedHoldProcess.cs" />
+    <Compile Include="Lib\MountSpeed\MountGrowthRateHoldProcess.cs" />
     <Compile Include="Lib\MountSpeed\MountSkillPresetPreview.cs" />
     <Compile Include="Lib\MountSpeed\MountRefineStateMachine.cs" />
     <Compile Include="Lib\MountSpeed\MountRefineRunLogStore.cs" />

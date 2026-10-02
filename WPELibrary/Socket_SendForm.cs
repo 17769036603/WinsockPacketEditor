@@ -196,6 +196,17 @@ namespace WPELibrary
 
         #endregion
 
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == Keys.Space && this.bSendStop != null && this.bSendStop.Enabled)
+            {
+                this.bSendStop.PerformClick();
+                return true;
+            }
+
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
         private void InitializePresetIdentity()
         {
             if (this.savedByteSweepPreset != null)
@@ -2149,7 +2160,11 @@ namespace WPELibrary
             }
 
             Socket_Cache.SocketList.CurrentSocketRouteResolution resolution =
-                Socket_Cache.SocketList.ResolveCurrentRoute(this.SPI);
+                Socket_Cache.SocketList.ResolveCurrentRoute(
+                    this.SPI,
+                    this.savedSendPreset != null && this.savedSendPreset.SSystemSocket
+                        ? Socket_Cache.System.ManualSystemSocket
+                        : 0);
             Guid presetId = this.savedSendPreset != null
                 ? this.savedSendPreset.SID
                 : this.savedByteSweepPreset == null

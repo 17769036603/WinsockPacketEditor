@@ -78,6 +78,7 @@ namespace WPELibrary.Lib.EquipmentRefine
         {
             public string MemberIdentity { get; set; } = string.Empty;
             public string Slot { get; set; } = string.Empty;
+            public string ItemAddress { get; set; } = string.Empty;
             public string EquipmentId { get; set; } = string.Empty;
             public string EquipmentName { get; set; } = string.Empty;
             public string EquipmentNameStatus { get; set; } = string.Empty;
@@ -117,6 +118,7 @@ namespace WPELibrary.Lib.EquipmentRefine
             public string Key { get; set; } = string.Empty;
             public string Kind { get; set; } = string.Empty;
             public string Value { get; set; } = string.Empty;
+            public string Address { get; set; } = string.Empty;
         }
 
         public class EquipmentInventory
@@ -388,8 +390,10 @@ namespace WPELibrary.Lib.EquipmentRefine
             bool isWorn = item.Value<bool?>("isWorn") ?? false;
             string memberIdentity = item.Value<string>("memberIdentity") ?? string.Empty;
             string slotName = item.Value<string>("slot") ?? string.Empty;
+            string itemAddress = item.Value<string>("itemAddress") ?? string.Empty;
             if (!candidateOnly || string.IsNullOrWhiteSpace(memberIdentity) || string.IsNullOrWhiteSpace(slotName) ||
-                (mode == EquipmentTargetMode.Worn && !isWorn))
+                (mode == EquipmentTargetMode.Worn && !isWorn) ||
+                (!string.IsNullOrWhiteSpace(itemAddress) && !IsValidPointerAddress(itemAddress)))
             {
                 return null;
             }
@@ -404,6 +408,7 @@ namespace WPELibrary.Lib.EquipmentRefine
             {
                 MemberIdentity = memberIdentity,
                 Slot = slotName,
+                ItemAddress = itemAddress,
                 EquipmentId = item.Value<string>("equipmentId") ?? string.Empty,
                 EquipmentName = item.Value<string>("equipmentName") ?? string.Empty,
                 EquipmentNameStatus = item.Value<string>("displayNameStatus") ?? string.Empty,
@@ -439,7 +444,9 @@ namespace WPELibrary.Lib.EquipmentRefine
                 string key = field.Value<string>("key") ?? string.Empty;
                 string kind = field.Value<string>("kind") ?? string.Empty;
                 string value = field.Value<string>("value");
-                if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(kind) || value == null)
+                string address = field.Value<string>("address") ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(kind) || value == null ||
+                    (!string.IsNullOrWhiteSpace(address) && !IsValidPointerAddress(address)))
                 {
                     return null;
                 }
@@ -449,7 +456,13 @@ namespace WPELibrary.Lib.EquipmentRefine
                     return null;
                 }
 
-                slot.RawFields.Add(new RawField { Key = key, Kind = kind, Value = value });
+                slot.RawFields.Add(new RawField
+                {
+                    Key = key,
+                    Kind = kind,
+                    Value = value,
+                    Address = address
+                });
             }
 
             slot.ItemId = FirstRawValue(slot.RawFields, "m_ItemId", "m_Id");
@@ -468,6 +481,25 @@ namespace WPELibrary.Lib.EquipmentRefine
                 ? CalculateIdentityHash(slot.MemberIdentity, slot.Slot, slot.EquipmentId)
                 : suppliedBaseHash;
             return string.IsNullOrWhiteSpace(slot.BaseAttributeHash) ? null : slot;
+        }
+
+        private static bool IsValidPointerAddress(string value)
+        {
+            const ulong MaxGc64Pointer = 0x00007FFFFFFFFFFFUL;
+            if (string.IsNullOrWhiteSpace(value) ||
+                !value.StartsWith("0x", StringComparison.Ordinal) ||
+                value.Length <= 2 || value.Length > 18)
+            {
+                return false;
+            }
+
+            ulong address;
+            return ulong.TryParse(
+                    value.Substring(2),
+                    NumberStyles.AllowHexSpecifier,
+                    CultureInfo.InvariantCulture,
+                    out address) &&
+                address > 0 && address <= MaxGc64Pointer;
         }
 
         private static string FirstRawValue(IEnumerable<RawField> fields, params string[] keys)

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
 using WPELibrary.Lib.NativeMethods;
 
@@ -39,12 +40,36 @@ namespace WPELibrary.Lib
     {        
         private const int WsaErrorInterrupted = 10004;
 
-        private LocalHook lhWS1_Send, lhWS1_SendTo, lhWS1_Recv, lhWS1_RecvFrom;
-        private LocalHook lhWS2_Send, lhWS2_SendTo, lhWS2_Recv, lhWS2_RecvFrom;
+        private LocalHook lhWS1_Select, lhWS1_Send, lhWS1_SendTo, lhWS1_Recv, lhWS1_RecvFrom;
+        private LocalHook lhWS2_Select, lhWS2_Send, lhWS2_SendTo, lhWS2_Recv, lhWS2_RecvFrom;
         private LocalHook lhWSA_Send, lhWSA_SendTo, lhWSA_Recv, lhWSA_RecvFrom;
         private LocalHook lhWSA_RecvEx;
 
         public bool IsRunning { get; private set; }
+
+        private const int MaxReceiveReplayQueuedBytes = 8 * 1024 * 1024;
+        private const int MaxSelectFds = 64;
+        // ponytail: global replay lock; split per-socket only if replay throughput becomes measurable.
+        private static readonly object ReceiveReplaySync = new object();
+        private static readonly Dictionary<int, Queue<ReceiveReplayFrame>> ReceiveReplayQueues =
+            new Dictionary<int, Queue<ReceiveReplayFrame>>();
+        private static int receiveReplayEnabled;
+        private static int receiveReplayQueuedBytes;
+
+        private sealed class ReceiveReplayFrame
+        {
+            public ReceiveReplayFrame(byte[] buffer, string packetFrom, bool datagram)
+            {
+                this.Buffer = buffer;
+                this.PacketFrom = packetFrom ?? string.Empty;
+                this.Datagram = datagram;
+            }
+
+            public readonly byte[] Buffer;
+            public readonly string PacketFrom;
+            public readonly bool Datagram;
+            public int Offset;
+        }
 
         private static void SetReceiveInterceptError(IntPtr lpNumberOfBytes)
         {
@@ -60,6 +85,325 @@ namespace WPELibrary.Lib
         {
             WS2_32.WSASetLastError(WsaErrorInterrupted);
             return -1;
+        }
+
+        internal static bool EnqueueReceiveReplay(
+            int socket,
+            byte[] buffer,
+            string packetFrom,
+            bool datagram)
+        {
+            if (socket <= 0 ||
+                buffer == null ||
+                buffer.Length == 0 ||
+                buffer.Length > MaxReceiveReplayQueuedBytes ||
+                Volatile.Read(ref receiveReplayEnabled) == 0)
+            {
+                return false;
+            }
+
+            byte[] copy = (byte[])buffer.Clone();
+            lock (ReceiveReplaySync)
+            {
+                if (Volatile.Read(ref receiveReplayEnabled) == 0 ||
+                    receiveReplayQueuedBytes > MaxReceiveReplayQueuedBytes - copy.Length)
+                {
+                    return false;
+                }
+
+                Queue<ReceiveReplayFrame> queue;
+                if (!ReceiveReplayQueues.TryGetValue(socket, out queue))
+                {
+                    queue = new Queue<ReceiveReplayFrame>();
+                    ReceiveReplayQueues.Add(socket, queue);
+                }
+
+                queue.Enqueue(new ReceiveReplayFrame(copy, packetFrom, datagram));
+                receiveReplayQueuedBytes += copy.Length;
+                return true;
+            }
+        }
+
+        private static void EnableReceiveReplay()
+        {
+            lock (ReceiveReplaySync)
+            {
+                ReceiveReplayQueues.Clear();
+                receiveReplayQueuedBytes = 0;
+                Volatile.Write(ref receiveReplayEnabled, 1);
+            }
+        }
+
+        private static void DisableReceiveReplay()
+        {
+            Volatile.Write(ref receiveReplayEnabled, 0);
+            lock (ReceiveReplaySync)
+            {
+                ReceiveReplayQueues.Clear();
+                receiveReplayQueuedBytes = 0;
+            }
+        }
+
+        private static bool TryTakeReceiveReplay(
+            int socket,
+            int maxLength,
+            bool peek,
+            out byte[] buffer,
+            out string packetFrom)
+        {
+            buffer = null;
+            packetFrom = string.Empty;
+            if (socket <= 0 ||
+                maxLength <= 0 ||
+                Volatile.Read(ref receiveReplayEnabled) == 0)
+            {
+                return false;
+            }
+
+            lock (ReceiveReplaySync)
+            {
+                Queue<ReceiveReplayFrame> queue;
+                if (Volatile.Read(ref receiveReplayEnabled) == 0 ||
+                    !ReceiveReplayQueues.TryGetValue(socket, out queue) ||
+                    queue.Count == 0)
+                {
+                    return false;
+                }
+
+                ReceiveReplayFrame frame = queue.Peek();
+                int remaining = frame.Buffer.Length - frame.Offset;
+                if (remaining <= 0)
+                {
+                    queue.Dequeue();
+                    if (queue.Count == 0)
+                    {
+                        ReceiveReplayQueues.Remove(socket);
+                    }
+                    return false;
+                }
+
+                int bytesToCopy = Math.Min(maxLength, remaining);
+                buffer = new byte[bytesToCopy];
+                Buffer.BlockCopy(frame.Buffer, frame.Offset, buffer, 0, bytesToCopy);
+                packetFrom = frame.PacketFrom;
+
+                if (!peek)
+                {
+                    int bytesConsumed = frame.Datagram ? remaining : bytesToCopy;
+                    frame.Offset += bytesConsumed;
+                    receiveReplayQueuedBytes = Math.Max(0, receiveReplayQueuedBytes - bytesConsumed);
+                    if (frame.Offset >= frame.Buffer.Length)
+                    {
+                        queue.Dequeue();
+                        if (queue.Count == 0)
+                        {
+                            ReceiveReplayQueues.Remove(socket);
+                        }
+                    }
+                }
+
+                return true;
+            }
+        }
+
+        private static bool HasReceiveReplay(int socket)
+        {
+            if (socket <= 0 || Volatile.Read(ref receiveReplayEnabled) == 0)
+            {
+                return false;
+            }
+
+            lock (ReceiveReplaySync)
+            {
+                Queue<ReceiveReplayFrame> queue;
+                return Volatile.Read(ref receiveReplayEnabled) != 0 &&
+                    ReceiveReplayQueues.TryGetValue(socket, out queue) &&
+                    queue.Count > 0 &&
+                    queue.Peek().Offset < queue.Peek().Buffer.Length;
+            }
+        }
+
+        private static int GetSelectFdArrayOffset()
+        {
+            return IntPtr.Size == 8 ? 8 : 4;
+        }
+
+        private static bool TryReadSelectFdSet(IntPtr fdSet, out List<IntPtr> sockets)
+        {
+            sockets = new List<IntPtr>();
+            if (fdSet == IntPtr.Zero)
+            {
+                return true;
+            }
+
+            int count = Marshal.ReadInt32(fdSet);
+            if (count < 0 || count > MaxSelectFds)
+            {
+                return false;
+            }
+
+            int arrayOffset = GetSelectFdArrayOffset();
+            for (int i = 0; i < count; i++)
+            {
+                sockets.Add(Marshal.ReadIntPtr(fdSet, arrayOffset + i * IntPtr.Size));
+            }
+
+            return true;
+        }
+
+        private static List<int> GetQueuedSelectSockets(IntPtr readfds)
+        {
+            List<IntPtr> sockets;
+            if (!TryReadSelectFdSet(readfds, out sockets))
+            {
+                return null;
+            }
+
+            List<int> queuedSockets = new List<int>();
+            foreach (IntPtr socket in sockets)
+            {
+                long value = socket.ToInt64();
+                if (value > 0 && value <= int.MaxValue && HasReceiveReplay((int)value))
+                {
+                    queuedSockets.Add((int)value);
+                }
+            }
+
+            return queuedSockets;
+        }
+
+        private static bool AddSelectSocket(IntPtr fdSet, int socket)
+        {
+            if (fdSet == IntPtr.Zero || socket <= 0)
+            {
+                return false;
+            }
+
+            int count = Marshal.ReadInt32(fdSet);
+            if (count < 0 || count > MaxSelectFds)
+            {
+                return false;
+            }
+
+            int arrayOffset = GetSelectFdArrayOffset();
+            for (int i = 0; i < count; i++)
+            {
+                if (Marshal.ReadIntPtr(fdSet, arrayOffset + i * IntPtr.Size).ToInt64() == socket)
+                {
+                    return true;
+                }
+            }
+
+            if (count == MaxSelectFds)
+            {
+                return false;
+            }
+
+            Marshal.WriteIntPtr(fdSet, arrayOffset + count * IntPtr.Size, new IntPtr(socket));
+            Marshal.WriteInt32(fdSet, count + 1);
+            return true;
+        }
+
+        private static int CountSelectedSockets(
+            IntPtr readfds,
+            IntPtr writefds,
+            IntPtr exceptfds,
+            int fallback)
+        {
+            HashSet<IntPtr> sockets = new HashSet<IntPtr>();
+            foreach (IntPtr fdSet in new[] { readfds, writefds, exceptfds })
+            {
+                List<IntPtr> current;
+                if (!TryReadSelectFdSet(fdSet, out current))
+                {
+                    return fallback;
+                }
+
+                foreach (IntPtr socket in current)
+                {
+                    sockets.Add(socket);
+                }
+            }
+
+            return sockets.Count;
+        }
+
+        private static int Select_HookCore(
+            int nfds,
+            IntPtr readfds,
+            IntPtr writefds,
+            IntPtr exceptfds,
+            IntPtr timeout,
+            bool winsock1)
+        {
+            List<int> queuedSockets = GetQueuedSelectSockets(readfds);
+            if (queuedSockets == null || queuedSockets.Count == 0)
+            {
+                return winsock1
+                    ? WSock32.select(nfds, readfds, writefds, exceptfds, timeout)
+                    : WS2_32.select(nfds, readfds, writefds, exceptfds, timeout);
+            }
+
+            IntPtr zeroTimeout = Marshal.AllocHGlobal(8);
+            try
+            {
+                Marshal.WriteInt32(zeroTimeout, 0, 0);
+                Marshal.WriteInt32(zeroTimeout, 4, 0);
+                int result = winsock1
+                    ? WSock32.select(nfds, readfds, writefds, exceptfds, zeroTimeout)
+                    : WS2_32.select(nfds, readfds, writefds, exceptfds, zeroTimeout);
+                if (result == -1)
+                {
+                    return result;
+                }
+
+                foreach (int socket in queuedSockets)
+                {
+                    AddSelectSocket(readfds, socket);
+                }
+
+                return CountSelectedSockets(readfds, writefds, exceptfds, result);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(zeroTimeout);
+            }
+        }
+
+        public static int Select_Hook(
+            int nfds,
+            IntPtr readfds,
+            IntPtr writefds,
+            IntPtr exceptfds,
+            IntPtr timeout)
+        {
+            try
+            {
+                return Select_HookCore(nfds, readfds, writefds, exceptfds, timeout, false);
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                return WS2_32.select(nfds, readfds, writefds, exceptfds, timeout);
+            }
+        }
+
+        public static int SelectWS1_Hook(
+            int nfds,
+            IntPtr readfds,
+            IntPtr writefds,
+            IntPtr exceptfds,
+            IntPtr timeout)
+        {
+            try
+            {
+                return Select_HookCore(nfds, readfds, writefds, exceptfds, timeout, true);
+            }
+            catch (Exception ex)
+            {
+                Socket_Operation.DoLog(MethodBase.GetCurrentMethod().Name, ex.Message);
+                return WSock32.select(nfds, readfds, writefds, exceptfds, timeout);
+            }
         }
 
         #region//EasyHook
@@ -218,6 +562,81 @@ namespace WPELibrary.Lib
             return sourceOffset;
         }
 
+        private static unsafe int GetWsabufCapacity(
+            Socket_Cache.SocketPacket.WSABUF* buffers,
+            int bufferCount)
+        {
+            if (buffers == null || bufferCount <= 0)
+            {
+                return 0;
+            }
+
+            long capacity = 0;
+            for (int i = 0; i < bufferCount; i++)
+            {
+                capacity += Math.Max(0, buffers[i].len);
+                if (capacity >= int.MaxValue)
+                {
+                    return int.MaxValue;
+                }
+            }
+
+            return (int)capacity;
+        }
+
+        private static unsafe int CopyReceiveReplayToWsabufs(
+            byte[] replayBuffer,
+            Socket_Cache.SocketPacket.WSABUF* buffers,
+            int bufferCount)
+        {
+            if (replayBuffer == null ||
+                replayBuffer.Length == 0 ||
+                buffers == null ||
+                bufferCount <= 0)
+            {
+                return 0;
+            }
+
+            int sourceOffset = 0;
+            for (int i = 0; i < bufferCount && sourceOffset < replayBuffer.Length; i++)
+            {
+                int copyLength = Math.Min(
+                    Math.Max(0, buffers[i].len),
+                    replayBuffer.Length - sourceOffset);
+                if (copyLength <= 0)
+                {
+                    continue;
+                }
+
+                replayBuffer.AsSpan(sourceOffset, copyLength).CopyTo(
+                    new Span<byte>((byte*)buffers[i].buf, copyLength));
+                sourceOffset += copyLength;
+            }
+
+            return sourceOffset;
+        }
+
+        private static void SetReceiveReplayFrom(
+            ref Socket_Cache.SocketPacket.SockAddr from,
+            IntPtr fromLength,
+            string packetFrom)
+        {
+            if (!string.IsNullOrWhiteSpace(packetFrom))
+            {
+                Socket_Cache.SocketPacket.SockAddr replayFrom =
+                    Socket_Operation.GetSocketAddr_ByIPString(packetFrom);
+                if (replayFrom.sin_family != 0)
+                {
+                    from = replayFrom;
+                }
+            }
+
+            if (fromLength != IntPtr.Zero)
+            {
+                Marshal.WriteInt32(fromLength, Marshal.SizeOf(from));
+            }
+        }
+
         #endregion
 
         #region//开始拦截
@@ -225,9 +644,11 @@ namespace WPELibrary.Lib
         public HookStartResult StartHook()
         {
             int createdHookCount = 0;
+            bool receiveHookCreated = false;
             string failedHook = string.Empty;
             try
             {
+                DisableReceiveReplay();
                 Socket_Cache.Filter.StartDeferredExecution();
                 if (Socket_Cache.SocketPacket.Support_WS1)
                 {
@@ -255,6 +676,7 @@ namespace WPELibrary.Lib
                         lhWS1_Recv = LocalHook.Create(LocalHook.GetProcAddress(WSock32.ModuleName, "recv"), new WSock32.Drecv(WSock32.RecvHook), this);
                         lhWS1_Recv.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
                         createdHookCount++;
+                        receiveHookCreated = true;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWS1_RecvFrom)
@@ -263,6 +685,7 @@ namespace WPELibrary.Lib
                         lhWS1_RecvFrom = LocalHook.Create(LocalHook.GetProcAddress(WSock32.ModuleName, "recvfrom"), new WSock32.DRecvFrom(WSock32.RecvFromHook), this);
                         lhWS1_RecvFrom.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
                         createdHookCount++;
+                        receiveHookCreated = true;
                     }
 
                     #endregion
@@ -294,6 +717,7 @@ namespace WPELibrary.Lib
                         lhWS2_Recv = LocalHook.Create(LocalHook.GetProcAddress(WS2_32.ModuleName, "recv"), new WS2_32.Drecv(WS2_32.RecvHook), this);
                         lhWS2_Recv.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
                         createdHookCount++;
+                        receiveHookCreated = true;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWS2_RecvFrom)
@@ -302,6 +726,7 @@ namespace WPELibrary.Lib
                         lhWS2_RecvFrom = LocalHook.Create(LocalHook.GetProcAddress(WS2_32.ModuleName, "recvfrom"), new WS2_32.DRecvFrom(WS2_32.RecvFromHook), this);
                         lhWS2_RecvFrom.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
                         createdHookCount++;
+                        receiveHookCreated = true;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWSA_Send)
@@ -326,6 +751,7 @@ namespace WPELibrary.Lib
                         lhWSA_Recv = LocalHook.Create(LocalHook.GetProcAddress(WS2_32.ModuleName, "WSARecv"), new WS2_32.DWSARecv(WSARecv_Hook), this);
                         lhWSA_Recv.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
                         createdHookCount++;
+                        receiveHookCreated = true;
                     }
 
                     if (Socket_Cache.SocketPacket.HookWSA_RecvFrom)
@@ -334,6 +760,7 @@ namespace WPELibrary.Lib
                         lhWSA_RecvFrom = LocalHook.Create(LocalHook.GetProcAddress(WS2_32.ModuleName, "WSARecvFrom"), new WS2_32.DWSARecvFrom(WSARecvFrom_Hook), this);
                         lhWSA_RecvFrom.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
                         createdHookCount++;
+                        receiveHookCreated = true;
                     }
 
                     #endregion
@@ -349,9 +776,29 @@ namespace WPELibrary.Lib
                         lhWSA_RecvEx = LocalHook.Create(LocalHook.GetProcAddress(Mswsock.ModuleName, "WSARecvEx"), new Mswsock.DWSARecvEx(Mswsock.WSARecvExHook), this);
                         lhWSA_RecvEx.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
                         createdHookCount++;
+                        receiveHookCreated = true;
                     }
 
                     #endregion
+                }
+
+                if (receiveHookCreated)
+                {
+                    if (Socket_Cache.SocketPacket.Support_WS1)
+                    {
+                        failedHook = "WS1.select";
+                        lhWS1_Select = LocalHook.Create(LocalHook.GetProcAddress(WSock32.ModuleName, "select"), new WSock32.DSelect(WSock32.SelectHook), this);
+                        lhWS1_Select.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
+                    }
+
+                    if (Socket_Cache.SocketPacket.Support_WS2)
+                    {
+                        failedHook = "WS2.select";
+                        lhWS2_Select = LocalHook.Create(LocalHook.GetProcAddress(WS2_32.ModuleName, "select"), new WS2_32.DSelect(WS2_32.SelectHook), this);
+                        lhWS2_Select.ThreadACL.SetExclusiveACL(new Int32[] { 0 });
+                        createdHookCount++;
+                    }
                 }
                 if (createdHookCount == 0)
                 {
@@ -359,6 +806,10 @@ namespace WPELibrary.Lib
                 }
 
                 this.IsRunning = true;
+                if (receiveHookCreated)
+                {
+                    EnableReceiveReplay();
+                }
                 return HookStartResult.Succeeded(createdHookCount);
             }
             catch (Exception ex)
@@ -376,12 +827,15 @@ namespace WPELibrary.Lib
         public void StopHook()
         {
             List<string> errors = new List<string>();
+            DisableReceiveReplay();
             Socket_Cache.Filter.StopDeferredExecution();
+            this.DisposeHook(ref this.lhWS1_Select, errors, "WS1.select");
             this.DisposeHook(ref this.lhWS1_Send, errors, "WS1.send");
             this.DisposeHook(ref this.lhWS1_SendTo, errors, "WS1.sendto");
             this.DisposeHook(ref this.lhWS1_Recv, errors, "WS1.recv");
             this.DisposeHook(ref this.lhWS1_RecvFrom, errors, "WS1.recvfrom");
             this.DisposeHook(ref this.lhWS2_Send, errors, "WS2.send");
+            this.DisposeHook(ref this.lhWS2_Select, errors, "WS2.select");
             this.DisposeHook(ref this.lhWS2_SendTo, errors, "WS2.sendto");
             this.DisposeHook(ref this.lhWS2_Recv, errors, "WS2.recv");
             this.DisposeHook(ref this.lhWS2_RecvFrom, errors, "WS2.recvfrom");
@@ -511,6 +965,20 @@ namespace WPELibrary.Lib
 
             try
             {
+                byte[] replayBuffer;
+                string replayFrom;
+                if (lpBuffer != IntPtr.Zero &&
+                    Length > 0 &&
+                    TryTakeReceiveReplay(
+                        Socket,
+                        Length,
+                        (Flags & SocketFlags.Peek) != 0,
+                        out replayBuffer,
+                        out replayFrom))
+                {
+                    return CopyFilteredReceiveBuffer(replayBuffer, (byte*)lpBuffer, Length);
+                }
+
                 switch (ptType)
                 {
                     case Socket_Cache.SocketPacket.PacketType.WS1_Recv:
@@ -639,6 +1107,21 @@ namespace WPELibrary.Lib
 
             try
             {
+                byte[] replayBuffer;
+                string replayFrom;
+                if (lpBuffer != IntPtr.Zero &&
+                    Length > 0 &&
+                    TryTakeReceiveReplay(
+                        Socket,
+                        Length,
+                        (Flags & SocketFlags.Peek) != 0,
+                        out replayBuffer,
+                        out replayFrom))
+                {
+                    SetReceiveReplayFrom(ref From, FromLen, replayFrom);
+                    return CopyFilteredReceiveBuffer(replayBuffer, (byte*)lpBuffer, Length);
+                }
+
                 switch (ptType)
                 {
                     case Socket_Cache.SocketPacket.PacketType.WS1_RecvFrom:
@@ -940,6 +1423,30 @@ namespace WPELibrary.Lib
                         ref flags,
                         lpOverlapped,
                         lpCompletionRoutine);
+                }
+
+                if (lpWSABuffer != IntPtr.Zero &&
+                    lpNumberOfBytesRecvd != IntPtr.Zero &&
+                    bufferCount > 0)
+                {
+                    Socket_Cache.SocketPacket.WSABUF* replayBuffers =
+                        (Socket_Cache.SocketPacket.WSABUF*)lpWSABuffer;
+                    byte[] replayBuffer;
+                    string replayFrom;
+                    if (TryTakeReceiveReplay(
+                        socket,
+                        GetWsabufCapacity(replayBuffers, bufferCount),
+                        (flags & SocketFlags.Peek) != 0,
+                        out replayBuffer,
+                        out replayFrom))
+                    {
+                        int replayBytes = CopyReceiveReplayToWsabufs(
+                            replayBuffer,
+                            replayBuffers,
+                            bufferCount);
+                        Marshal.WriteInt32(lpNumberOfBytesRecvd, replayBytes);
+                        return SocketError.Success;
+                    }
                 }
 
                 res = WS2_32.WSARecv(
@@ -1350,6 +1857,31 @@ namespace WPELibrary.Lib
                         lpFromlen,
                         lpOverlapped,
                         lpCompletionRoutine);
+                }
+
+                if (lpWSABuffer != IntPtr.Zero &&
+                    lpNumberOfBytesRecvd != IntPtr.Zero &&
+                    bufferCount > 0)
+                {
+                    Socket_Cache.SocketPacket.WSABUF* replayBuffers =
+                        (Socket_Cache.SocketPacket.WSABUF*)lpWSABuffer;
+                    byte[] replayBuffer;
+                    string replayFrom;
+                    if (TryTakeReceiveReplay(
+                        socket,
+                        GetWsabufCapacity(replayBuffers, bufferCount),
+                        (flags & SocketFlags.Peek) != 0,
+                        out replayBuffer,
+                        out replayFrom))
+                    {
+                        int replayBytes = CopyReceiveReplayToWsabufs(
+                            replayBuffer,
+                            replayBuffers,
+                            bufferCount);
+                        SetReceiveReplayFrom(ref from, lpFromlen, replayFrom);
+                        Marshal.WriteInt32(lpNumberOfBytesRecvd, replayBytes);
+                        return SocketError.Success;
+                    }
                 }
 
                 res = WS2_32.WSARecvFrom(
