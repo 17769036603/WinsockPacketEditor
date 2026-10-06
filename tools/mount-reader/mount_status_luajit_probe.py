@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import bisect
 import contextlib
 import io
 import json
@@ -28,7 +29,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 
 def validate_run_as_package(value: str) -> str:
@@ -111,6 +112,10 @@ NODE_STRIDE = 24
 GCTAB_SIZE = 64
 MAX_HASH_MASK = 0x1000
 MAX_TABLE_ARRAY_SIZE = 4096
+MAX_SPEED_OWNER_HEADERS = 250000
+MAX_SPEED_OWNER_SMALL_BYTES = 64 * 1024 * 1024
+MAX_SPEED_OWNER_MAPPING = 0x40000
+MAX_SPEED_OWNER_SMALL_RANGES = 256
 MAX_RIDE_INSTANCES = 64
 MAX_RIDE_SKILLS_PER_INSTANCE = 64
 MAX_RIDE_REFINE_CARDS = 64
@@ -202,6 +207,18 @@ class MemoryReadTransportError(RuntimeError):
     """The selected memory-read transport failed before returning usable data."""
 
 
+class SpeedOwnerIndexLimitError(RuntimeError):
+    """Speed-only owner discovery exceeded its explicit resource bound."""
+
+
+class SpeedOnlySnapshotError(RuntimeError):
+    """A complete, stable speed-only mapping snapshot could not be collected."""
+
+
+class SpeedOnlySnapshotIdentityChanged(SpeedOnlySnapshotError):
+    """The target process identity changed while collecting speed-only memory."""
+
+
 class MemoryChunkResults(list[bytes]):
     """Chunk data with an explicit marker for individually short reads."""
 
@@ -218,6 +235,7 @@ def read_chunks(
     timeout: float,
     batch_size: int = 32,
     session: "AdbPageMemoryReadSession | None" = None,
+    allow_partial_session: bool = False,
 ) -> list[bytes]:
     """Read page-aligned chunks without changing the target process."""
     if not chunks:
@@ -246,7 +264,12 @@ def read_chunks(
             len(blob) != size
             for blob, (_, size) in zip(session_blobs, chunks)
         )
-        if not incomplete or session.uses_root_broker or session.uses_run_as:
+        if (
+            not incomplete
+            or session.uses_root_broker
+            or session.uses_run_as
+            or allow_partial_session
+        ):
             return MemoryChunkResults(session_blobs, incomplete)
         session.close()
 
@@ -300,6 +323,89 @@ def chunk_ranges(
     return chunks
 
 
+def speed_only_chunk_descriptors(
+    ranges: list[tuple[int, int]],
+    chunk_size: int,
+) -> list[tuple[int, int, int, int]]:
+    """Bind each chunk to its exact source mapping descriptor."""
+    descriptors: list[tuple[int, int, int, int]] = []
+    for map_start, map_end in ranges:
+        descriptors.extend(
+            (map_start, map_end, chunk_start, size)
+            for chunk_start, size in chunk_ranges([(map_start, map_end)], chunk_size)
+        )
+    return descriptors
+
+
+def collect_stable_speed_only_chunks(
+    expected_identity: dict,
+    chunk_size: int,
+    identity_reader: Callable[[], dict | None],
+    ranges_reader: Callable[[], list[tuple[int, int]]],
+    chunk_reader: Callable[[list[tuple[int, int]]], list[bytes]],
+    max_rounds: int = 3,
+) -> tuple[list[tuple[int, int]], list[tuple[int, int, bytes]]]:
+    """Read one complete current mapping view, retrying only reusable descriptors."""
+    reusable: dict[tuple[int, int, int, int], bytes] = {}
+    current_ranges: list[tuple[int, int]] = []
+    last_issue = "speed_only_snapshot_unstable"
+
+    for _ in range(max(1, max_rounds)):
+        current_identity = identity_reader()
+        if current_identity is None:
+            raise SpeedOnlySnapshotError("process_identity_unreadable_during_snapshot")
+        if current_identity != expected_identity:
+            raise SpeedOnlySnapshotIdentityChanged("process_identity_changed_during_snapshot")
+        current_ranges = ranges_reader()
+        if not current_ranges:
+            last_issue = "anonymous_ranges_missing_during_snapshot"
+            continue
+
+        descriptors = speed_only_chunk_descriptors(current_ranges, chunk_size)
+        data_by_descriptor = {
+            descriptor: reusable[descriptor]
+            for descriptor in descriptors
+            if descriptor in reusable
+            and len(reusable[descriptor]) == descriptor[3]
+        }
+        pending = [descriptor for descriptor in descriptors if descriptor not in data_by_descriptor]
+        if pending:
+            chunks = [(descriptor[2], descriptor[3]) for descriptor in pending]
+            blobs = chunk_reader(chunks)
+            if blobs is None or len(blobs) != len(pending):
+                raise SpeedOnlySnapshotError("speed_only_chunk_batch_incomplete")
+            for descriptor, blob in zip(pending, blobs):
+                if len(blob) == descriptor[3]:
+                    data_by_descriptor[descriptor] = blob
+
+        after_identity = identity_reader()
+        if after_identity is None:
+            raise SpeedOnlySnapshotError("process_identity_unreadable_after_snapshot_read")
+        if after_identity != expected_identity:
+            raise SpeedOnlySnapshotIdentityChanged("process_identity_changed_after_snapshot_read")
+        after_ranges = ranges_reader()
+        current_complete = len(data_by_descriptor) == len(descriptors)
+        if after_ranges == current_ranges and current_complete:
+            return current_ranges, [
+                (descriptor[2], descriptor[3], data_by_descriptor[descriptor])
+                for descriptor in descriptors
+            ]
+
+        after_descriptors = set(speed_only_chunk_descriptors(after_ranges, chunk_size))
+        reusable = {
+            descriptor: blob
+            for descriptor, blob in data_by_descriptor.items()
+            if descriptor in after_descriptors and len(blob) == descriptor[3]
+        }
+        if after_ranges != current_ranges:
+            last_issue = "speed_only_mapping_topology_changed"
+        elif not current_complete:
+            last_issue = "speed_only_chunks_incomplete"
+        current_ranges = after_ranges
+
+    raise SpeedOnlySnapshotError(f"{last_issue} after {max(1, max_rounds)} rounds")
+
+
 def gc64_tagged_pointer(address: int, lua_tag: int) -> int:
     return ((lua_tag << 47) & 0xFFFFFFFFFFFFFFFF) | (address & GC64_MASK)
 
@@ -325,6 +431,62 @@ def find_all(blob: bytes, needle: bytes, limit: int = 256) -> list[int]:
         positions.append(position)
         cursor = position + 1
     return positions
+
+
+def scan_references_from_blob_for_headers(
+    blob: bytes,
+    blob_start: int,
+    table_header_index: list[tuple[int, int, int]],
+    ranges: list[tuple[int, int]],
+    seen_addresses: set[int] | None = None,
+) -> None:
+    if seen_addresses is None:
+        seen_addresses = {item[0] for item in table_header_index}
+    cursor = 0
+    marker = bytes((GCT_TAB,))
+    while True:
+        marker_offset = blob.find(marker, cursor)
+        if marker_offset < 0:
+            return
+        cursor = marker_offset + 1
+        header_offset = marker_offset - 9
+        header_address = blob_start + header_offset
+        if header_offset < 0 or header_address < 0 or header_address % 8:
+            continue
+        header = blob[header_offset : header_offset + GCTAB_SIZE]
+        if len(header) != GCTAB_SIZE or header[9] != GCT_TAB:
+            continue
+        node_address = struct.unpack_from("<Q", header, 40)[0]
+        array_address = struct.unpack_from("<Q", header, 16)[0]
+        array_size = struct.unpack_from("<I", header, 48)[0]
+        hash_mask = struct.unpack_from("<I", header, 52)[0]
+        if (
+            node_address == 0
+            or node_address % 8 != 0
+            or hash_mask > MAX_HASH_MASK
+            or ((hash_mask + 1) & hash_mask) != 0
+            or array_size > MAX_TABLE_ARRAY_SIZE
+        ):
+            continue
+        node_bytes = (hash_mask + 1) * NODE_STRIDE
+        array_bytes = array_size * 8
+        if not address_in_ranges(node_address, node_bytes, ranges):
+            continue
+        if array_bytes and (
+            array_address == 0 or not address_in_ranges(array_address, array_bytes, ranges)
+        ):
+            continue
+        if header_address not in seen_addresses:
+            table_header_index.append((
+                header_address,
+                node_address,
+                node_address + node_bytes,
+            ))
+            seen_addresses.add(header_address)
+            if len(table_header_index) > MAX_SPEED_OWNER_HEADERS:
+                raise SpeedOwnerIndexLimitError(
+                    f"speed_owner_index_limit_exceeded headerCount={len(table_header_index)}"
+                )
 
 
 def decode_tvalue(raw: bytes) -> dict:
@@ -1904,19 +2066,34 @@ def discover_key_objects(
     timeout: float,
     session: AdbPageMemoryReadSession | None = None,
     field_names: Iterable[str] = DISCOVERED_FIELD_NAMES,
+    preloaded_chunks: dict[tuple[int, int], bytes] | None = None,
+    complete_speed_scan: bool = False,
 ) -> dict[str, list[int]]:
     selected_names = tuple(field_names)
     key_objects: dict[str, set[int]] = {name: set() for name in selected_names}
     names = [(name, name.encode("utf-8")) for name in selected_names]
     chunks = chunk_ranges(ranges, chunk_size)
-    blobs = read_chunks(adb_path, serial, pid, chunks, timeout, session=session)
+    if preloaded_chunks is None:
+        blobs = read_chunks(adb_path, serial, pid, chunks, timeout, session=session)
+    else:
+        blobs = MemoryChunkResults(
+            preloaded_chunks.get(chunk, b"") for chunk in chunks
+        )
+        blobs.incomplete = any(len(blob) != size for blob, (_, size) in zip(blobs, chunks))
+    total_hits = 0
     for (chunk_start, chunk_size_value), blob in zip(chunks, blobs):
         if len(blob) != chunk_size_value:
             continue
         for name, needle in names:
-            for offset in find_all(blob, needle, 128):
+            offsets = find_all(blob, needle, 4001 if complete_speed_scan else 128)
+            if complete_speed_scan and len(offsets) >= 4001:
+                raise SpeedOwnerIndexLimitError("speed_owner_key_string_limit_exceeded")
+            for offset in offsets:
                 if verify_gcstr(blob, offset, needle):
                     key_objects[name].add(chunk_start + offset - GCSTR_SIZE)
+                    total_hits += 1
+                    if complete_speed_scan and total_hits > 4000:
+                        raise SpeedOwnerIndexLimitError("speed_owner_key_string_limit_exceeded")
     if getattr(blobs, "incomplete", False):
         raise MemoryReadTransportError("incomplete chunk read during field discovery")
     return {name: sorted(values) for name, values in key_objects.items() if values}
@@ -1931,6 +2108,10 @@ def scan_references(
     chunk_size: int,
     timeout: float,
     session: AdbPageMemoryReadSession | None = None,
+    table_header_index: list[tuple[int, int, int]] | None = None,
+    table_header_ranges: list[tuple[int, int]] | None = None,
+    preloaded_chunks: dict[tuple[int, int], bytes] | None = None,
+    complete_speed_scan: bool = False,
 ) -> list[dict]:
     needles = [
         (name, address, struct.pack("<Q", gc64_tagged_pointer(address, 0xFFFFFFFB)))
@@ -1939,12 +2120,39 @@ def scan_references(
     ]
     references: list[dict] = []
     chunks = chunk_ranges(ranges, chunk_size)
-    blobs = read_chunks(adb_path, serial, pid, chunks, timeout, session=session)
+    if preloaded_chunks is None:
+        blobs = read_chunks(adb_path, serial, pid, chunks, timeout, session=session)
+    else:
+        blobs = MemoryChunkResults(
+            preloaded_chunks.get(chunk, b"") for chunk in chunks
+        )
+        blobs.incomplete = any(len(blob) != size for blob, (_, size) in zip(blobs, chunks))
+    indexed_header_addresses = (
+        {item[0] for item in table_header_index}
+        if table_header_index is not None
+        else None
+    )
+    previous_tail = b""
+    previous_end: int | None = None
     for (chunk_start, chunk_size_value), blob in zip(chunks, blobs):
         if len(blob) != chunk_size_value:
+            previous_tail = b""
+            previous_end = None
             continue
+        if table_header_index is not None:
+            prefix = previous_tail if previous_end == chunk_start else b""
+            combined = prefix + blob
+            combined_start = chunk_start - len(prefix)
+            scan_references_from_blob_for_headers(
+                combined, combined_start, table_header_index,
+                table_header_ranges if table_header_ranges is not None else ranges,
+                indexed_header_addresses,
+            )
         for name, object_address, needle in needles:
-            for offset in find_all(blob, needle, 128):
+            offsets = find_all(blob, needle, 4001 if complete_speed_scan else 128)
+            if complete_speed_scan and len(offsets) >= 4001:
+                raise SpeedOwnerIndexLimitError("speed_owner_reference_limit_exceeded")
+            for offset in offsets:
                 if offset < 8 or chunk_start + offset == object_address:
                     continue
                 reference = chunk_start + offset
@@ -1960,11 +2168,15 @@ def scan_references(
                     }
                 )
                 if len(references) >= 4000:
+                    if table_header_index is not None or complete_speed_scan:
+                        raise SpeedOwnerIndexLimitError("speed_owner_reference_limit_exceeded")
                     if getattr(blobs, "incomplete", False):
                         raise MemoryReadTransportError(
                             "incomplete chunk read during reference scan"
                         )
                     return references
+        previous_tail = blob[-(GCTAB_SIZE - 1) :]
+        previous_end = chunk_start + chunk_size_value
     if getattr(blobs, "incomplete", False):
         raise MemoryReadTransportError("incomplete chunk read during reference scan")
     return references
@@ -2121,6 +2333,172 @@ def build_local_candidates(references: list[dict], max_distance: int) -> list[di
 
     for candidate in candidates:
         candidate.pop("identity", None)
+    return candidates
+
+
+def build_speed_only_candidates(
+    references: list[dict],
+    reader: BoundedPageMemoryReader,
+    table_header_index: list[tuple[int, int, int]] | None = None,
+) -> list[dict]:
+    """Build candidates only from fresh fields owned by one Lua table."""
+    candidates: list[dict] = []
+    owners: dict[int, dict] = {}
+    if table_header_index is None:
+        reader_ranges = getattr(reader, "ranges", None)
+        if not isinstance(reader_ranges, list):
+            # Compatibility for callers that provide a mocked point reader;
+            # production readers always carry explicit bounded mappings.
+            table_header_index = []
+            for item in references:
+                if (
+                    item.get("name") != "m_IsLocalPlayer"
+                    or item.get("nodeValue", {}).get("kind") != "boolean"
+                    or item.get("nodeValue", {}).get("value") is not True
+                ):
+                    continue
+                node_address = parse_address(item.get("nodeValueAddress"))
+                owner = find_luajit_table_for_node(reader, node_address) if node_address is not None else None
+                if owner is not None:
+                    owners[owner[0]] = owner[1]
+        else:
+            # Keep direct callers useful for small offline fixtures while bounding
+            # this fallback. Production speed-only discovery supplies the index
+            # gathered from the already-read discovery chunks.
+            scanned_bytes = 0
+            table_header_index = []
+            indexed_header_addresses: set[int] = set()
+            for range_start, range_end in reader_ranges:
+                if not range_start <= range_end or range_start % PAGE_SIZE or range_end % PAGE_SIZE:
+                    continue
+                previous_tail = b""
+                previous_end: int | None = None
+                for chunk_start in range(range_start, range_end, 2 * 1024 * 1024):
+                    chunk_end = min(range_end, chunk_start + 2 * 1024 * 1024)
+                    scanned_bytes += chunk_end - chunk_start
+                    if scanned_bytes > 32 * 1024 * 1024:
+                        raise SpeedOwnerIndexLimitError("speed_owner_index_limit_exceeded")
+                    blob = reader.read(chunk_start, chunk_end - chunk_start)
+                    if len(blob) != chunk_end - chunk_start:
+                        previous_tail = b""
+                        previous_end = None
+                        continue
+                    prefix = previous_tail if previous_end == chunk_start else b""
+                    scan_references_from_blob_for_headers(
+                        prefix + blob, chunk_start - len(prefix), table_header_index,
+                        reader_ranges,
+                        indexed_header_addresses,
+                    )
+                    previous_tail = blob[-(GCTAB_SIZE - 1) :]
+                    previous_end = chunk_end
+
+    base_nodes = sorted({
+        address
+        for item in references
+        if (address := parse_address(item.get("nodeValueAddress"))) is not None
+    })
+    candidate_headers = [
+        (table_address, node_start, node_end)
+        for table_address, node_start, node_end in table_header_index
+        if (
+            (position := bisect.bisect_left(base_nodes, node_start))
+            < len(base_nodes)
+            and base_nodes[position] < node_end
+        )
+    ]
+    if len(candidate_headers) > 1024:
+        raise SpeedOwnerIndexLimitError("speed_owner_candidate_limit_exceeded")
+    for table_address, _, _ in candidate_headers:
+        table = read_gc_table(reader, table_address)
+        if table is None:
+            continue
+        owners[table_address] = table
+
+    for table_address, table in owners.items():
+        nodes = read_gc_table_nodes(reader, table)
+        if nodes is None:
+            continue
+        fields: dict[str, dict] = {}
+        for node in nodes:
+            key = node.get("key")
+            if key in FIELD_NAMES:
+                # Duplicate keys in a malformed/unstable node chain are not
+                # resolved by ordering; the whole table is unusable.
+                if key in fields:
+                    fields = {}
+                    break
+                fields[key] = node
+        if set(fields) != set(FIELD_NAMES):
+            continue
+
+        values = {name: fields[name].get("value") for name in FIELD_NAMES}
+        if any(not isinstance(value, dict) for value in values.values()):
+            continue
+        if values["m_IsLocalPlayer"].get("kind") != "boolean" or values["m_IsLocalPlayer"].get("value") is not True:
+            continue
+        if values["m_PlayerId"].get("kind") != "i32" or int(values["m_PlayerId"].get("value", 0)) <= 0:
+            continue
+        speed = values["m_RoleMoveSpeed"]
+        if speed.get("kind") not in {"i32", "f64"} or not math.isfinite(float(speed.get("value", 0))):
+            continue
+        gx = normalize_coordinate(values["m_Gx"])
+        gy = normalize_coordinate(values["m_Gy"])
+        if gx is None or gy is None:
+            continue
+
+        references_by_name: dict[str, dict] = {}
+        valid_owner = True
+        for name in FIELD_NAMES:
+            node_address = parse_address(fields[name].get("nodeAddress"))
+            if node_address is None:
+                valid_owner = False
+                break
+            key_raw = reader.read(node_address + 8, 8)
+            string_object = tagged_pointer(key_raw, LJ_TSTR)
+            if (
+                string_object is None
+                or read_gcstr(reader, string_object) != name
+                or fields[name].get("key") != name
+            ):
+                valid_owner = False
+                break
+            references_by_name[name] = {
+                "reference": hex(node_address + 8),
+                "nodeValueAddress": hex(node_address),
+                "stringObject": hex(string_object),
+            }
+        if not valid_owner:
+            continue
+
+        ride_value = values["m_RideId"]
+        if ride_value.get("kind") == "nil":
+            mount_id, mounted = None, False
+        elif ride_value.get("kind") in {"i32", "f64"}:
+            try:
+                numeric_mount_id = float(ride_value["value"])
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if not math.isfinite(numeric_mount_id) or not numeric_mount_id.is_integer() or numeric_mount_id < 0:
+                continue
+            mount_id = int(numeric_mount_id)
+            mounted = mount_id > 0
+        else:
+            continue
+
+        candidates.append({
+            "playerId": int(values["m_PlayerId"]["value"]),
+            "isLocalPlayer": True,
+            "mountId": mount_id,
+            "isMounted": mounted,
+            "roleMoveSpeed": float(speed["value"]),
+            "gx": gx,
+            "gy": gy,
+            "rawValues": values,
+            "references": references_by_name,
+            "ownerTableAddress": table_address,
+            "span": max(parse_address(item["reference"]) for item in references_by_name.values())
+            - min(parse_address(item["reference"]) for item in references_by_name.values()),
+        })
     return candidates
 
 
@@ -2306,6 +2684,10 @@ def build_probe_cache(
         and address_in_ranges(page, PAGE_SIZE, ranges)
     })
 
+    cached_candidate = {"references": base_references}
+    owner_table_address = parse_address(candidate.get("ownerTableAddress"))
+    if owner_table_address is not None:
+        cached_candidate["ownerTableAddress"] = owner_table_address
     return {
         "schema": PROBE_CACHE_SCHEMA,
         "schemaVersion": PROBE_CACHE_VERSION,
@@ -2315,7 +2697,7 @@ def build_probe_cache(
             "exe": str(identity.get("exe", "")),
         },
         "ranges": [[start, end] for start, end in ranges],
-        "candidate": {"references": base_references},
+        "candidate": cached_candidate,
         "references": selected,
         "warmPages": normalized_warm_pages,
     }
@@ -2412,7 +2794,11 @@ def load_probe_cache(
 
     return {
         "ranges": ranges,
-        "candidate": {"references": base_references},
+        "candidate": {
+            "references": base_references,
+            **({"ownerTableAddress": parse_address(cached_candidate.get("ownerTableAddress"))}
+               if parse_address(cached_candidate.get("ownerTableAddress")) is not None else {}),
+        },
         "references": references,
         "warmPages": warm_pages,
     }
@@ -2423,6 +2809,13 @@ def probe_warm_hints_path(cache_path: Path | None) -> Path | None:
     if cache_path is None:
         return None
     return cache_path.with_name(cache_path.name + ".warm.json")
+
+
+def speed_only_probe_cache_path(cache_path: Path | None) -> Path | None:
+    """Keep speed-hold's validated table-owner cache separate from full scans."""
+    if cache_path is None:
+        return None
+    return cache_path.with_name(cache_path.name + ".speed-only.json")
 
 
 def _warm_hint_location(
@@ -3026,12 +3419,73 @@ def build_cached_candidate(
         "gy": gy,
         "rawValues": values,
         "references": base_references,
+        "ownerTableAddress": parse_address(cached_candidate.get("ownerTableAddress")),
         "span": max(
             parse_address(item["reference"]) for item in base_references.values()
         ) - min(
             parse_address(item["reference"]) for item in base_references.values()
         ),
     }
+
+
+def validate_cached_speed_owner(
+    reader: BoundedPageMemoryReader,
+    cached_candidate: dict,
+    candidate: dict,
+) -> bool:
+    """Prove cached speed fields still occupy the same fresh Lua table."""
+    owner_address = parse_address(cached_candidate.get("ownerTableAddress"))
+    candidate_references = candidate.get("references")
+    values = candidate.get("rawValues")
+    if (
+        owner_address is None
+        or not isinstance(candidate_references, dict)
+        or not isinstance(values, dict)
+    ):
+        return False
+    table = read_gc_table(reader, owner_address)
+    if table is None:
+        return False
+
+    expected: dict[int, str] = {}
+    for name in FIELD_NAMES:
+        reference = candidate_references.get(name)
+        node_address = parse_address(reference.get("nodeValueAddress")) if isinstance(reference, dict) else None
+        if node_address is None or node_address + 8 != parse_address(reference.get("reference")):
+            return False
+        expected[node_address] = name
+
+    array_start = int(table["node"])
+    array_end = array_start + (int(table["hashMask"]) + 1) * NODE_STRIDE
+    all_in_array = all(
+        array_start <= address and address + NODE_STRIDE <= array_end
+        and (address - array_start) % NODE_STRIDE == 0
+        for address in expected
+    )
+    if all_in_array:
+        for node_address, name in expected.items():
+            blob = reader.read(node_address, NODE_STRIDE)
+            if len(blob) != NODE_STRIDE:
+                return False
+            key = read_gc_table_key(reader, blob[8:16])
+            if key != name or decode_tvalue(blob[:8]) != values.get(name):
+                return False
+        return True
+
+    # A chained hash node can sit outside the base node array. Prove it by
+    # traversing the owner's current chains instead of accepting proximity.
+    nodes = read_gc_table_nodes(reader, table)
+    if nodes is None:
+        return False
+    live_by_address = {
+        int(node.get("nodeAddress", 0)): node for node in nodes
+    }
+    return all(
+        (node := live_by_address.get(address)) is not None
+        and node.get("key") == name
+        and node.get("value") == values.get(name)
+        for address, name in expected.items()
+    )
 
 
 def read_cached_snapshot(
@@ -3098,6 +3552,22 @@ def read_cached_snapshot(
         return None
 
     if speed_only:
+        if not validate_cached_speed_owner(reader, cached_candidate, candidate):
+            return None
+        ride_value = candidate["rawValues"].get("m_RideId", {})
+        if ride_value.get("kind") == "nil":
+            candidate["mountId"], candidate["isMounted"] = None, False
+        elif ride_value.get("kind") in {"i32", "f64"}:
+            try:
+                numeric_mount_id = float(ride_value.get("value"))
+            except (TypeError, ValueError, OverflowError):
+                return None
+            if not math.isfinite(numeric_mount_id) or not numeric_mount_id.is_integer() or numeric_mount_id < 0:
+                return None
+            candidate["mountId"] = int(numeric_mount_id) or None
+            candidate["isMounted"] = numeric_mount_id > 0
+        else:
+            return None
         return candidate, len(ranges), len(reader.pages), sorted(reader.accessed_pages)
 
     card_started = time.perf_counter()
@@ -3345,6 +3815,8 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
         chunks_read: int,
         **options: object,
     ) -> dict:
+        speed_owner_header_count = options.pop("speedOwnerHeaderCount", None)
+        error_message = options.pop("error", None)
         result = snapshot_result(
             pid,
             identity,
@@ -3357,11 +3829,15 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
             timing=probe_runtime.timing_snapshot(),
             **options,
         )
+        if speed_owner_header_count is not None:
+            result["speedOwnerHeaderCount"] = int(speed_owner_header_count)
+        if error_message is not None:
+            result["error"] = str(error_message)
         print(json.dumps(result, separators=(",", ":")))
         return result
 
     def filtered_ranges(session: AdbPageMemoryReadSession) -> list[tuple[int, int]]:
-        result = read_maps(
+        all_ranges = read_maps(
             args.adb,
             args.serial,
             args.pid,
@@ -3370,11 +3846,23 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
         )
         result = [
             (start, end)
-            for start, end in result
+            for start, end in all_ranges
             if args.min_range <= end - start <= args.max_range
         ]
         if args.max_ranges > 0:
             result = result[: args.max_ranges]
+        if speed_only:
+            small_owner_ranges = [
+                (start, end)
+                for start, end in all_ranges
+                if PAGE_SIZE <= end - start < args.min_range
+                and end - start <= MAX_SPEED_OWNER_MAPPING
+            ]
+            if len(small_owner_ranges) > MAX_SPEED_OWNER_SMALL_RANGES:
+                raise SpeedOwnerIndexLimitError("speed_owner_small_mapping_limit_exceeded")
+            if sum(end - start for start, end in small_owner_ranges) > MAX_SPEED_OWNER_SMALL_BYTES:
+                raise SpeedOwnerIndexLimitError("speed_owner_small_mapping_bytes_limit_exceeded")
+            result.extend(item for item in small_owner_ranges if item not in result)
         return result
 
     def process_cache_payload(
@@ -3424,8 +3912,35 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
             )
             return 2
 
-        cache_path = Path(args.cache_path) if args.cache_path else None
-        warm_hint_path = probe_warm_hints_path(cache_path)
+        def identity_still_matches() -> bool:
+            current = process_identity(
+                args.adb,
+                args.serial,
+                args.pid,
+                args.read_timeout,
+                session=session,
+            )
+            if current == identity:
+                return True
+            probe_runtime.clear_point_plan()
+            return False
+
+        def emit_identity_changed() -> int:
+            emit_snapshot(
+                args.pid,
+                identity,
+                "error",
+                "process_identity_changed",
+                [],
+                len(ranges or []),
+                0,
+                read_path="fallback",
+            )
+            return 2
+
+        base_cache_path = Path(args.cache_path) if args.cache_path else None
+        cache_path = speed_only_probe_cache_path(base_cache_path) if speed_only else base_cache_path
+        warm_hint_path = None if speed_only else probe_warm_hints_path(cache_path)
         hold_rebind = speed_only and bool(getattr(args, "hold_rebind", False))
         rebind_cache: dict | None = None
         # Absolute point addresses stay process-local. Every request rechecks
@@ -3469,6 +3984,8 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                 candidate, ranges_count, chunks_read, accessed_pages = point_snapshot
                 complete_cards = has_complete_ride_refine_cards(candidate)
                 if not args.require_complete_refine_cards or complete_cards:
+                    if not identity_still_matches():
+                        return emit_identity_changed()
                     if speed_only or (complete_cards and point_capture):
                         point_cache["warmPages"] = accessed_pages
                         probe_runtime.set_point_plan(
@@ -3541,6 +4058,8 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                         )
                         return 3
                 else:
+                    if not identity_still_matches():
+                        return emit_identity_changed()
                     cache_payload = process_cache_payload(
                         cached,
                         ranges,
@@ -3557,7 +4076,9 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                             sequence=request_sequence,
                             speed_only=speed_only,
                         )
-                    if not speed_only:
+                    if cache_payload is not None and speed_only:
+                        write_probe_cache(cache_path, cache_payload)
+                    elif not speed_only:
                         write_probe_cache(cache_path, cache_payload)
                         write_probe_warm_hints(
                             warm_hint_path,
@@ -3643,6 +4164,8 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                 candidate, ranges_count, chunks_read, accessed_pages = warm_snapshot
                 complete_cards = has_complete_ride_refine_cards(candidate)
                 if not args.require_complete_refine_cards or complete_cards:
+                    if not identity_still_matches():
+                        return emit_identity_changed()
                     cache_payload = process_cache_payload(
                         warm_cache,
                         ranges,
@@ -3658,7 +4181,9 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                             sequence=request_sequence,
                             speed_only=speed_only,
                         )
-                    if cache_payload is not None and not speed_only:
+                    if cache_payload is not None and speed_only:
+                        write_probe_cache(cache_path, cache_payload)
+                    elif cache_payload is not None:
                         write_probe_cache(cache_path, cache_payload)
                         write_probe_warm_hints(
                             warm_hint_path,
@@ -3735,10 +4260,47 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
         if not hold_rebind:
             discovery_plans.append((ranges, False, full_discover_path))
 
+        preloaded_chunks: dict[tuple[int, int], bytes] | None = None
+        if speed_only:
+            try:
+                stable_ranges, stable_blobs = collect_stable_speed_only_chunks(
+                    identity,
+                    args.chunk_size,
+                    lambda: process_identity(
+                        args.adb, args.serial, args.pid, args.read_timeout, session=session
+                    ),
+                    lambda: filtered_ranges(session),
+                    lambda pending: read_chunks(
+                        args.adb, args.serial, args.pid, pending, args.read_timeout,
+                        session=session, allow_partial_session=True,
+                    ),
+                )
+            except SpeedOnlySnapshotIdentityChanged:
+                return emit_identity_changed()
+            except SpeedOnlySnapshotError as error:
+                probe_runtime.clear_point_plan()
+                emit_snapshot(
+                    args.pid, identity, "error", "speed_only_snapshot_unstable", [],
+                    len(ranges), 0, read_path="cold", error=str(error),
+                )
+                return 2
+            ranges = stable_ranges
+            preloaded_chunks = {
+                (start, size): blob for start, size, blob in stable_blobs
+            }
+            discovery_plans = [(ranges, False, full_discover_path)]
+
         priority_references: list[dict] = []
+        speed_owner_references: list[dict] = []
+        speed_owner_header_index: list[dict] = []
         for plan_index, (discovery_ranges, is_warm_priority, plan_path) in enumerate(discovery_plans):
             has_fallback = plan_index + 1 < len(discovery_plans)
-            if not hold_rebind:
+            if speed_only and preloaded_chunks is not None and hold_rebind:
+                probe_read_path = (
+                    "rebind_scan" if rebind_key_objects is not None
+                    else "rebind_full_discovery"
+                )
+            elif not hold_rebind:
                 probe_read_path = read_path_override or plan_path
             elif rebind_key_objects is None:
                 probe_read_path = "rebind_full_discovery"
@@ -3748,7 +4310,7 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                 probe_read_path = "rebind_scan"
             discovery_chunks = chunk_ranges(discovery_ranges, args.chunk_size)
             key_objects = rebind_key_objects
-            if key_objects is None:
+            if speed_only or key_objects is None:
                 key_objects = discover_key_objects(
                     args.adb,
                     args.serial,
@@ -3758,6 +4320,8 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                     args.read_timeout,
                     session=session,
                     field_names=FIELD_NAMES if speed_only else DISCOVERED_FIELD_NAMES,
+                    preloaded_chunks=preloaded_chunks,
+                    complete_speed_scan=speed_only and preloaded_chunks is not None,
                 )
             missing_fields = [name for name in FIELD_NAMES if name not in key_objects]
             if missing_fields:
@@ -3785,15 +4349,23 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                 args.chunk_size,
                 args.read_timeout,
                 session=session,
+                table_header_index=(speed_owner_header_index if speed_only else None),
+                table_header_ranges=(ranges if speed_only else None),
+                preloaded_chunks=preloaded_chunks,
+                complete_speed_scan=speed_only and preloaded_chunks is not None,
             )
+            if speed_only:
+                speed_owner_references.extend(references)
+                if has_fallback:
+                    continue
+                references = speed_owner_references
             if hold_rebind and rebind_key_objects is not None and cached_key_priority:
                 if plan_index == 0:
                     priority_references = references
                 else:
                     references = priority_references + references
-            candidates = build_local_candidates(references, args.candidate_distance)
-            if len(candidates) == 1:
-                rich_reader = BoundedPageMemoryReader(
+            rich_reader = (
+                BoundedPageMemoryReader(
                     args.adb,
                     args.serial,
                     args.pid,
@@ -3801,6 +4373,36 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                     args.read_timeout,
                     shared_session=session,
                 )
+                if speed_only
+                else None
+            )
+            if speed_only:
+                candidates = build_speed_only_candidates(
+                    references, rich_reader, speed_owner_header_index
+                )
+            else:
+                candidates = build_local_candidates(references, args.candidate_distance)
+            if speed_only:
+                if not identity_still_matches():
+                    return emit_identity_changed()
+                if filtered_ranges(session) != ranges:
+                    probe_runtime.clear_point_plan()
+                    emit_snapshot(
+                        args.pid, identity, "error", "speed_only_snapshot_unstable", [],
+                        len(ranges), 0, read_path=probe_read_path,
+                        error="speed_only_mapping_topology_changed_after_owner_validation",
+                    )
+                    return 2
+            if len(candidates) == 1:
+                if rich_reader is None:
+                    rich_reader = BoundedPageMemoryReader(
+                        args.adb,
+                        args.serial,
+                        args.pid,
+                        ranges,
+                        args.read_timeout,
+                        shared_session=session,
+                    )
                 point_capture: dict = {}
                 if not speed_only:
                     card_parse_started = time.perf_counter()
@@ -3852,6 +4454,8 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                         read_path=probe_read_path,
                     )
                     return 3
+                if not identity_still_matches():
+                    return emit_identity_changed()
                 cache_payload = (
                     build_probe_cache(
                         identity,
@@ -3874,12 +4478,13 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                         sequence=request_sequence,
                         speed_only=speed_only,
                     )
-                if cache_path and cache_payload is not None and not speed_only:
+                if cache_path and cache_payload is not None:
                     write_probe_cache(cache_path, cache_payload)
-                    write_probe_warm_hints(
-                        warm_hint_path,
-                        build_probe_warm_hints_from_cache(cache_payload),
-                    )
+                    if not speed_only:
+                        write_probe_warm_hints(
+                            warm_hint_path,
+                            build_probe_warm_hints_from_cache(cache_payload),
+                        )
                 emit_snapshot(
                     args.pid,
                     identity,
@@ -3909,6 +4514,11 @@ def probe_once(args: argparse.Namespace, runtime: ProbeRuntime | None = None) ->
                 len(ranges),
                 len(discovery_chunks),
                 read_path=probe_read_path,
+                **(
+                    {"speedOwnerHeaderCount": len(speed_owner_header_index)}
+                    if speed_only
+                    else {}
+                ),
             )
             return 3
     finally:
@@ -4016,6 +4626,13 @@ def run_server(args: argparse.Namespace) -> int:
                     str(error),
                 )
                 result["requestId"] = request_id
+            except SpeedOwnerIndexLimitError as error:
+                result = server_error_snapshot(
+                    request_pid,
+                    "speed_owner_resource_limit",
+                    str(error),
+                )
+                result["requestId"] = request_id
             except Exception as error:
                 result = server_error_snapshot(request_pid, "probe_server_request_failed", str(error))
                 result["requestId"] = request_id
@@ -4034,6 +4651,9 @@ def main() -> int:
         return probe_once(args)
     except MemoryReadTransportError as error:
         print(json.dumps(server_error_snapshot(args.pid, "memory_read_transport_failed", str(error))))
+        return 2
+    except SpeedOwnerIndexLimitError as error:
+        print(json.dumps(server_error_snapshot(args.pid, "speed_owner_resource_limit", str(error))))
         return 2
 
 

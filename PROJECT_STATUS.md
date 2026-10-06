@@ -1,5 +1,82 @@
 # 项目状态
 
+## 2026-10-06 坐骑速度保持保护检查误关闭 Root shell（桌面热更 2026.10.6.5）
+
+- 17:56:42 现场日志在多次成功写入并读回 5000 后记录 `Android Root shell 已关闭输出。`，随后恢复快照失败，当前 runId 以 `recovery-blocked / journal retained` 结束。因此没有进入仅允许安全恢复失败的自动重启分支；不能据此认定用户没有开启 Root。旧日志丢失实际保护退出码，具体触发哪项检查或是否同时发生外部会话关闭仍未确认。
+- 离线真实 POSIX shell 复现确认：速度写入命令的顶层 `exit 51/52/53/54` 可结束共享长驻 shell，结束标记无法返回。最小源码修改仅在 `AdbTransport.write` 的 broker 路径使用 `sh -c` 和 `shlex.quote` 隔离原命令；保留原启动 tick、比较写入、恢复记录与未知状态保护。独立 adb/run-as 命令、目标速度及无限安全自动重启策略不变。未改共享 C# Root session。
+- 新 `MountSpeedRootShellIsolationRegression.py` 在旧 `.4` 模块上失败，在修复后通过：覆盖内存打开、stat 读取、启动 tick、TValue 比较失败时零写入，父 shell 存活及后续真实读取；成功写入准确读回，无 broker 不包装。fixture 路径含空格和单引号，真实使用 `/proc/$$/fd/3`、本地 dd/base64。Git Bash 的 sh 对 exec 重定向失败实际可返回 1；测试容纳特殊 builtin 重定向的 shell 错误码 1、2 或 guard 51，其余 52–54 精确匹配。
+- 独立 `run_hold` 集成以目标 5000 的真实 CAS 失配触发 54，随后同一 shell 读取目标、CAS 恢复 baseline 296.7 并读回验证；`runEnd=failure-recovered / journal deleted`，父 shell 仍存活。既有速度 Python、保持机器人 PowerShell、成长率和伙伴面板 Python 回归通过。全部是本地 fixture 验证，没有连接设备或执行真实内存操作。
+- 按用户之前明确授权的本机桌面热更新流程，发布签名 ClickOnce `releases\2026.10.6.5`，Release 构建 0 错误、4 条既有 EasyHook `MSB3178` 警告，三份 Mage manifest 签名有效；源码、发布包和 `.deploy` 坐骑 Python SHA-256 均为 `6262773FF5AEFFCA95227C8912FAB90EDCD80429940040D9F44A8099526C146A`。`CleanPresets=False`，预设数据库 SHA-256 仍为 `E1035DDC324919024FFF146DBB50DA62F42574B47E29A183BAD83A81C26162B1`。
+- 已把 `C:\Users\Administrator\Desktop\小黑封包助手.lnk` 指向固定入口 `releases\小黑封包助手.application`，图标更新为 `.5` EXE；原快捷方式备份为 `releases\shortcut-backups\小黑封包助手_20261006_203826.lnk`。固定入口已更新。当前 3 个已运行的小黑封包助手进程 ID 12728、16536 和 43464 均未重启或关闭；因此新修复会在当前进程正常退出后下次通过桌面快捷方式启动时加载。真实设备与长期自动恢复尚未验收。
+- 诊断及独立集成脚本保留在 `.scratch\root-shell-guard-fix-20261006`，旧版本红基线保留在 `.scratch\root-shell-repro-long-lived`。未修改真实恢复 journal。本轮未自动打开新窗口、未执行游戏内存写入或故障注入。
+- CodeRabbit 在只含本次两个小改动和新回归的本地 review fixture 上实际首审 `review_completed`，明确列出三个 `reviewedFiles`，报告一处测试的 shell 错误码兼容问题；已补接受特殊 builtin 重定向错误码 2，保留父 shell 存活、零写入和后续读取断言，新回归再次通过。复查返回 0 issues，但注明 `No fresh detailed file review was performed in this run`，不记为新的详细审查通过。数据库、真实 journal、`.4` EXE 与速度 Python 前后哈希一致，`git diff --check` 通过。
+- 计划和结果判断均实际调用 Jev API，均返回 `evaluated / uncertain`，只作为参考，未替代可执行回归或 CodeRabbit；结果保存在诊断目录的 `judgment-result.json`。
+
+## 2026-10-06 坐骑速度保持安全失败自动重启桌面热更（2026.10.6.4）
+
+- 精确名称“坐骑速度保持”、持久 GUID 和单条保持指令的预设新增重启监督器；helper 非零退出后，只有当前 runId 的唯一恢复结束记录明确为 `failure-recovered`、journal 已删除且实际文件不存在时才重试。恢复记录检查覆盖当前 JSONL 和 20 份归档，避免 `helperExited` 触发轮转后遗漏 `runEnd`。旧 child 释放完毕后重新做可取消的新鲜速度预检，形成新的 runId 与当前进程、角色、坐骑绑定；手动停止、预检失败、恢复未确认、日志歧义或保留 journal 时停止。
+- 按用户明确要求不设置自动重启次数上限。第一次重试没有额外等待；反复失败时等待 250、500、1000、2000、4000 毫秒，此后封顶为 5000 毫秒。此间隔不包含新鲜预检耗时。重启日志记录前后 runId、序号、延迟和新预检结果。只读数据库确认目标预设 GUID `280F2836-09EA-4936-BB38-48F203AD2849` 的单条 Type 16 指令内容仍为 `5000`。
+- 生产监督器 Harness 通过，覆盖连续 12 次安全恢复失败后启动第 13 个 child、12 次新预检及完整封顶延迟；取消/安全退出竞态、等待时取消、预检失败、非目标预设、恢复不明、归档唯一记录、重复记录、身份不符和损坏记录均有负向验证。保持机器人 PowerShell、Python 保持回归、WPELibrary Release 构建及发布回归通过。
+- CodeRabbit 先前指出的轮转日志漏检已修复；固定次数上限建议被用户明确的无限重启要求覆盖。最新源代码复审两次返回 `completed / 0 issues`，但同时明确 `No fresh detailed file review was performed in this run`，不能称为新的详细审查通过。测试目录审查报告一处本轮开始前已有的重复 `build_chained_remote_owner_fixture`，未扩大修改。结果判断修正一次输入格式后实际调用 API，返回 `evaluated / uncertain`，只作为参考；取消及退避边界以本地可执行回归为证据。
+- 既有脚本签名发布 `releases\2026.10.6.4`，完整 Release 构建 0 错误、4 条既有 EasyHook `MSB3178` 警告；应用、版本部署和固定入口三份 Mage 验签通过。两份坐骑 Python 的源码、包内原文件和 `.deploy` 哈希一致，`WPELibrary.dll` 与 `.deploy` 哈希一致，发布程序集包含新监督器且不存在原固定重启上限字段。
+- 固定入口及两份桌面入口备份在 `releases\fixed-entry-backups\before-hold-auto-restart-20261006-174151`；桌面 `.lnk` 已重新读取并确认指向 `.4` EXE。发布前后数据库 SHA-256 均为 `E1035DDC324919024FFF146DBB50DA62F42574B47E29A183BAD83A81C26162B1`，`CleanPresets=False`。交付记录保存在 `.scratch\hold-auto-restart-20261006-174151`。本轮未自动打开新窗口、未执行游戏内存写入或故障注入；用户重开桌面助手后，真实异常退出后的自动恢复仍待日志验收。
+- 本轮四个 `%TEMP%\WPE-MountRestart-UserUnlimited-20261006-*` 验证目录已确认位于预期临时目录且不是重解析点；删除命令被平台自动审批以 `blocked by policy` 拒绝，未提供更具体原因，因此临时目录保留。发布构建暂存目录由既有脚本清理，签名交付及证据记录已保留。
+
+## 2026-10-06 速度角色远距表头与稳定读取修复桌面热更（2026.10.6.3）
+
+- `2026.10.6.2` 启动前仍出现 `local_player_missing`；日志同时记录过 `memory_read_transport_failed`，没有进入保持 helper，不能视为已生效。真实字节夹具复现了旧近距表头查找在表头与节点相隔约 1 MiB、跨映射时丢失有效角色。
+- 仅速度发现路径复用同批完整内存数据建立有界表头索引，支持非零 GC 标记和跨块表头。按合法哈希布局与映射边界过滤，索引最多 250,000 个紧凑项，字段引用排序后筛选候选；再新鲜验证完整表、六字段及字符串键。完整当前视图覆盖后才判断唯一性，超限明确报 `speed_owner_resource_limit`。通用近距查找和普通完整读取保留原入口。
+- 首次 50,000 表头限额不足，随后测量约 210,464 个候选；另一次完整读取有一块 16 KiB 临时映射在扫描期间消失，造成短读。速度冷读取（包括保持重绑）现按映射边界、块地址和大小复用仍有效的完整块，只补失败或新增块，最多三轮，持续缺块或身份变化拒绝。字段、引用和表头解析不再重复全量 ADB 读取；达到枚举上限明确拒绝，不存储整份原始游戏内存。
+- 现场诊断确认已骑乘角色六字段来自同一表，表头与节点相隔约 4.5 GiB；后续新鲜进程的原始冷调用成功返回唯一已骑乘角色，完整耗时 48.513 秒（其中 Root ADB 32.696 秒）。实机三秒保持测试实际写入一次 2000，连续多次新鲜复核读回 2000；结束恢复原值 296.7，并读回验证，journal 删除。持久点读约 59–78 毫秒。该结论是短时客户端字段保持验收，不是长期跨地图运行验收。
+- 原始探针、速度保持内存、机器人入口和伙伴面板回归通过，未替换硬链接行为；映射新增消失、映射边界改变后同地址块重读、持续短读、身份改变、共享解析不重复读取以及 raw 命中超限均有回归。CodeRabbit 报告的结构化错误返回和重绑路径标签两项问题已修复，最终复审 0 issues，服务状态 `completed`。
+- 既有脚本已签名发布 `releases\2026.10.6.3`，Release 构建 0 错误、4 条既有 EasyHook `MSB3178` 警告。应用清单、版本部署清单和固定入口三份 Mage 验签通过，两份 Python 的源码、包内原文件和 `.deploy` 哈希一致。固定入口与桌面快捷方式备份在 `releases\fixed-entry-backups\before-far-owner-20261006-150100`；桌面 `.lnk` 已指向新版 EXE，原 ClickOnce 缓存未清理。发布包独立只读调用再次成功，随后 `cache-only` 命中 `fast`，含进程启动约 1.85 秒，读回恢复后的原速度。
+- 发布前后用户数据库 SHA-256 均为 `5C6104BAF5D115EB999A79B8731A8823D53454CDA48E49D2B633C07A991DFE31`。ClickOnce、项目检查、保持机器人和 `git diff --check` 均通过。桌面程序由用户自行重新打开；本轮未自动启动新窗口。
+- 拓扑修复计划与最终结果判断均实际调用 API，返回 `evaluated/pass`，仅作为参考；最终结论依据上述回归、实机写入和恢复、发布与签名证据。本轮一次性诊断脚本已清理，保留验收日志及发布备份。
+- 发布后的只读运行日志（15:48–15:59）捕获到四次子进程退出：三次在目标 `2000` 与起始 `296.7` 之外读到有效数值 `356.5` 或 `406.5`，未知值重试耗尽后恢复保护阻止写入，退出码 `2` 并保留 journal；另一次探针耗时约 87.45 秒仍未产出有效快照，恢复时已是原值，未写入但子进程同样退出。随后一轮虽仍有短暂未知值、绑定变化和未骑乘复核重试，仍继续写入并读回 `2000` 至至少 15:59。因而已证实的断开路径是持续未知速度值或探针无有效快照触发 helper 失败，C# 运行入口收到退出后结束预设，不自动重启；未知值在日志中是有效 `f64`，不代表读取损坏。具体游戏状态触发值变化未确认。后续若修复，应分别处理同一进程/本地角色/坐骑/字段链复核通过后的有效速度变更，以及探针暂时无快照；评估更新恢复基线前必须证明绑定仍有效，不能仅放宽未知值写入保护。
+
+## 2026-10-06 速度保持角色同表与读取缓存修复桌面热更（2026.10.6.2）
+
+- 新版 `2026.10.6.1` 的 14:07 启动预检返回唯一角色，但 `isMounted=false`、`mountId=null`，因此未启动保持。14:10 独立只读采集及随后真实 Lua table 归属核验确认六个字段来自同一对象，当前 `m_RideId` 与 `m_ZuoJiaId` 均为 nil，坐标仍在变化；这次未骑乘提示尚未被现场证据证明为误判。此前独立冷扫描返回过两个本地角色候选，但原失败输出没有候选明细，无法追溯两者归属。
+- 仅 `speedOnly` 发现路径改为从本地标记节点找到所属 Lua table，再从该表当前节点构造六字段快照；不再用邻近字段拼接，不合并不同 table 的同值候选。缓存和内存点读核验同一表头、字段节点、字符串键和值，成功输出及缓存保存前再次核对进程身份。nil/0 仍表示未骑乘，非法坐骑 ID 拒绝；通用完整读取不启用新规则。
+- 速度专用缓存独立保存为基础路径加 `.speed-only.json`，不覆盖原完整读取缓存或暖启动提示。读取器成功上下文携带基础缓存路径，保持 helper 通过 `--probe-cache-path` 收到该路径，避免预检完成后再次丢失布局并冷扫描；缓存失效仍回退发现，写入、CAS、恢复、停止和未骑乘保护保持原有边界。
+- 离线回归已证明旧版会把相邻两个 table 的字段拼成一个角色，以及默认保持提供器丢失缓存路径；修复后的完整探针、保持内存、保持入口、C# runner、ClickOnce 和项目回归通过。CodeRabbit 完成当前代码审查，0 issues，服务结果附带 `completed_with_warnings / unverified findings` 状态，未返回具体问题。
+- 真设备首次冷扫描约一分钟；独立第二次调用命中新缓存，进程启动在内总耗时约 0.82 秒。持久探针后续新鲜点读约 59–62 毫秒。发布包中的探针再次实测 `fast/point` 成功，约 63/61 毫秒，坐骑 ID 仍为空；未启动保持或写游戏内存，已骑乘状态下的保持生效尚未验收。
+- 既有脚本签名发布 `releases\2026.10.6.2`，Release 构建 0 错误、4 条既有 EasyHook `MSB3178` 警告。应用、版本部署及正式固定入口三份 Mage 验签通过，两份 Python 的源码、包内原文件和 `.deploy` SHA-256 一致。固定入口及桌面快捷方式备份在 `releases\fixed-entry-backups\before-role-binding-20261006-141740`，桌面 `.lnk` 已指向新版签名 EXE；沿用直接启动方式，未修复或清理旧 ClickOnce 缓存。发布前后用户数据库 SHA-256 均为 `5C6104BAF5D115EB999A79B8731A8823D53454CDA48E49D2B633C07A991DFE31`，未清理预设。
+- 本轮计划判断 API 实际返回 `evaluated/pass`，结果判断返回 `evaluated/revise`，均为参考信号且不提供自然语言原因。主代理按本地证据交付已验证的软件修复，仍将已骑乘游戏内保持效果记为未验收，未宣称已经彻底实机生效。
+
+## 2026-10-06 短暂无骑乘复核修复桌面热更（2026.10.6.1）
+
+- 完整访问恢复后，未替换 `os.link` 的原始 `MountSpeedMemoryTestRegression.py` 通过，解除上一轮文件系统夹具验证缺口；CodeRabbit 对当前未提交修复完成审查，0 issues。现有脚本签名发布 `releases\2026.10.6.1`，Release 构建 0 错误、4 条既有 EasyHook `MSB3178` 警告，`CleanPresets=False`。
+- 应用清单、版本部署清单和正式固定入口三份 Mage 验签通过；速度保持和坐骑探针脚本的源码、包内原文件及 `.deploy` SHA-256 一致。ClickOnce、项目回归检查、保持机器人和探针回归及 `git diff --check` 均通过。
+- 固定入口和桌面 `.lnk` 已备份至 `releases\fixed-entry-backups\before-unmounted-retry-20261006-134509`。沿用上一轮直接启动签名发布程序的桌面交付方式，`.lnk` 已指向 `releases\2026.10.6.1\小黑封包助手.exe`，原 ClickOnce 入口保留。本轮未清理 ClickOnce 缓存。
+- 更新及旧窗口关闭请求前后，预设数据库 SHA-256 保持 `B1933C463CE6DBC1EB6C5C7C3C9DC72BBB48898D5A463B5EF24DBCF64A63D77F`。未发现正在运行的速度保持 helper。旧助手收到正常关闭请求后尚未退出，已请求用户关闭；新版主窗体启动与游戏内瞬态行为尚待验证。
+
+## 2026-10-06 坐骑速度保持短暂无骑乘复核修复（源码，未热更）
+
+- 运行 `485d2926-d65d-4238-9193-6874933b42cd` 在 13:05:14 从已骑乘、速度 2000 短暂变为未骑乘、速度 230；原 helper 立即失败。随后同一秒恢复检查又读到已骑乘、原速度 271.4，未写入恢复值，journal 删除，helper 以退出码 2 结束。此日志不能确认用户是否实际下坐骑或是否为切图瞬态。
+- `run_hold` 现在只对有效唯一、本地角色明确、进程与玩家身份未变且坐骑 ID 为空或 0 的未骑乘快照，追加最多两次新鲜复核；骑乘复核期间不读写未绑定速度，不更换恢复目标。恢复原坐骑后才执行原有地址、TValue 及 CAS 检查；骑乘复核预算在未知 TValue 的多次校验间共享，持续未骑乘、身份变化与非本地角色仍失败关闭。初始绑定、最终释放与失败恢复不放宽；首次写入前及循环复核期间停止均不再写目标值。
+- 真实瞬态快照序列的新增回归在旧代码上失败，修复后完整保持回归通过，包含持续未骑乘、进程/玩家/坐骑变化、交错未知 TValue、停止及本地角色标记边界；主代理复跑通过。当前沙箱拒绝生产 `os.link`（WinError 5），保持回归仅在离线测试进程将 journal 文件系统夹具替换为 Windows `os.rename`，生产硬链接逻辑不变，真实硬链接集成未验收。探针、机器人回归及 `git diff --check` 通过。
+- 本轮未热更、未连接设备或写游戏内存。当前执行仍为沙箱，签名证书不可访问、CodeRabbit 登录不可见，审查未完成；计划判断 API 返回 `not_run / NETWORK_ACCESS_DENIED`。桌面仍为上一轮 `2026.10.6.0`，新行为尚未实机验收。
+
+## 2026-10-06 坐骑速度保持桌面热更完成（2026.10.6.0）
+
+- 完整访问恢复后，现有发布脚本签名发布 `releases\2026.10.6.0`，正式固定入口版本同步更新。Release 构建 0 错误、4 条既有 EasyHook `MSB3178` 警告；包共 212 个文件、92 个 `.deploy` 文件。应用清单、版本部署清单及正式固定入口三份 Mage 验签均通过，两份坐骑 Python 源码与 `.deploy` 文件 SHA-256 一致。
+- CodeRabbit 对本次五个修复及回归文档文件完成审查，0 issues。三项发布回归及 `git diff --check` 通过；直接加载发布 `WPELibrary.dll` 验证默认候选仍为 `com.gdoo.yzqcxy`，保持入口候选为 `com.gdoo.dhxy,com.gdoo.xxxy2026,com.gdoo.yzqcxy`。
+- 通过固定入口激活时，本机 ClickOnce 缓存报 `0x800736B3`（参照的程序集没有安装在系统上），未启动新程序。旧入口和两份桌面快捷方式已备份在 `releases\fixed-entry-backups\before-mount-package-20261006-123620`。桌面 `小黑封包助手.lnk` 已改为直接启动 `releases\2026.10.6.0\小黑封包助手.exe`，原 `.appref-ms` 及签名 ClickOnce 入口保留，缓存故障未修复；直接启动快捷方式以后续需热更时重新指向新版为准。临时 ClickOnce 诊断注册表配置已恢复。
+- 桌面快捷方式激活后，启动日志确认 `assemblyVersion/fileVersion=2026.10.6.0`、数据库初始化完成及主窗体启动。发布及启动前后预设数据库 SHA-256 均为 `B1933C463CE6DBC1EB6C5C7C3C9DC72BBB48898D5A463B5EF24DBCF64A63D77F`，`CleanPresets=False`。未启动坐骑速度保持、未写入游戏内存，游戏内效果仍待实机验收。
+
+## 2026-10-06 坐骑速度保持桌面热更尝试（未发布）
+
+- 用户已授权热更桌面版本。现有 `Publish-ClickOnceStable.ps1 -Preview` 因当前运行环境没有可用的 `CurrentUser` ClickOnce 私钥证书而失败，三份清单签名及 Mage 验签未执行，正式 `releases\小黑封包助手.application` 仍为 `2026.9.28.3`。
+- 隔离候选打包的并行构建未完成并已停止；其临时版本文件改动已恢复。随后使用现有 VS 2022 MSBuild 单进程 Release 构建成功，输出 `.scratch\MountHoldHotUpdate20261006\ReleaseBuild`，0 错误，4 条既有 EasyHook `MSB3178` 警告及 1 条本地更新路径 `MSB3189` 警告。两份坐骑 Python 源码与构建输出 SHA-256 一致。
+- `ClickOnceUpdateRegression.ps1`、`ReviewRegressionChecks.ps1`、`MountSpeedHoldRobotRegression.ps1` 和 `git diff --check` 通过。未更新桌面快捷方式、未完成 ClickOnce 安装与实机速度保持验收；CodeRabbit 仍未认证。保留构建产物与日志，未完成候选目录已清理。
+
+## 2026-10-06 坐骑速度保持精确游戏包名回退修复（源码）
+
+- 坐骑速度保持读取器在既有配置包名与 `WPE_MOUNT_STATUS_GAME_PACKAGE` 环境变量之后、默认 `com.gdoo.yzqcxy` 之前，增加实例级精确候选 `com.gdoo.xxxy2026`。原五参数公开构造函数保留；新六参数重载复制回退列表，避免实例间共享可变集合。只有 `TryPrepareMountSpeedHoldRuntime` 提供此回退，`com.gdoo.dhxy` 配置默认、旧默认包名、普通坐骑速度与成长率入口均未扩大。
+- 离线 `MountSpeedRunnerHarness` 反射调用实际候选函数，验证默认列表不变、保持入口精确回退、显式配置及环境变量优先、非法名称拒绝、大小写去重及实例复制；完整 harness 通过。`MountSpeedHoldRobotRegression.ps1` 通过。隔离 `WPELibrary` Debug 构建输出在 `%LOCALAPPDATA%\Temp\MountPackageRegression\WPELibraryBin`，命令为 `MSBuild.exe WPELibrary\WPELibrary.csproj /t:Build /p:Configuration=Debug /p:OutputPath=... /p:BaseIntermediateOutputPath=...`，0 警告、0 错误；`git diff --check` 通过。
+- 未发布 ClickOnce，也未连接 ADB、启动游戏、写游戏内存或进行实机效果验收。CodeRabbit 未执行（当前未认证）。
+
 ## 2026-09-28 坐骑速度保持切图瞬态异值修复桌面热更（2026.9.28.3）
 
 - 用户确认退出时正在切换地图。运行 `acdff4e2-55e9-4d2c-813d-fc6bb8bac304` 在同一速度地址先读到 `f64:2000`，随后短暂读到有效 `i32:200`；该值与本轮 journal 的基线 `f64:242` 和目标值均不同，旧 helper 因单次异值立即退出。约 37 秒后的失败恢复重新校验同一绑定并读回 `f64:242`，未写入恢复值，journal 已删除。日志不能进一步证明具体的游戏内存更新机制。

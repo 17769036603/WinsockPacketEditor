@@ -28,6 +28,7 @@ namespace WPELibrary.Lib.MountSpeed
         private int exitLogged;
         private bool processStarted;
         private bool logUnavailableReported;
+        public bool SafeToRetry { get; private set; }
 
         public MountSpeedHoldProcess(
             MountStatusAndroidSnapshotLaunchContext context,
@@ -119,6 +120,11 @@ namespace WPELibrary.Lib.MountSpeed
                 "--root-broker-pipe",
                 this.context.RootBrokerPipe
             };
+            if (!string.IsNullOrWhiteSpace(this.context.ProbeCachePath))
+            {
+                arguments.Add("--probe-cache-path");
+                arguments.Add(this.context.ProbeCachePath);
+            }
             arguments.Add("--log-path");
             arguments.Add(RunLogPath);
             arguments.Add("--run-id");
@@ -221,7 +227,10 @@ namespace WPELibrary.Lib.MountSpeed
 
             this.process.WaitForExit();
             this.process.WaitForExit();
-            this.CheckExitCode();
+            if (!this.SafeToRetry)
+            {
+                this.CheckExitCode();
+            }
         }
 
         public void Dispose()
@@ -383,6 +392,12 @@ namespace WPELibrary.Lib.MountSpeed
             }
             if (this.process.ExitCode != 0)
             {
+                this.SafeToRetry = MountSpeedHoldRestartSupervisor.IsSafeRecoveredFailure(
+                    RunLogPath,
+                    this.runId,
+                    this.presetId,
+                    this.presetName,
+                    this.JournalPath);
                 string details;
                 lock (this.outputSync)
                 {

@@ -36,6 +36,7 @@
     <Compile Include="..\..\WPELibrary\Lib\MountSpeed\MountStatusMemoryReader.cs" />
     <Compile Include="..\..\WPELibrary\Lib\MountSpeed\MountStatusReadOnlySnapshot.cs" />
     <Compile Include="..\..\WPELibrary\Lib\MountSpeed\MountStatusAndroidSnapshotReader.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\MountSpeed\MountSpeedHoldRestartSupervisor.cs" />
     <Compile Include="..\..\WPELibrary\Lib\MountSpeed\MountSkillPresetPreview.cs" />
     <Compile Include="..\..\WPELibrary\Lib\MountSpeed\MountRefineStateMachine.cs" />
     <Compile Include="..\..\WPELibrary\Lib\MountSpeed\MountRefineRunLogStore.cs" />

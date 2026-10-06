@@ -10,6 +10,7 @@ import json
 import math
 import os
 import queue
+import shlex
 import struct
 import subprocess
 import sys
@@ -165,6 +166,8 @@ class AdbTransport:
             f"printf '{escaped}' | {self.dd_command} "
             f"of=/proc/$$/fd/3 bs=1 seek={address} conv=notrunc 2>/dev/null"
         )
+        if self.root_broker is not None:
+            command = f"sh -c {shlex.quote(command)}"
         # ponytail: the bound fd still races LuaJIT table relocation/GC; use a thread-synchronized client test hook if needed.
         self.shell(command)
 
@@ -184,10 +187,10 @@ def identity(probe, adb: str, serial: str, pid: int, run_as_package: str = "", r
     return value
 
 
-def capture(probe, adb: str, serial: str, pid: int, run_as_package: str = "", runtime=None, root_broker_pipe: str = "", speed_only: bool = False, hold_rebind: bool = False) -> dict:
+def capture(probe, adb: str, serial: str, pid: int, run_as_package: str = "", runtime=None, root_broker_pipe: str = "", speed_only: bool = False, hold_rebind: bool = False, cache_path: str = "") -> dict:
     args = argparse.Namespace(adb=adb, serial=serial, pid=pid, chunk_size=0x200000,
         max_ranges=0, min_range=0x10000, max_range=0x10000000, read_timeout=8.0,
-        candidate_distance=0x2000, cache_path="", cache_only=False, server=False,
+        candidate_distance=0x2000, cache_path=cache_path, cache_only=False, server=False,
         require_complete_refine_cards=False, preferred_refine_ride_instance_id="",
         root_broker_pipe=root_broker_pipe, run_as_package=run_as_package,
         speed_only=speed_only, hold_rebind=hold_rebind)
@@ -378,9 +381,46 @@ def run_hold(args, transport, snapshot_provider, probe, run_as_package, stop_req
     safely_released = False
     retain_journal = False
     try:
-        def validate_current_once(allow_unknown=False):
+        def is_transient_unmounted(snapshot):
+            process = snapshot.get("process") if isinstance(snapshot, dict) else None
+            candidate = snapshot.get("player") if isinstance(snapshot, dict) else None
+            return (
+                isinstance(snapshot, dict) and snapshot.get("status") == "ok" and snapshot.get("candidateCount") == 1 and
+                isinstance(process, dict) and process.get("pid") == ident["pid"] and
+                process.get("startTicks") == ident["startTicks"] and process.get("exe") == ident["exe"] and
+                isinstance(candidate, dict) and candidate.get("isLocalPlayer") is True and
+                candidate.get("playerId") == player["playerId"] and
+                candidate.get("isMounted") is False and candidate.get("mountId") in (None, "", 0)
+            )
+
+        def validate_current_once(allow_unknown=False, retry_unmounted=True, poll_stop=False,
+                                  unmounted_retry_budget=None):
             nonlocal addr, baseline, desired, binding
             fresh = get_snapshot("hold-recheck")
+            if retry_unmounted and is_transient_unmounted(fresh):
+                remaining = unmounted_retry_budget[0] if unmounted_retry_budget is not None else 2
+                if remaining <= 0:
+                    raise RuntimeError("local player remained unmounted after 2 hold retries")
+                for _ in range(remaining):
+                    attempt = 3 - unmounted_retry_budget[0] if unmounted_retry_budget is not None else 1
+                    log("holdUnmountedRetry", attempt=attempt, maxAttempts=2,
+                        playerId=player["playerId"], mountId=player["mountId"])
+                    if unmounted_retry_budget is not None:
+                        unmounted_retry_budget[0] -= 1
+                    if poll_stop and stop_requested is not None:
+                        if stop_requested(0.1):
+                            log("stopSignal", source="stdin", during="holdUnmountedRetry",
+                                elapsedMs=round((time.monotonic() - started) * 1000, 2))
+                            return None
+                    else:
+                        time.sleep(0.1)
+                    fresh = get_snapshot("hold-unmounted-retry")
+                    if not is_transient_unmounted(fresh):
+                        break
+                else:
+                    raise RuntimeError("local player remained unmounted during hold retry")
+                if is_transient_unmounted(fresh):
+                    raise RuntimeError("local player remained unmounted during hold retry")
             fresh_player, fresh_addr = validate_snapshot(
                 fresh, {**ident, "playerId": player["playerId"], "address": addr},
                 player["mountId"], allow_address_change=True)
@@ -423,11 +463,13 @@ def run_hold(args, transport, snapshot_provider, probe, run_as_package, stop_req
                 raise RuntimeError("current TValue changed to an unknown value during hold")
             return current
 
-        def validate_current(allow_unknown=False, retry_unknown=True):
+        def validate_current(allow_unknown=False, retry_unknown=True, retry_unmounted=True, poll_stop=False):
             max_attempts = 3 if retry_unknown and not allow_unknown else 1
+            unmounted_retry_budget = [2]
             for attempt in range(max_attempts):
                 try:
-                    return validate_current_once(allow_unknown)
+                    return validate_current_once(
+                        allow_unknown, retry_unmounted, poll_stop, unmounted_retry_budget)
                 except RuntimeError as error:
                     if "current TValue changed to an unknown value during hold" not in str(error):
                         raise
@@ -466,12 +508,19 @@ def run_hold(args, transport, snapshot_provider, probe, run_as_package, stop_req
                 maxAttempts=max_consecutive_write_verification_misses)
 
         # Rebind immediately after journal creation, before the first write.
-        current = validate_current()
+        current = validate_current(poll_stop=True)
+        stop_before_first_write = current is None
+        if stop_before_first_write:
+            outcome = "stopped-before-write"
+            reason = "stop requested before first write; no hold applied"
+            log("holdStoppedBeforeWrite", reason=reason)
+            return {"action": "hold", "written": False, "writes": 0, "restored": False,
+                "baselineRaw": baseline.hex(), "reason": reason}
         if baseline != desired and current != desired:
             write_and_verify(current)
 
         deadline = None if persistent else time.monotonic() + duration
-        while deadline is None or time.monotonic() < deadline:
+        while not stop_before_first_write and (deadline is None or time.monotonic() < deadline):
             wait = interval if deadline is None else min(interval, max(0, deadline - time.monotonic()))
             if stop_requested is not None and stop_requested(wait):
                 log("stopSignal", source="stdin", elapsedMs=round((time.monotonic() - started) * 1000, 2))
@@ -480,7 +529,9 @@ def run_hold(args, transport, snapshot_provider, probe, run_as_package, stop_req
                 time.sleep(wait)
             if deadline is not None and time.monotonic() >= deadline:
                 break
-            current = validate_current()
+            current = validate_current(poll_stop=True)
+            if current is None:
+                break
             if current == desired and consecutive_write_verification_misses:
                 writes += 1
                 log("holdWriteVerificationRecovered",
@@ -491,7 +542,7 @@ def run_hold(args, transport, snapshot_provider, probe, run_as_package, stop_req
                 write_and_verify(current)
 
         # Rebind once more so stop/final restore always follows the current field.
-        current = validate_current(allow_unknown=True)
+        current = validate_current(allow_unknown=True, retry_unmounted=False)
         if current == baseline:
             safely_released = True
             outcome = "restored" if writes else "baseline-unchanged"
@@ -535,7 +586,7 @@ def run_hold(args, transport, snapshot_provider, probe, run_as_package, stop_req
             raise
         try:
             log("recoveryAttempt", reason=str(error))
-            current = validate_current(retry_unknown=False)
+            current = validate_current(retry_unknown=False, retry_unmounted=False)
             if current == desired:
                 write_speed(addr, baseline, ident["startTicks"], desired, "failure-recovery")
                 if read_speed(addr, "hold-failure-recovery-verification") != baseline:
@@ -602,7 +653,7 @@ def run_action(args, transport=None, snapshot_provider=None, probe=None) -> dict
         try:
             if not supplied_snapshot_provider:
                 runtime = runtime or probe.ProbeRuntime(root_broker_pipe=root_broker_pipe, run_as_package=run_as_package)
-                snapshot_provider = lambda: capture(probe, args.adb, args.serial, args.pid, run_as_package, runtime, root_broker_pipe, speed_only=True, hold_rebind=True)
+                snapshot_provider = lambda: capture(probe, args.adb, args.serial, args.pid, run_as_package, runtime, root_broker_pipe, speed_only=True, hold_rebind=True, cache_path=getattr(args, "probe_cache_path", ""))
             stop_requested = None
             if getattr(args, "persistent", False):
                 messages = queue.Queue()
@@ -715,6 +766,7 @@ def main() -> int:
     parser.add_argument("--pid", type=int, required=True)
     parser.add_argument("--run-as-package", default="", help="use run-as for a debuggable Android app instead of su")
     parser.add_argument("--root-broker-pipe", default="", help="execute rooted ADB commands through the desktop root broker pipe")
+    parser.add_argument("--probe-cache-path", dest="probe_cache_path", default="", help="base cache path shared with the desktop preflight probe")
     parser.add_argument("--mount-id", type=int, help="optional expected mount ID; defaults to the unique mounted local player")
     parser.add_argument("--preflight-player-id", type=int)
     parser.add_argument("--preflight-start-ticks", type=int)

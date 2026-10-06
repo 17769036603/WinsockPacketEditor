@@ -5,6 +5,7 @@ import importlib.util
 import base64
 import io
 import json
+import shlex
 import struct
 import tempfile
 from pathlib import Path
@@ -77,6 +78,8 @@ class FakeRootBroker:
         self.raw, self.commands = raw, []
 
     def execute(self, command, _timeout):
+        if command.startswith("sh -c "):
+            command = shlex.split(command)[2]
         self.commands.append(command)
         if " if=/proc/" in command:
             return base64.b64encode(self.raw)
@@ -90,18 +93,24 @@ def main():
     client = load(SCRIPT, "mount_speed_memory_test")
     speed_only_calls = []
     hold_rebind_calls = []
+    cache_paths = []
     class CaptureProbe:
         @staticmethod
         def probe_once(args, runtime=None):
             speed_only_calls.append(args.speed_only)
             hold_rebind_calls.append(args.hold_rebind)
+            cache_paths.append(args.cache_path)
             print("{}")
             return 0
     assert client.capture(CaptureProbe, "adb", "serial", 25) == {}
     assert client.capture(CaptureProbe, "adb", "serial", 25, speed_only=True) == {}
     assert client.capture(CaptureProbe, "adb", "serial", 25, speed_only=True, hold_rebind=True) == {}
-    assert speed_only_calls == [False, True, True]
-    assert hold_rebind_calls == [False, False, True]
+    assert client.capture(
+        CaptureProbe, "adb", "serial", 25, speed_only=True,
+        hold_rebind=True, cache_path="C:/cache/base.json") == {}
+    assert speed_only_calls == [False, True, True, True]
+    assert hold_rebind_calls == [False, False, True, True]
+    assert cache_paths == ["", "", "", "C:/cache/base.json"]
     probe = FakeProbe()
     identity = probe.process_identity()
     short_reads = iter((b"ab", b"abcdefgh"))
@@ -209,7 +218,7 @@ def main():
     assert identity_calls["pipe"] == "\\\\.\\pipe\\wpe-root"
     assert identity_calls["broker"] is not None and identity_calls["session_closed"] and identity_calls["closed"]
     old = struct.pack("<Q", ((0xFFFFFFF2 & 0x1FFFF) << 47) | 410)
-    player = {"playerId": 7, "isMounted": True, "mountId": 42,
+    player = {"playerId": 7, "isLocalPlayer": True, "isMounted": True, "mountId": 42,
               "references": {"m_RoleMoveSpeed": {"nodeValueAddress": "0x1234"}}}
     snapshot = {"status": "ok", "candidateCount": 1, "process": identity, "player": player}
     with tempfile.TemporaryDirectory() as directory:
@@ -420,6 +429,202 @@ def main():
             "holdWriteVerificationRetry"
         ) == 1
         assert not Path(args.journal).exists()
+        delattr(args, "_hold_logger")
+
+        # One explicit unmounted snapshot followed by the original mount and
+        # baseline retries from a fresh snapshot before another target write.
+        args.journal = str(Path(directory) / "hold-unmounted-transient.json")
+        args.persistent = True
+        class SnapshotAwareTransport(FakeTransport):
+            def __init__(self, raw):
+                super().__init__(raw)
+                self.raw_before_writes = []
+
+            def write(self, address, raw, expected_start_ticks, expected_raw=None):
+                self.raw_before_writes.append(self.raw)
+                super().write(address, raw, expected_start_ticks, expected_raw)
+
+        retry_transport = SnapshotAwareTransport(old)
+        unmounted = json.loads(json.dumps(snapshot))
+        unmounted["player"]["isMounted"] = False
+        unmounted["player"]["mountId"] = 0
+        retry_sequence = iter((snapshot, snapshot, unmounted, snapshot, snapshot))
+        snapshot_count = [0]
+        def transient_snapshot():
+            snapshot_count[0] += 1
+            if snapshot_count[0] == 3:
+                retry_transport.raw = struct.pack("<d", 230.0)
+            elif snapshot_count[0] == 4:
+                retry_transport.raw = old
+            return next(retry_sequence)
+        retry_logger = FakeHoldLogger()
+        args._hold_logger = retry_logger
+        controls = [0]
+        def stop_after_unmounted_retry(_wait):
+            controls[0] += 1
+            return controls[0] > 2
+        before = len(retry_transport.writes)
+        recovered = client.run_hold(
+            args, retry_transport, transient_snapshot, probe, "",
+            stop_after_unmounted_retry,
+        )
+        assert recovered["restored"] and retry_transport.raw == old
+        assert retry_transport.writes[before:] == [expected, expected, old]
+        assert struct.pack("<d", 230.0) not in retry_transport.raw_before_writes
+        retry_events = [event for event, _data in retry_logger.events]
+        assert "holdUnmountedRetry" in retry_events
+        assert not Path(args.journal).exists()
+        delattr(args, "_hold_logger")
+
+        # Unknown TValue retries and unmounted retries share one two-snapshot
+        # budget for a single normal validation call.
+        args.journal = str(Path(directory) / "hold-unmounted-unknown-budget.json")
+        budget_transport = FakeTransport(old)
+        budget_logger = FakeHoldLogger()
+        args._hold_logger = budget_logger
+        budget_sequence = iter((snapshot, snapshot, unmounted, snapshot,
+                                unmounted, snapshot, unmounted, snapshot))
+        budget_snapshot_calls = [0]
+        def interleaved_unknown_snapshot():
+            budget_snapshot_calls[0] += 1
+            if budget_snapshot_calls[0] == 4:
+                budget_transport.raw = struct.pack("<d", 333.0)
+            return next(budget_sequence)
+        before = len(budget_transport.writes)
+        try:
+            client.run_hold(
+                args, budget_transport, interleaved_unknown_snapshot, probe, "", lambda _wait: False,
+            )
+        except RuntimeError as error:
+            assert "after 2 hold retries" in str(error) and "recovery blocked" in str(error)
+        else:
+            raise AssertionError("unknown retries reset the unmounted retry budget")
+        budget_events = [event for event, _data in budget_logger.events]
+        assert budget_events.count("holdUnmountedRetry") == 2
+        assert budget_events.count("holdUnknownValueRetry") == 2
+        assert budget_transport.writes[before:] == [expected]
+        assert Path(args.journal).exists()
+        Path(args.journal).unlink()
+        delattr(args, "_hold_logger")
+
+        # Stop during the first post-journal validation must not acquire the
+        # target value; final release still requires a fresh mounted snapshot.
+        args.journal = str(Path(directory) / "hold-unmounted-stop-before-write.json")
+        startup_stop_transport = FakeTransport(old)
+        startup_unmounted = json.loads(json.dumps(unmounted))
+        startup_stop_calls = [0]
+        startup_stop_events = []
+
+        def startup_stop_snapshot():
+            startup_stop_calls[0] += 1
+            if startup_stop_calls[0] == 1:
+                return snapshot
+            if startup_stop_calls[0] == 2:
+                return startup_unmounted
+            raise AssertionError("stop before first write must not perform another rebind")
+
+        class StartupStopLogger:
+            def log(self, event, data):
+                startup_stop_events.append((event, data))
+
+        args._hold_logger = StartupStopLogger()
+        startup_stop = client.run_hold(
+            args, startup_stop_transport, startup_stop_snapshot, probe, "",
+            lambda _wait: True,
+        )
+        assert startup_stop["written"] is False and not startup_stop_transport.writes
+        assert startup_stop_calls[0] == 2
+        assert startup_stop["reason"] == "stop requested before first write; no hold applied"
+        assert any(event == "runEnd" and data["outcome"] == "stopped-before-write"
+                   for event, data in startup_stop_events)
+        assert not Path(args.journal).exists()
+        delattr(args, "_hold_logger")
+
+        # A manual stop during the retry goes straight to strict final release
+        # and performs no further target write.
+        args.journal = str(Path(directory) / "hold-unmounted-stop.json")
+        stop_transport = FakeTransport(old)
+        stop_calls = [0]
+        def stop_during_unmounted_retry(_wait):
+            stop_calls[0] += 1
+            return stop_calls[0] > 1
+        stop_sequence = iter((snapshot, snapshot, unmounted, snapshot))
+        def stopped_snapshot():
+            value = next(stop_sequence)
+            if value is unmounted:
+                stop_transport.raw = struct.pack("<d", 230.0)
+            elif stop_transport.raw == struct.pack("<d", 230.0):
+                stop_transport.raw = old
+            return value
+        before = len(stop_transport.writes)
+        stopped = client.run_hold(
+            args, stop_transport, stopped_snapshot, probe, "", stop_during_unmounted_retry,
+        )
+        assert stopped["restored"] and stop_transport.raw == old
+        assert stop_transport.writes[before:] == [expected]
+        assert struct.pack("<d", 230.0) not in stop_transport.writes[before:]
+
+        # Persistent unmounted state and any process/player/new-mount binding
+        # change fail closed; only the initial target write may have occurred.
+        args.journal = str(Path(directory) / "hold-unmounted-persistent.json")
+        retry_transport = FakeTransport(old)
+        controls = [0]
+        def never_stop(_wait):
+            controls[0] += 1
+            return False
+        before = len(retry_transport.writes)
+        persistent_sequence = iter((snapshot, snapshot, unmounted, unmounted, unmounted, unmounted))
+        try:
+            client.run_hold(
+                args, retry_transport, lambda: next(persistent_sequence), probe, "", never_stop,
+            )
+        except RuntimeError as error:
+            assert "remained unmounted" in str(error) and "recovery blocked" in str(error)
+        else:
+            raise AssertionError("hold accepted a persistent unmounted snapshot")
+        assert retry_transport.writes[before:] == [expected]
+        assert Path(args.journal).exists()
+        Path(args.journal).unlink()
+
+        for mismatch, label in (("process", "pid"), ("player", "player"), ("mount", "mount")):
+            args.journal = str(Path(directory) / f"hold-unmounted-{mismatch}-change.json")
+            retry_transport = FakeTransport(old)
+            changed = json.loads(json.dumps(snapshot))
+            if mismatch == "process":
+                changed["process"]["pid"] += 1
+            elif mismatch == "player":
+                changed["player"]["playerId"] += 1
+            else:
+                changed["player"]["mountId"] += 1
+            sequence = iter((snapshot, snapshot, unmounted, changed, changed))
+            before = len(retry_transport.writes)
+            try:
+                client.run_hold(args, retry_transport, lambda: next(sequence), probe, "", never_stop)
+            except RuntimeError as error:
+                assert label in str(error) or mismatch == "process"
+            else:
+                raise AssertionError(f"hold accepted an unmounted {mismatch} binding change")
+            assert retry_transport.writes[before:] == [expected]
+            assert Path(args.journal).exists()
+            Path(args.journal).unlink()
+
+        args.journal = str(Path(directory) / "hold-unmounted-not-local.json")
+        retry_transport = FakeTransport(old)
+        not_local = json.loads(json.dumps(unmounted))
+        not_local["player"]["isLocalPlayer"] = False
+        retry_logger = FakeHoldLogger()
+        args._hold_logger = retry_logger
+        sequence = iter((snapshot, snapshot, not_local, not_local))
+        try:
+            client.run_hold(args, retry_transport, lambda: next(sequence), probe, "", never_stop)
+        except RuntimeError as error:
+            assert "local player is not mounted" in str(error)
+        else:
+            raise AssertionError("hold retried an unmounted non-local player snapshot")
+        assert "holdUnmountedRetry" not in [event for event, _data in retry_logger.events]
+        assert retry_transport.writes == [expected]
+        assert Path(args.journal).exists()
+        Path(args.journal).unlink()
         delattr(args, "_hold_logger")
 
         # Repeated baseline read-backs remain bounded and use the normal
@@ -765,16 +970,40 @@ def main():
         assert not Path(args.journal).exists()
         args.persistent = False
 
+        # Exercise the actual default hold capture pipeline and its probe namespace.
+        # This catches a missing helper-to-capture handoff as an empty cache path.
+        observed_cache_paths = []
+        class CachePathProbe(FakeProbe):
+            @staticmethod
+            def probe_once(probe_args, runtime=None):
+                observed_cache_paths.append(probe_args.cache_path)
+                print("{}")
+                return 0
+        cache_args = SimpleNamespace(
+            action="hold", adb="adb", serial="serial", pid=25, mount_id=42,
+            speed=500.0, interval=0.1, persistent=False, journal=str(Path(directory) / "capture-path.json"),
+            probe_cache_path="C:/cache/preflight.json", root_broker_pipe="", run_as_package="",
+        )
+        with patch.object(
+            client, "run_hold",
+            side_effect=lambda _args, _transport, snapshot_provider, _probe, _package, _stop: snapshot_provider(),
+        ):
+            captured = client.run_action(cache_args, FakeTransport(old), None, CachePathProbe)
+        assert captured == {} and observed_cache_paths == ["C:/cache/preflight.json"]
+
         # The default capture path receives one shared runtime and closes it at completion.
         args.journal = str(Path(directory) / "hold-runtime.json")
         transport.raw = old
         seen = []
         speed_only_seen = []
         hold_rebind_seen = []
-        def fake_capture(_probe, _adb, _serial, _pid, _run_as_package, runtime, _root_broker_pipe="", speed_only=False, hold_rebind=False):
+        forwarded_cache_paths = []
+        args.probe_cache_path = "C:/cache/preflight.json"
+        def fake_capture(_probe, _adb, _serial, _pid, _run_as_package, runtime, _root_broker_pipe="", speed_only=False, hold_rebind=False, cache_path=""):
             seen.append(runtime)
             speed_only_seen.append(speed_only)
             hold_rebind_seen.append(hold_rebind)
+            forwarded_cache_paths.append(cache_path)
             return snapshot
         ticks[0] = 0.0
         with patch.object(client, "capture", side_effect=fake_capture), \
@@ -784,6 +1013,7 @@ def main():
         assert seen and all(runtime is seen[0] for runtime in seen)
         assert speed_only_seen and all(speed_only_seen)
         assert hold_rebind_seen and all(hold_rebind_seen)
+        assert forwarded_cache_paths and all(path == "C:/cache/preflight.json" for path in forwarded_cache_paths)
         assert seen[0].closed
 
         # A root broker hold must reuse its one long-lived client for snapshots and identity.
@@ -797,6 +1027,7 @@ def main():
             held = client.run_action(args, transport, None, probe)
         assert held["restored"] and transport.raw == old
         assert seen and all(runtime is seen[0] for runtime in seen) and seen[0].closed
+        assert forwarded_cache_paths and all(path == "C:/cache/preflight.json" for path in forwarded_cache_paths)
         del args.root_broker_pipe
         args.persistent = False
 

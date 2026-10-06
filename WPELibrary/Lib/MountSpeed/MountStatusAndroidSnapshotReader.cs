@@ -64,6 +64,7 @@ namespace WPELibrary.Lib.MountSpeed
         public string ProbePath { get; internal set; }
         public string Serial { get; internal set; }
         public string RootBrokerPipe { get; internal set; }
+        public string ProbeCachePath { get; internal set; }
         public int ProcessId { get; internal set; }
     }
 
@@ -89,6 +90,7 @@ namespace WPELibrary.Lib.MountSpeed
         private readonly string configuredPackage;
         private readonly string configuredPythonPath;
         private readonly string configuredProbePath;
+        private readonly string[] fallbackPackages;
         private readonly SemaphoreSlim readGate = new SemaphoreSlim(1, 1);
         private readonly object probeWorkerSync = new object();
         private MountStatusProbeWorker probeWorker;
@@ -117,12 +119,26 @@ namespace WPELibrary.Lib.MountSpeed
             string gamePackage = null,
             string pythonPath = null,
             string probePath = null)
+            : this(adbPath, deviceSerial, gamePackage, pythonPath, probePath, null)
+        {
+        }
+
+        public MountStatusAndroidSnapshotReader(
+            string adbPath,
+            string deviceSerial,
+            string gamePackage,
+            string pythonPath,
+            string probePath,
+            IEnumerable<string> fallbackPackages)
         {
             this.configuredAdbPath = adbPath;
             this.configuredSerial = deviceSerial;
             this.configuredPackage = gamePackage;
             this.configuredPythonPath = pythonPath;
             this.configuredProbePath = probePath;
+            this.fallbackPackages = fallbackPackages == null
+                ? new string[0]
+                : fallbackPackages.ToArray();
         }
 
         public async Task<MountStatusAndroidSnapshotReadResult> ReadSnapshotAsync(
@@ -407,6 +423,7 @@ namespace WPELibrary.Lib.MountSpeed
                 adbPath,
                 serial,
                 this.configuredPackage,
+                this.fallbackPackages,
                 cancellationToken,
                 out packageName,
                 out gamePid,
@@ -678,6 +695,7 @@ namespace WPELibrary.Lib.MountSpeed
                 ProbePath = probePath,
                 Serial = serial,
                 RootBrokerPipe = rootBrokerPipe,
+                ProbeCachePath = this.lastProbeCachePath,
                 ProcessId = gamePid
             };
 
@@ -814,6 +832,7 @@ namespace WPELibrary.Lib.MountSpeed
             string adbPath,
             string serial,
             string configuredPackage,
+            IEnumerable<string> fallbackPackages,
             CancellationToken cancellationToken,
             out string packageName,
             out int gamePid,
@@ -822,7 +841,7 @@ namespace WPELibrary.Lib.MountSpeed
             packageName = string.Empty;
             gamePid = 0;
             error = string.Empty;
-            foreach (string candidate in GetPackageCandidates(configuredPackage))
+            foreach (string candidate in GetPackageCandidates(configuredPackage, fallbackPackages))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 AdbCommandResult result = RunProcess(
@@ -842,15 +861,21 @@ namespace WPELibrary.Lib.MountSpeed
             return false;
         }
 
-        private static IEnumerable<string> GetPackageCandidates(string configuredPackage)
+        private static IEnumerable<string> GetPackageCandidates(
+            string configuredPackage,
+            IEnumerable<string> fallbackPackages)
         {
             HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            string[] values =
+            List<string> values = new List<string>
             {
                 configuredPackage,
-                Environment.GetEnvironmentVariable("WPE_MOUNT_STATUS_GAME_PACKAGE"),
-                DefaultGamePackage
+                Environment.GetEnvironmentVariable("WPE_MOUNT_STATUS_GAME_PACKAGE")
             };
+            if (fallbackPackages != null)
+            {
+                values.AddRange(fallbackPackages);
+            }
+            values.Add(DefaultGamePackage);
 
             foreach (string value in values)
             {

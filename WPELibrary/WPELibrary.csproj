@@ -223,6 +223,7 @@
     <Compile Include="Lib\MountSpeed\MountStatusReadOnlySnapshot.cs" />
     <Compile Include="Lib\MountSpeed\MountStatusAndroidSnapshotReader.cs" />
     <Compile Include="Lib\MountSpeed\MountSpeedHoldProcess.cs" />
+    <Compile Include="Lib\MountSpeed\MountSpeedHoldRestartSupervisor.cs" />
     <Compile Include="Lib\MountSpeed\MountGrowthRateHoldProcess.cs" />
     <Compile Include="Lib\MountSpeed\MountSkillPresetPreview.cs" />
     <Compile Include="Lib\MountSpeed\MountRefineStateMachine.cs" />

@@ -1002,6 +1002,11 @@ public class Socket_Robot
 
         private bool TryPrepareMountSpeedHoldRuntime()
         {
+            return this.TryPrepareMountSpeedHoldRuntime(CancellationToken.None);
+        }
+
+        private bool TryPrepareMountSpeedHoldRuntime(CancellationToken cancellationToken)
+        {
             DataRow[] rows = this.RobotInstruction.Rows.Cast<DataRow>()
                 .Where(row => row != null && row["Type"] != DBNull.Value &&
                     Convert.ToInt32(row["Type"]) ==
@@ -1044,7 +1049,12 @@ public class Socket_Robot
                     gamePackage = "com.gdoo.dhxy";
                 }
                 reader = new WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader(
-                    gamePackage: gamePackage);
+                    null,
+                    null,
+                    gamePackage,
+                    null,
+                    null,
+                    new[] { "com.gdoo.xxxy2026" });
                 this._parameters["MountStatusAndroidSnapshotReader"] = reader;
             }
 
@@ -1057,7 +1067,7 @@ public class Socket_Robot
             WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReadResult result;
             try
             {
-                result = reader.ReadSpeedOnlySnapshotAsync(CancellationToken.None).GetAwaiter().GetResult();
+                result = reader.ReadSpeedOnlySnapshotAsync(cancellationToken).GetAwaiter().GetResult();
             }
             catch (Exception exception)
             {
@@ -1087,14 +1097,17 @@ public class Socket_Robot
                     (string.IsNullOrWhiteSpace(result.Error) ? string.Empty : " " + result.Error), result);
             }
 
-            if (!result.Snapshot.MountId.HasValue)
+            if (!result.Snapshot.MountId.HasValue || result.Snapshot.MountId.Value <= 0)
             {
                 return this.FailMountSpeedHoldPreflight("坐骑速度保持启动前未能确认当前坐骑 ID。" +
                     (string.IsNullOrWhiteSpace(result.Error) ? string.Empty : " " + result.Error), result);
             }
 
             if (result.Snapshot.Process == null || context == null ||
-                context.ProcessId != result.Snapshot.Process.Pid)
+                context.ProcessId <= 0 ||
+                context.ProcessId != result.Snapshot.Process.Pid ||
+                result.Snapshot.Process.StartTicks <= 0 ||
+                string.IsNullOrWhiteSpace(result.Snapshot.Process.Executable))
             {
                 return this.FailMountSpeedHoldPreflight("坐骑速度保持启动前进程绑定不符：快照进程与读取器启动进程不一致。" +
                     (string.IsNullOrWhiteSpace(result.Error) ? string.Empty : " " + result.Error), result);
@@ -1222,7 +1235,66 @@ public class Socket_Robot
                 throw new InvalidOperationException("坐骑速度保持目标无效，已停止。" );
             }
 
+            int instructionCount = this.RobotInstruction == null ? 0 : this.RobotInstruction.Rows.Count;
+            int instructionType = instructionCount == 1
+                ? Convert.ToInt32(this.RobotInstruction.Rows[0]["Type"])
+                : -1;
+            bool eligible = WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.IsEligible(
+                this.RobotName,
+                this.RobotPresetId,
+                instructionCount,
+                instructionType,
+                (int)Socket_Cache.Robot.InstructionType.MountSpeedHold);
+            CancellationToken token = this.cts == null ? CancellationToken.None : this.cts.Token;
+            int retryNumber = 0;
+            int retryDelayMilliseconds = 0;
+            Guid retryPreviousRunId = Guid.Empty;
+            bool succeeded = WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.Run(
+                token,
+                eligible,
+                cancellationToken =>
+                {
+                    bool prepared = this.TryPrepareMountSpeedHoldRuntime(cancellationToken);
+                    if (retryNumber > 0)
+                    {
+                        this.LogMountSpeedHold(prepared ? "retryPreflightCompleted" : "retryPreflightFailed", new
+                        {
+                            retryNumber = retryNumber,
+                            delayMilliseconds = retryDelayMilliseconds,
+                            previousRunId = retryPreviousRunId.ToString("D"),
+                            runId = this.GetParameter("MountSpeedHoldRunId", Guid.Empty).ToString("D"),
+                            processId = (this.GetParameter("MountSpeedHoldLaunchContext") as
+                                WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotLaunchContext)?.ProcessId,
+                            mountId = this.GetParameter("MountSpeedHoldMountId", 0L)
+                        });
+                    }
+                    return prepared;
+                },
+                cancellationToken => this.RunMountSpeedHoldChild(target, eligible, cancellationToken),
+                (milliseconds, cancellationToken) =>
+                {
+                    retryNumber++;
+                    retryDelayMilliseconds = milliseconds;
+                    retryPreviousRunId = this.GetParameter("MountSpeedHoldRunId", Guid.Empty);
+                    if (milliseconds > 0) cancellationToken.WaitHandle.WaitOne(milliseconds);
+                });
+            if (!succeeded && !token.IsCancellationRequested)
+            {
+                this.mountSpeedHoldCleanupFailed = true;
+                string reason = this.LastStartFailureReason;
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(reason)
+                    ? "坐骑速度保持子进程未能安全恢复，已停止重启。"
+                    : reason);
+            }
+        }
+
+        private WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.ChildOutcome RunMountSpeedHoldChild(
+            double target,
+            bool restartEligible,
+            CancellationToken cancellationToken)
+        {
             WPELibrary.Lib.MountSpeed.MountSpeedHoldProcess hold = null;
+            Exception failure = null;
             try
             {
                 hold = new WPELibrary.Lib.MountSpeed.MountSpeedHoldProcess(
@@ -1236,14 +1308,9 @@ public class Socket_Robot
                     this.RobotPresetId,
                     this.RobotName);
                 hold.Start();
-                hold.WaitForStop(this.cts == null ? CancellationToken.None : this.cts.Token);
+                hold.WaitForStop(cancellationToken);
             }
-            catch (Exception ex)
-            {
-                this.mountSpeedHoldCleanupFailed = true;
-                this.LastRunFailureReason = ex.Message;
-                throw;
-            }
+            catch (Exception exception) { failure = exception; }
             finally
             {
                 if (hold != null)
@@ -1256,10 +1323,16 @@ public class Socket_Robot
                     {
                         this.mountSpeedHoldCleanupFailed = true;
                         this.LastRunFailureReason = ex.Message;
-                        throw;
+                        failure = ex;
                     }
                 }
             }
+            if (failure == null) return WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.ChildOutcome.Completed;
+            if (hold != null && hold.SafeToRetry && restartEligible)
+                return WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.ChildOutcome.SafeRecoveredFailure;
+            this.mountSpeedHoldCleanupFailed = true;
+            this.LastRunFailureReason = failure.Message;
+            throw failure;
         }
 
         private bool HasMountGrowthRateHoldInstructionRows()

@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
 
 namespace MountSpeedRunnerHarness
 {
@@ -44,6 +46,12 @@ namespace MountSpeedRunnerHarness
                 Console.WriteLine("\n[TEST 6] Mount Status Reader Fail-Closed Layout");
                 if (!await TestMountStatusReaderFailClosedAsync()) return 1;
 
+                Console.WriteLine("\n[TEST 6B] Mount speed hold package candidates");
+                if (!TestMountSpeedHoldPackageCandidates()) return 1;
+
+                Console.WriteLine("\n[TEST 6C] Mount speed hold safe restart supervisor");
+                if (!TestMountSpeedHoldRestartSupervisor()) return 1;
+
                 Console.WriteLine("\n[TEST 7] Android LuaJIT Mount Snapshot Protocol");
                 if (!TestMountStatusAndroidSnapshotProtocol()) return 1;
 
@@ -73,6 +81,216 @@ namespace MountSpeedRunnerHarness
                 Console.WriteLine($"\n[ERROR] {ex}");
                 return 1;
             }
+        }
+
+        private static bool TestMountSpeedHoldPackageCandidates()
+        {
+            Type readerType = typeof(WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader);
+            MethodInfo method = readerType.GetMethod(
+                "GetPackageCandidates",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            if (method == null)
+            {
+                Console.Error.WriteLine("GetPackageCandidates was not found.");
+                return false;
+            }
+
+            string oldEnvironment = Environment.GetEnvironmentVariable("WPE_MOUNT_STATUS_GAME_PACKAGE");
+            try
+            {
+                Environment.SetEnvironmentVariable("WPE_MOUNT_STATUS_GAME_PACKAGE", null);
+                string[] defaults = InvokePackageCandidates(method, null, null);
+                if (!defaults.SequenceEqual(new[] { "com.gdoo.yzqcxy" }, StringComparer.OrdinalIgnoreCase))
+                {
+                    Console.Error.WriteLine("Default package candidate list changed unexpectedly: " + string.Join(",", defaults));
+                    return false;
+                }
+
+                string[] holdCandidates = InvokePackageCandidates(
+                    method,
+                    "com.gdoo.dhxy",
+                    new[] { "com.gdoo.xxxy2026" });
+                if (!holdCandidates.SequenceEqual(
+                    new[] { "com.gdoo.dhxy", "com.gdoo.xxxy2026", "com.gdoo.yzqcxy" },
+                    StringComparer.OrdinalIgnoreCase))
+                {
+                    Console.Error.WriteLine("Hold fallback order is incorrect: " + string.Join(",", holdCandidates));
+                    return false;
+                }
+
+                Environment.SetEnvironmentVariable("WPE_MOUNT_STATUS_GAME_PACKAGE", "com.gdoo.override");
+                string[] prioritized = InvokePackageCandidates(
+                    method,
+                    "com.gdoo.dhxy",
+                    new[] { "com.gdoo.dhxy", "bad-name", "com.gdoo.xxxy2026", "com.gdoo.xxxy2026" });
+                if (!prioritized.SequenceEqual(
+                    new[] { "com.gdoo.dhxy", "com.gdoo.override", "com.gdoo.xxxy2026", "com.gdoo.yzqcxy" },
+                    StringComparer.OrdinalIgnoreCase))
+                {
+                    Console.Error.WriteLine("Configured/environment priority, validation, or deduplication failed: " + string.Join(",", prioritized));
+                    return false;
+                }
+
+                IList<string> mutableFallback = new List<string> { "com.gdoo.xxxy2026" };
+                object reader = Activator.CreateInstance(readerType, new object[]
+                {
+                    null, null, "com.gdoo.dhxy", null, null, mutableFallback
+                });
+                mutableFallback[0] = "com.gdoo.changed";
+                string[] copied = InvokePackageCandidates(
+                    method,
+                    "com.gdoo.dhxy",
+                    (IEnumerable<string>)readerType.GetField("fallbackPackages", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(reader));
+                ((IDisposable)reader).Dispose();
+                if (!copied.Contains("com.gdoo.xxxy2026", StringComparer.OrdinalIgnoreCase) ||
+                    copied.Contains("com.gdoo.changed", StringComparer.OrdinalIgnoreCase))
+                {
+                    Console.Error.WriteLine("Reader fallback candidates were not copied per instance.");
+                    return false;
+                }
+
+                Console.WriteLine("PASS: default, hold fallback, priority, validation, deduplication, and instance copy.");
+                return true;
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("WPE_MOUNT_STATUS_GAME_PACKAGE", oldEnvironment);
+            }
+        }
+
+        private static string[] InvokePackageCandidates(
+            MethodInfo method,
+            string configured,
+            IEnumerable<string> fallback)
+        {
+            return ((System.Collections.IEnumerable)method.Invoke(null, new object[] { configured, fallback }))
+                .Cast<string>().ToArray();
+        }
+
+        private static bool TestMountSpeedHoldRestartSupervisor()
+        {
+            Guid presetId = Guid.NewGuid();
+            Guid runId = Guid.NewGuid();
+            if (!WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.IsEligible(
+                    "坐骑速度保持", presetId, 1, 16, 16) ||
+                WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.IsEligible(
+                    "其他名称", presetId, 1, 16, 16) ||
+                WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.IsEligible(
+                    "坐骑速度保持", Guid.Empty, 1, 16, 16) ||
+                WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.IsEligible(
+                    "坐骑速度保持", presetId, 2, 16, 16)) return false;
+
+            string directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mount-hold-supervisor-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(directory);
+            try
+            {
+                string logPath = System.IO.Path.Combine(directory, "run.jsonl");
+                string journalPath = System.IO.Path.Combine(directory, "journal.json");
+                JObject validEnd = new JObject
+                {
+                    ["runId"] = runId.ToString("D"),
+                    ["presetId"] = presetId.ToString("D"),
+                    ["presetName"] = "坐骑速度保持",
+                    ["source"] = "reader",
+                    ["event"] = "runEnd",
+                    ["data"] = new JObject { ["outcome"] = "failure-recovered", ["journal"] = "deleted", ["status"] = "error" }
+                };
+                string archivedLog = logPath + ".1";
+                JObject unrelatedRunEnd = (JObject)validEnd.DeepClone();
+                unrelatedRunEnd["runId"] = Guid.NewGuid().ToString("D");
+                System.IO.File.WriteAllText(logPath, unrelatedRunEnd.ToString(Newtonsoft.Json.Formatting.None));
+                System.IO.File.WriteAllText(archivedLog, validEnd.ToString(Newtonsoft.Json.Formatting.None));
+                if (!WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.IsSafeRecoveredFailure(
+                        logPath, runId, presetId, "坐骑速度保持", journalPath)) return false;
+                if (WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.IsSafeRecoveredFailure(
+                        logPath, Guid.NewGuid(), presetId, "坐骑速度保持", journalPath)) return false;
+                System.IO.File.WriteAllText(logPath, validEnd.ToString(Newtonsoft.Json.Formatting.None));
+                if (WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.IsSafeRecoveredFailure(
+                        logPath, runId, presetId, "坐骑速度保持", journalPath)) return false;
+                System.IO.File.WriteAllText(logPath, unrelatedRunEnd.ToString(Newtonsoft.Json.Formatting.None));
+                System.IO.File.WriteAllText(journalPath, "retained");
+                if (WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.IsSafeRecoveredFailure(
+                        logPath, runId, presetId, "坐骑速度保持", journalPath)) return false;
+                System.IO.File.Delete(journalPath);
+                validEnd["data"]["outcome"] = "unknown";
+                System.IO.File.WriteAllText(archivedLog, validEnd.ToString(Newtonsoft.Json.Formatting.None));
+                if (WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.IsSafeRecoveredFailure(
+                        logPath, runId, presetId, "坐骑速度保持", journalPath)) return false;
+                validEnd["data"]["outcome"] = "failure-recovered";
+                validEnd["presetId"] = Guid.NewGuid().ToString("D");
+                System.IO.File.WriteAllText(archivedLog, validEnd.ToString(Newtonsoft.Json.Formatting.None));
+                if (WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.IsSafeRecoveredFailure(
+                        logPath, runId, presetId, "坐骑速度保持", journalPath)) return false;
+                System.IO.File.WriteAllText(archivedLog, "not-json");
+                if (WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.IsSafeRecoveredFailure(
+                        logPath, runId, presetId, "坐骑速度保持", journalPath)) return false;
+            }
+            finally { System.IO.Directory.Delete(directory, true); }
+
+            int children = 0, preflights = 0;
+            List<int> delays = new List<int>();
+            bool completed = WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.Run(
+                CancellationToken.None, true,
+                token => { preflights++; return true; },
+                token => ++children <= 12
+                    ? WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.ChildOutcome.SafeRecoveredFailure
+                    : WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.ChildOutcome.Completed,
+                (milliseconds, token) => delays.Add(milliseconds));
+            if (!completed || children != 13 || preflights != 12 ||
+                !delays.SequenceEqual(new[] { 0, 250, 500, 1000, 2000, 4000, 5000, 5000, 5000, 5000, 5000, 5000 })) return false;
+
+            children = preflights = 0;
+            bool retryPreflightFailed = WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.Run(
+                CancellationToken.None, true,
+                token => { preflights++; return false; },
+                token => { children++; return WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.ChildOutcome.SafeRecoveredFailure; },
+                (milliseconds, token) => { });
+            if (retryPreflightFailed || children != 1 || preflights != 1) return false;
+
+            children = preflights = 0;
+            using (CancellationTokenSource cancelled = new CancellationTokenSource())
+            {
+                bool cancellationResult = WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.Run(
+                    cancelled.Token, true,
+                    token => { preflights++; return true; },
+                    token => { children++; return WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.ChildOutcome.SafeRecoveredFailure; },
+                    (milliseconds, token) => cancelled.Cancel());
+                if (cancellationResult || children != 1 || preflights != 0) return false;
+            }
+
+            children = preflights = 0;
+            using (CancellationTokenSource cancelledWithSafeExit = new CancellationTokenSource())
+            {
+                bool cancellationRaceResult = WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.Run(
+                    cancelledWithSafeExit.Token, true,
+                    token => { preflights++; return true; },
+                    token =>
+                    {
+                        children++;
+                        cancelledWithSafeExit.Cancel();
+                        return WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.ChildOutcome.SafeRecoveredFailure;
+                    },
+                    (milliseconds, token) => { });
+                if (cancellationRaceResult || children != 1 || preflights != 0) return false;
+            }
+
+            children = preflights = 0;
+            bool failed = WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.Run(
+                CancellationToken.None, true,
+                token => { preflights++; return true; },
+                token => { children++; return WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.ChildOutcome.Failure; },
+                (milliseconds, token) => { });
+            if (failed || children != 1 || preflights != 0) return false;
+
+            children = preflights = 0;
+            bool ineligible = WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.Run(
+                CancellationToken.None, false,
+                token => { preflights++; return true; },
+                token => { children++; return WPELibrary.Lib.MountSpeed.MountSpeedHoldRestartSupervisor.ChildOutcome.SafeRecoveredFailure; },
+                (milliseconds, token) => { });
+            if (ineligible || children != 1 || preflights != 0) return false;
+            Console.WriteLine("PASS: safe retries continue beyond ten failures with capped backoff; archive lookup is unique and fail-closed; retry preflight failure, cancellation, unsafe failure, and ineligible presets stop.");
+            return true;
         }
 
         static bool TestPresetSerialization()
