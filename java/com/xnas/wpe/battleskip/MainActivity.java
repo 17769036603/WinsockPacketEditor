@@ -48,6 +48,7 @@ public final class MainActivity extends ModuleActivity implements ModuleStatusPr
         layout.setPadding(padding, padding, padding, padding);
 
         status = new TextView(this);
+        status.setTextColor(android.graphics.Color.rgb(224, 239, 243));
         status.setPadding(0, Math.round(12 * getResources().getDisplayMetrics().density), 0, 0);
         layout.addView(status);
 
@@ -117,6 +118,12 @@ public final class MainActivity extends ModuleActivity implements ModuleStatusPr
 
     private static String formatStatus(String raw) {
         if (raw.isEmpty()) return "状态：未启动";
+        if (raw.contains("state=conflict_wait")) {
+            for (String line : raw.split("\\r?\\n")) {
+                if (line.startsWith("message=")) return "启动受阻：" + line.substring(8);
+            }
+            return "启动受阻：等待另一战斗功能退出或完成旧任务检查";
+        }
         for (String line : raw.split("\\r?\\n")) {
             if (line.startsWith("message=")) return "状态：" + line.substring("message=".length());
             if (line.startsWith("state=")) {
@@ -154,8 +161,11 @@ public final class MainActivity extends ModuleActivity implements ModuleStatusPr
             mapped = clean ? ModuleStatus.State.STOPPED : ModuleStatus.State.UNKNOWN;
             label = clean ? "已停止" : "停止未确认";
         } else if ("stopping".equals(state)) { mapped = ModuleStatus.State.STOPPING; label = "正在清理"; }
+        else if ("conflict_wait".equals(state)) {
+            mapped = ModuleStatus.State.WAITING; label = "等待旧任务检查";
+        }
         else if ("starting".equals(state) || "waiting_game".equals(state)
-                || "waiting_role".equals(state) || "conflict_wait".equals(state)) {
+                || "waiting_role".equals(state)) {
             mapped = ModuleStatus.State.WAITING; label = "等待游戏绑定";
         } else if ("running".equals(state)) { mapped = ModuleStatus.State.RUNNING; label = "worker 运行中"; }
         else if ("error".equals(state)) { mapped = ModuleStatus.State.ERROR; label = "运行失败"; }

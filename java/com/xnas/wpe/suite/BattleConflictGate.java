@@ -73,9 +73,23 @@ public final class BattleConflictGate {
     public static synchronized boolean release(File modulesRoot, String moduleId) {
         if (!isManagedId(moduleId) || modulesRoot == null) return false;
         File marker = new File(modulesRoot, RESERVATION);
-        if (!marker.isFile()) return isClean(modulesRoot, moduleId);
+        if (!marker.isFile()) {
+            boolean clean = isClean(modulesRoot, moduleId);
+            if (clean) clearResolvedDenials(modulesRoot);
+            return clean;
+        }
         if (!moduleId.equals(read(marker).trim()) || !isClean(modulesRoot, moduleId)) return false;
-        return marker.delete();
+        boolean released = marker.delete();
+        if (released) clearResolvedDenials(modulesRoot);
+        return released;
+    }
+
+    private static void clearResolvedDenials(File modulesRoot) {
+        if (!hasUnconfirmedActivity(modulesRoot)) {
+            // These are denial messages, not worker state or cleanup evidence.
+            new File(new File(modulesRoot, LOOP), "gate-status").delete();
+            new File(new File(modulesRoot, SKIP), "gate-status").delete();
+        }
     }
 
     /** Clears a reservation only when the launcher Activity itself failed before dispatch. */
@@ -100,10 +114,25 @@ public final class BattleConflictGate {
         File status = new File(new File(modulesRoot, moduleId), "status");
         if (!status.isFile()) return false;
         Map<String, String> fields = parse(read(status));
+        if (LOOP.equals(moduleId) && verifiedProcessEnded(fields)) return true;
         if (!"stopped".equals(fields.get("state"))
                 || !"true".equals(fields.get("hooksRemoved"))
                 || !"true".equals(fields.get("bindingCleared"))) return false;
         return !LOOP.equals(moduleId) || "true".equals(fields.get("restoreConfirmed"));
+    }
+
+    private static boolean verifiedProcessEnded(Map<String, String> fields) {
+        if (!"stopped".equals(fields.get("state"))
+                || !"true".equals(fields.get("processEnded"))
+                || !"true".equals(fields.get("recoveryVerified"))
+                || !"com.gdoo.dhxy".equals(fields.get("package"))) return false;
+        String proof = fields.get("recoveryProof");
+        if ("no_target_process".equals(proof)) return true;
+        if (!"original_process_ended".equals(proof)) return false;
+        try {
+            return Long.parseLong(fields.get("pid")) > 0
+                    && Long.parseLong(fields.get("startTicks")) > 0;
+        } catch (RuntimeException invalidIdentity) { return false; }
     }
 
     /** True while a battle worker has run evidence without a confirmed clean terminal state. */
@@ -137,7 +166,7 @@ public final class BattleConflictGate {
     }
 
     private static String guidance(String moduleId) {
-        if (LOOP.equals(moduleId)) return "先停止战投跳过并等待清理完成；清理未确认时不能启动战斗快进。";
+        if (LOOP.equals(moduleId)) return "上次战投跳过尚未确认退出；请到战投跳过页面点“检查旧任务”。核查完成前不能启动战斗功能。";
         if (SKIP.equals(moduleId)) return "先停止战斗快进并等待清理完成；清理未确认时不能启动战投跳过。";
         return "战投跳过/快进状态未确认；请先停止战投跳过/快进并等待清理完成。";
     }
