@@ -15,11 +15,9 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.Spinner;
 import android.widget.TextView;
 
 import com.xnas.wpe.suite.ModuleStatus;
@@ -71,7 +69,7 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     private Button stopButton;
     private Button attributesTab;
     private Button resistanceTab;
-    private Spinner resistanceSelector;
+    private LinearLayout resistanceOptions;
     private View attributesBody;
     private View resistanceBody;
     private final TextView[] slotNames = new TextView[BattleFrameProtocol.SLOT_COUNT];
@@ -81,6 +79,8 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     private final TextView[] resistancePositions = new TextView[BattleFrameProtocol.SLOT_COUNT];
     private final TextView[] resistanceValues = new TextView[BattleFrameProtocol.SLOT_COUNT];
     private final TextView[] resistanceHeaders = new TextView[4];
+    private final Button[] resistanceButtons = new Button[RESISTANCE_NAMES.length];
+    private int resistanceGridColumns;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -155,11 +155,12 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
 
         statusView = text("后台读取服务未启动", 12.7f, Color.rgb(211, 226, 236));
         statusView.setGravity(Gravity.CENTER_VERTICAL);
-        statusView.setPadding(dp(10), 0, dp(10), 0);
+        statusView.setPadding(dp(10), dp(5), dp(10), dp(5));
+        statusView.setMinHeight(dp(34));
         statusView.setBackground(roundBackground(Color.argb(228, 27, 45, 63),
                 Color.argb(160, 156, 198, 213), dp(9), dp(1)));
         root.addView(statusView, marginParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(34), 0, 0, 0, 6));
+                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, 6));
 
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.HORIZONTAL);
@@ -228,33 +229,81 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
         resistanceDetail.setPadding(dp(3), dp(6), dp(3), dp(7));
         body.addView(resistanceDetail);
 
-        LinearLayout selectorRow = new LinearLayout(this);
-        selectorRow.setGravity(Gravity.CENTER_VERTICAL);
-        TextView selectorLabel = text("抗性项目", 13f, Color.rgb(197, 219, 232));
-        selectorRow.addView(selectorLabel, marginParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(34), 0, 0, 8, 0));
-        resistanceSelector = new Spinner(this);
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_dropdown_item, RESISTANCE_NAMES);
-        resistanceSelector.setAdapter(adapter);
-        resistanceSelector.setSelection(selectedResistance);
-        resistanceSelector.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(android.widget.AdapterView<?> parent,
-                                                View view, int position, long id) {
-                selectedResistance = position;
-                for (TextView header : resistanceHeaders) {
-                    if (header != null) header.setText(RESISTANCE_NAMES[position]);
-                }
-                renderResistance(service == null ? null : service.getDisplayState());
-            }
-
-            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { }
-        });
-        selectorRow.addView(resistanceSelector, new LinearLayout.LayoutParams(0, dp(36), 1f));
-        body.addView(selectorRow, marginParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(36), 0, 0, 0, 5));
+        TextView selectorLabel = text("抗性项目", 12.5f, Color.rgb(197, 219, 232));
+        selectorLabel.setPadding(dp(2), 0, 0, dp(3));
+        body.addView(selectorLabel, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        resistanceOptions = new LinearLayout(this);
+        resistanceOptions.setOrientation(LinearLayout.VERTICAL);
+        for (int index = 0; index < RESISTANCE_NAMES.length; index++) {
+            final int selectedIndex = index;
+            Button option = button(RESISTANCE_NAMES[index], Color.argb(155, 31, 48, 64));
+            option.setTextSize(11f);
+            option.setPadding(dp(3), 0, dp(3), 0);
+            option.setContentDescription(RESISTANCE_NAMES[index] + "抗性");
+            option.setOnClickListener(view -> selectResistance(selectedIndex));
+            resistanceButtons[index] = option;
+        }
+        resistanceOptions.addOnLayoutChangeListener((view, left, top, right, bottom,
+                                                     oldLeft, oldTop, oldRight, oldBottom) ->
+                updateResistanceOptionGrid(right - left));
+        body.addView(resistanceOptions, marginParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, 5));
+        resistanceOptions.post(() -> updateResistanceOptionGrid(resistanceOptions.getWidth()));
         addSideSections(body, true);
         return body;
+    }
+
+    private void updateResistanceOptionGrid(int availableWidth) {
+        if (availableWidth <= 0 || resistanceOptions == null) return;
+        float density = getResources().getDisplayMetrics().density;
+        int widthDp = (int) (availableWidth / density + 0.5f);
+        int columns = widthDp < 390 ? 3 : widthDp < 600 ? 5 : 6;
+        if (columns == resistanceGridColumns) return;
+        resistanceGridColumns = columns;
+        resistanceOptions.removeAllViews();
+        for (int start = 0; start < resistanceButtons.length; start += columns) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            int end = Math.min(start + columns, resistanceButtons.length);
+            for (int index = start; index < end; index++) {
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                        0, dp(32), 1f);
+                params.setMargins(dp(2), dp(2), dp(2), dp(2));
+                row.addView(resistanceButtons[index], params);
+            }
+            resistanceOptions.addView(row, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(36)));
+        }
+        updateResistanceButtonStyles();
+    }
+
+    private void selectResistance(int index) {
+        if (index < 0 || index >= RESISTANCE_NAMES.length) return;
+        selectedResistance = index;
+        for (TextView header : resistanceHeaders) {
+            if (header != null) header.setText(RESISTANCE_NAMES[index]);
+        }
+        updateResistanceButtonStyles();
+        if (service != null) service.requestResistanceIfNeeded();
+        renderResistance(service == null ? null : service.getDisplayState());
+    }
+
+    private void updateResistanceButtonStyles() {
+        for (int index = 0; index < resistanceButtons.length; index++) {
+            Button option = resistanceButtons[index];
+            if (option == null) continue;
+            boolean selected = index == selectedResistance;
+            option.setSelected(selected);
+            option.setTextColor(selected ? Color.WHITE : Color.rgb(197, 219, 232));
+            option.setBackground(roundBackground(
+                    selected ? Color.argb(248, 27, 102, 126)
+                            : Color.argb(155, 31, 48, 64),
+                    selected ? Color.rgb(173, 239, 247)
+                            : Color.argb(132, 130, 180, 198),
+                    dp(8), selected ? dp(2) : dp(1)));
+        }
     }
 
     private void addSideSections(LinearLayout body, boolean resistance) {
@@ -306,9 +355,32 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
         formations.addView(buildFormationSection(secondFormationName, secondFormationIndex,
                 resistance), new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        formations.addOnLayoutChangeListener((view, left, top, right, bottom,
+                                               oldLeft, oldTop, oldRight, oldBottom) ->
+                updateFormationLayout(formations, right - left));
         section.addView(formations, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return section;
+    }
+
+    private void updateFormationLayout(LinearLayout formations, int availableWidth) {
+        if (formations.getChildCount() < 2) return;
+        boolean stacked = availableWidth < dp(340);
+        int orientation = stacked ? LinearLayout.VERTICAL : LinearLayout.HORIZONTAL;
+        if (formations.getOrientation() == orientation) return;
+
+        formations.setOrientation(orientation);
+        for (int index = 0; index < 2; index++) {
+            View formation = formations.getChildAt(index);
+            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams)
+                    formation.getLayoutParams();
+            params.width = stacked ? ViewGroup.LayoutParams.MATCH_PARENT : 0;
+            params.weight = stacked ? 0f : 1f;
+            params.setMargins(0, 0,
+                    !stacked && index == 0 ? dp(4) : 0,
+                    stacked && index == 0 ? dp(4) : 0);
+            formation.setLayoutParams(params);
+        }
     }
 
     private View buildFormationSection(String name, int firstIndex, boolean resistance) {

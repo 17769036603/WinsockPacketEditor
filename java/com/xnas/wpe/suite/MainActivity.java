@@ -50,12 +50,12 @@ public final class MainActivity extends ActivityGroup {
     };
 
     private static final Module[] MODULES = {
-            new Module(TargetGame.ANLEI, "暗雷遇敌", "暗雷遇敌助手", com.xnas.wpe.anlei.MainActivity.class),
             new Module(TargetGame.MOUNT_HOLD, "角色速度", "角色速度保持", com.xnas.wpe.mounthold.MainActivity.class),
-            new Module(TargetGame.BATTLE_LOOP, "战斗循环", "战斗循环助手", com.xnas.wpe.battleloop.MainActivity.class),
             new Module(TargetGame.BATTLE_SKIP, "战斗快进", "战斗快进", com.xnas.wpe.battleskip.MainActivity.class),
-            new Module(TargetGame.JINCHAN, "金蟾装备", "金蟾装备助手", com.xnas.wpe.jinchan.MainActivity.class),
-            new Module(TargetGame.BATTLE_PANEL, "战斗面板", "战斗面板", com.xnas.wpe.battlepanel.MainActivity.class)
+            new Module(TargetGame.BATTLE_LOOP, "战投跳过", "战投跳过", com.xnas.wpe.battleloop.MainActivity.class),
+            new Module(TargetGame.BATTLE_PANEL, "战斗面板", "战斗面板", com.xnas.wpe.battlepanel.MainActivity.class),
+            new Module(TargetGame.JINCHAN, "金蝉装备", "金蝉装备", com.xnas.wpe.jinchan.MainActivity.class),
+            new Module(TargetGame.ANLEI, "暗雷遇敌", "暗雷遇敌助手", com.xnas.wpe.anlei.MainActivity.class)
     };
 
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
@@ -295,9 +295,36 @@ public final class MainActivity extends ActivityGroup {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         targetSelector = new Spinner(this);
-        ArrayAdapter<String> targetAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, TARGET_LABELS);
+        ArrayAdapter<String> targetAdapter = new ArrayAdapter<String>(this,
+                android.R.layout.simple_spinner_item, TARGET_LABELS) {
+            @Override public View getView(int position, View convertView, ViewGroup parent) {
+                TextView row = (TextView) super.getView(position, convertView, parent);
+                row.setText(getItem(position) + "  ▾");
+                row.setTextColor(COLOR_TEXT);
+                row.setTextSize(13);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setMinHeight(dp(48));
+                row.setPadding(dp(12), dp(6), dp(12), dp(6));
+                return row;
+            }
+            @Override public View getDropDownView(int position, View convertView, ViewGroup parent) {
+                TextView row = (TextView) super.getDropDownView(position, convertView, parent);
+                row.setTextColor(COLOR_TEXT);
+                row.setBackgroundColor(position == targetIndex(selectedTargetPackage)
+                        ? Color.rgb(26, 78, 72) : COLOR_SURFACE);
+                row.setTextSize(14);
+                row.setMinHeight(dp(48));
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(dp(12), dp(8), dp(12), dp(8));
+                return row;
+            }
+        };
         targetAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        GradientDrawable targetSurface = new GradientDrawable();
+        targetSurface.setColor(COLOR_SURFACE);
+        targetSurface.setCornerRadius(dp(8));
+        targetSurface.setStroke(dp(1), COLOR_ACCENT);
+        targetSelector.setBackground(targetSurface);
         targetSelector.setAdapter(targetAdapter);
         targetSelector.setSelection(targetIndex(selectedTargetPackage));
         targetSelector.setContentDescription("目标游戏");

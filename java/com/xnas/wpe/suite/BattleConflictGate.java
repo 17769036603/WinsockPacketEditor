@@ -137,9 +137,9 @@ public final class BattleConflictGate {
     }
 
     private static String guidance(String moduleId) {
-        if (LOOP.equals(moduleId)) return "先停止战斗循环并等待清理完成；清理未确认时不能启动战斗快进。";
-        if (SKIP.equals(moduleId)) return "先停止战斗快进并等待清理完成；清理未确认时不能启动战斗循环。";
-        return "战斗循环/快进状态未确认；请先停止战斗循环/快进并等待清理完成。";
+        if (LOOP.equals(moduleId)) return "先停止战投跳过并等待清理完成；清理未确认时不能启动战斗快进。";
+        if (SKIP.equals(moduleId)) return "先停止战斗快进并等待清理完成；清理未确认时不能启动战投跳过。";
+        return "战投跳过/快进状态未确认；请先停止战投跳过/快进并等待清理完成。";
     }
 
     private static boolean isManagedId(String id) { return LOOP.equals(id) || SKIP.equals(id); }

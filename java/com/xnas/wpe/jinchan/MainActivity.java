@@ -5,15 +5,18 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.AdapterView;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -62,6 +65,10 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     private Spinner position;
     private Spinner base;
     private Spinner refine;
+    private View baseEmptyRow;
+    private TextView baseEmptyText;
+    private View refineEmptyRow;
+    private TextView refineEmptyText;
     private Button query;
     private Button create;
     private Button giveBack;
@@ -118,7 +125,7 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
         root.setPadding(dp(20), dp(24), dp(20), dp(28));
         root.setBackgroundColor(Color.rgb(13, 20, 29));
         position = spinner(new String[]{"武器", "项链", "衣服", "帽子", "鞋子"});
-        root.addView(label("部位", 14)); root.addView(position, params(-1, -2, 0, 2));
+        root.addView(label("部位", 14)); root.addView(position, params(-1, dp(48), 0, 2));
         position.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(AdapterView<?> p, View v, int i, long id) {
                 if (!shouldInvalidateSnapshot(lastPosition, i, snapshot != null)) { lastPosition = i; return; }
@@ -126,8 +133,8 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
             }
             @Override public void onNothingSelected(AdapterView<?> p) { }
         });
-        root.addView(label("基础属性候选", 14)); base = spinner(new String[0]); root.addView(base, params(-1, -2, 0, 2));
-        root.addView(label("炼化属性候选", 14)); refine = spinner(new String[0]); root.addView(refine, params(-1, -2, 0, 2));
+        root.addView(label("基础属性候选", 14)); base = spinner(new String[0]); root.addView(optionSpinnerSlot(base, true), params(-1, -2, 0, 2));
+        root.addView(label("炼化属性候选", 14)); refine = spinner(new String[0]); root.addView(optionSpinnerSlot(refine, false), params(-1, -2, 0, 2));
         preview = text("", 13, 0xffc1d0d8);
         preview.setPadding(dp(12), dp(12), dp(12), dp(12));
         root.addView(preview, params(-1, -2, 0, 10));
@@ -155,7 +162,7 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
                 ? "部位：" + position.getSelectedItem() + "\n基础属性：" + optionText("baseOptions", b)
                     + "\n炼化属性：" + optionText("refineOptions", r)
                     + "\n普通仙玉实测消耗：10 万\n其他奖励：未确认\n是否执行生成？"
-                : "当前金蟾装备：" + decodedName(snapshot, "currentNameHex", "currentName") + "（UID " + snapshot.optString("currentUid")
+                : "当前金蝉装备：" + decodedName(snapshot, "currentNameHex", "currentName") + "（UID " + snapshot.optString("currentUid")
                     + "）\n归还将删除所选部位金蟾，且不返还。其他奖励：未确认。\n是否执行归还？";
         new AlertDialog.Builder(dialogContext()).setTitle("请确认操作").setMessage(msg)
                 .setNegativeButton("取消", (d, w) -> { }).setPositiveButton("确认", (d, w) -> runAction(action, b, r)).show();
@@ -226,7 +233,7 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     }
 
     private void renderPreview(JSONObject data) {
-        StringBuilder out = new StringBuilder("当前金蟾装备：").append(decodedName(data, "currentNameHex", "currentName"))
+        StringBuilder out = new StringBuilder("当前金蝉装备：").append(decodedName(data, "currentNameHex", "currentName"))
                 .append("（UID ").append(data.optString("currentUid", "0")).append("）\n普通仙玉：")
                 .append(data.optString("gold", "未提供")).append("  银两：").append(data.optString("silver", "未提供"))
                 .append("  普通仙玉变化：").append(data.optString("deltaGold", "未提供")).append("\n基础候选：\n");
@@ -359,7 +366,8 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
             JSONArray attrs = option.optJSONArray("attrs"); if (attrs != null) for (int j = 0; j < attrs.length(); j++) { JSONObject a = attrs.getJSONObject(j); label.append(" · ").append(a.optString("name", a.optString("key"))).append(' ').append(a.optString("value", "")); }
             labels.add(label.toString());
         } catch (Exception ignored) { labels.add("候选数据无效"); }
-        spinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, labels));
+        spinner.setAdapter(new SpinnerChoiceAdapter(labels.toArray(new String[0])));
+        updateOptionSpinnerState(spinner, !labels.isEmpty());
     }
     private void clearOptions() { if (base != null) setOptions(base, null); if (refine != null) setOptions(refine, null); if (preview != null) preview.setText("部位变化后候选已清空，请重新查询。"); }
     private void updateButtons() {
@@ -401,7 +409,118 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     }
     private String message(Exception e) { return e.getMessage() == null ? "操作失败" : e.getMessage(); }
     private String selectedGamePackage() { return com.xnas.wpe.suite.TargetGame.getSelectedPackage(this); }
-    private Spinner spinner(String[] entries) { Spinner s = new Spinner(this); s.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, entries)); return s; }
+    private Spinner spinner(String[] entries) {
+        Spinner s = new Spinner(this);
+        s.setMinimumHeight(dp(48));
+        s.setBackground(controlBackground());
+        s.setPopupBackgroundDrawable(popupBackground());
+        s.setDropDownWidth(ViewGroup.LayoutParams.MATCH_PARENT);
+        s.setDropDownVerticalOffset(dp(2));
+        s.setAdapter(new SpinnerChoiceAdapter(entries));
+        return s;
+    }
+
+    private FrameLayout optionSpinnerSlot(Spinner spinner, boolean baseOption) {
+        FrameLayout slot = new FrameLayout(this);
+        slot.setMinimumHeight(dp(48));
+        spinner.setVisibility(View.GONE);
+        slot.addView(spinner, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView value = text("尚未查询", 14, 0xfff1f6f8);
+        value.setMaxLines(2);
+        value.setEllipsize(TextUtils.TruncateAt.END);
+        value.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout emptyRow = selectionRow(value);
+        emptyRow.setBackground(controlBackground());
+        slot.addView(emptyRow, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        if (baseOption) {
+            baseEmptyRow = emptyRow;
+            baseEmptyText = value;
+        } else {
+            refineEmptyRow = emptyRow;
+            refineEmptyText = value;
+        }
+        return slot;
+    }
+
+    private void updateOptionSpinnerState(Spinner spinner, boolean hasOptions) {
+        View emptyRow = spinner == base ? baseEmptyRow : refineEmptyRow;
+        TextView emptyText = spinner == base ? baseEmptyText : refineEmptyText;
+        spinner.setVisibility(hasOptions ? View.VISIBLE : View.GONE);
+        if (emptyRow != null) emptyRow.setVisibility(hasOptions ? View.GONE : View.VISIBLE);
+        if (emptyText != null) emptyText.setText(snapshot == null ? "尚未查询" : "无候选");
+    }
+
+    private final class SpinnerChoiceAdapter extends ArrayAdapter<String> {
+        SpinnerChoiceAdapter(String[] entries) {
+            super(MainActivity.this, android.R.layout.simple_spinner_item, entries);
+        }
+
+        @Override public View getView(int position, View convertView, ViewGroup parent) {
+            return selectionRow(getItem(position));
+        }
+
+        @Override public View getDropDownView(int position, View convertView, ViewGroup parent) {
+            TextView row = text(getItem(position), 14, 0xfff1f6f8);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setMinHeight(dp(48));
+            row.setPadding(dp(14), dp(10), dp(14), dp(10));
+            row.setMaxLines(3);
+            row.setEllipsize(TextUtils.TruncateAt.END);
+            boolean selected = parent instanceof AdapterView
+                    && ((AdapterView<?>) parent).getSelectedItemPosition() == position;
+            row.setBackground(itemBackground(selected));
+            return row;
+        }
+    }
+
+    private LinearLayout selectionRow(String value) {
+        TextView label = text(value == null ? "" : value, 14, 0xfff1f6f8);
+        label.setMaxLines(2);
+        label.setEllipsize(TextUtils.TruncateAt.END);
+        label.setGravity(Gravity.CENTER_VERTICAL);
+        return selectionRow(label);
+    }
+
+    private LinearLayout selectionRow(TextView label) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(48));
+        row.setPadding(dp(12), dp(6), dp(12), dp(6));
+        row.addView(label, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView arrow = text("▼", 13, 0xff72d6e0);
+        arrow.setGravity(Gravity.CENTER);
+        row.addView(arrow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        return row;
+    }
+
+    private GradientDrawable controlBackground() {
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(0xff17232e);
+        background.setCornerRadius(dp(8));
+        background.setStroke(dp(1), 0xff5f7888);
+        return background;
+    }
+
+    private GradientDrawable popupBackground() {
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(0xff17232e);
+        background.setCornerRadius(dp(8));
+        background.setStroke(dp(1), 0xff5f7888);
+        return background;
+    }
+
+    private GradientDrawable itemBackground(boolean selected) {
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(selected ? 0xff304653 : 0xff1d2a35);
+        background.setStroke(dp(1), 0xff465d6c);
+        return background;
+    }
     private TextView label(String value, int size) { TextView t = text(value, size, Color.WHITE); t.setPadding(0, dp(14), 0, dp(2)); return t; }
     private Button button(String title) { Button b = new Button(this); b.setText(title); b.setAllCaps(false); return b; }
     private TextView text(String value, int size, int color) { TextView t = new TextView(this); t.setText(value); t.setTextSize(size); t.setTextColor(color); return t; }
