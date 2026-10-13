@@ -1,7 +1,6 @@
 package com.xnas.wpe.suite;
 
 import android.app.Activity;
-import android.content.Context;
 import android.content.SharedPreferences;
 
 import java.io.File;
@@ -9,11 +8,6 @@ import java.io.File;
 /** Base for the original feature screens, with per-module private storage. */
 public abstract class ModuleActivity extends Activity {
     private String moduleId;
-
-    @Override
-    protected void attachBaseContext(Context newBase) {
-        super.attachBaseContext(CompactUi.wrap(newBase));
-    }
 
     final String moduleIdForHost() {
         if (moduleId == null) moduleId = ModulePaths.idFor(getClass());
