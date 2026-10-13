@@ -3,6 +3,7 @@ package com.xnas.wpe.battlepanel;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -79,7 +80,7 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     private final TextView[] slotSp = new TextView[BattleFrameProtocol.SLOT_COUNT];
     private final TextView[] resistancePositions = new TextView[BattleFrameProtocol.SLOT_COUNT];
     private final TextView[] resistanceValues = new TextView[BattleFrameProtocol.SLOT_COUNT];
-    private final TextView[] resistanceHeaders = new TextView[2];
+    private final TextView[] resistanceHeaders = new TextView[4];
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -143,41 +144,41 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     private View buildContent() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(14), dp(16), dp(14));
-        root.setBackgroundColor(Color.rgb(13, 20, 29));
+        root.setPadding(dp(12), dp(10), dp(12), dp(11));
+        root.setBackground(roundBackground(Color.argb(215, 11, 20, 31),
+                Color.argb(245, 151, 204, 220), dp(18), dp(1)));
         root.setOnApplyWindowInsetsListener((view, insets) -> {
-            view.setPadding(dp(16), Math.max(dp(14), insets.getSystemWindowInsetTop() + dp(8)),
-                    dp(16), Math.max(dp(14), insets.getSystemWindowInsetBottom() + dp(8)));
+            view.setPadding(dp(12), Math.max(dp(10), insets.getSystemWindowInsetTop() + dp(8)),
+                    dp(12), Math.max(dp(11), insets.getSystemWindowInsetBottom() + dp(8)));
             return insets;
         });
 
-        TextView title = text("战斗状态", 19f, Color.WHITE);
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        root.addView(title, marginParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, 9));
-
-        statusView = text("后台读取服务未启动", 13f, Color.rgb(199, 219, 224));
+        statusView = text("后台读取服务未启动", 12.7f, Color.rgb(211, 226, 236));
         statusView.setGravity(Gravity.CENTER_VERTICAL);
-        statusView.setPadding(dp(12), dp(9), dp(12), dp(9));
-        statusView.setBackground(roundBackground(Color.rgb(33, 51, 65),
-                Color.rgb(81, 124, 139), dp(10), dp(1)));
+        statusView.setPadding(dp(10), 0, dp(10), 0);
+        statusView.setBackground(roundBackground(Color.argb(228, 27, 45, 63),
+                Color.argb(160, 156, 198, 213), dp(9), dp(1)));
         root.addView(statusView, marginParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, 10));
+                dp(34), 0, 0, 0, 6));
 
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.HORIZONTAL);
-        startButton = button("启动后台读取", Color.rgb(23, 112, 91));
+        startButton = button("启动读取", Color.argb(248, 27, 102, 126));
+        startButton.setContentDescription("启动后台读取服务");
         startButton.setOnClickListener(view -> requestNotificationsThenStart());
-        stopButton = button("停止后台读取", Color.rgb(89, 53, 53));
+        stopButton = button("停止读取", Color.argb(224, 89, 53, 53));
+        stopButton.setContentDescription("停止后台读取服务");
         stopButton.setOnClickListener(view -> stopReaderService());
-        LinearLayout.LayoutParams controlParams = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        LinearLayout.LayoutParams controlParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(38));
         controlParams.setMargins(0, 0, dp(5), 0);
         controls.addView(startButton, controlParams);
-        LinearLayout.LayoutParams stopParams = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        LinearLayout.LayoutParams stopParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(38));
         stopParams.setMargins(dp(5), 0, 0, 0);
         controls.addView(stopButton, stopParams);
         root.addView(controls, marginParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(48), 0, 0, 0, 8));
+                dp(38), 0, 0, 0, 7));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
@@ -216,8 +217,7 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
         battleView = text("等待有效战斗帧", 12f, Color.rgb(199, 219, 224));
         battleView.setPadding(dp(3), dp(6), dp(3), dp(8));
         body.addView(battleView);
-        body.addView(buildSideSection("对方", 10, false));
-        body.addView(buildSideSection("本方", 0, false));
+        addSideSections(body, false);
         return body;
     }
 
@@ -232,11 +232,10 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
         selectorRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView selectorLabel = text("抗性项目", 13f, Color.rgb(197, 219, 232));
         selectorRow.addView(selectorLabel, marginParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(42), 0, 0, 8, 0));
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(34), 0, 0, 8, 0));
         resistanceSelector = new Spinner(this);
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, RESISTANCE_NAMES);
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+                android.R.layout.simple_spinner_dropdown_item, RESISTANCE_NAMES);
         resistanceSelector.setAdapter(adapter);
         resistanceSelector.setSelection(selectedResistance);
         resistanceSelector.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
@@ -251,64 +250,144 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
 
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { }
         });
-        selectorRow.addView(resistanceSelector, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        selectorRow.addView(resistanceSelector, new LinearLayout.LayoutParams(0, dp(36), 1f));
         body.addView(selectorRow, marginParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(42), 0, 0, 0, 5));
-        body.addView(buildSideSection("对方", 10, true));
-        body.addView(buildSideSection("本方", 0, true));
+                dp(36), 0, 0, 0, 5));
+        addSideSections(body, true);
         return body;
+    }
+
+    private void addSideSections(LinearLayout body, boolean resistance) {
+        LinearLayout sides = new LinearLayout(this);
+        sides.setOrientation(isLandscape() ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams opponentParams = isLandscape()
+                ? new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+        if (isLandscape()) opponentParams.setMargins(0, 0, dp(5), 0);
+        else opponentParams.setMargins(0, 0, 0, dp(5));
+        sides.addView(buildSideSection("对方", 10, resistance), opponentParams);
+
+        LinearLayout.LayoutParams ownParams = isLandscape()
+                ? new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                : new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+        if (isLandscape()) ownParams.setMargins(dp(5), 0, 0, 0);
+        sides.addView(buildSideSection("本方", 0, resistance), ownParams);
+        body.addView(sides, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
     private View buildSideSection(String name, int firstIndex, boolean resistance) {
         LinearLayout section = new LinearLayout(this);
         section.setOrientation(LinearLayout.VERTICAL);
-        TextView heading = text(name, 14f, Color.rgb(231, 241, 247));
+        section.setPadding(dp(6), dp(5), dp(6), dp(6));
+        section.setBackground(roundBackground(Color.argb(154, 17, 31, 47),
+                Color.argb(150, 111, 169, 189), dp(13), dp(1)));
+
+        TextView heading = text(name, 14f, Color.WHITE);
         heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        heading.setPadding(dp(2), dp(8), dp(2), dp(5));
-        section.addView(heading);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        section.addView(heading, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(24)));
 
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(cell("槽位", 0.9f, true), weightedCellParams(0.9f));
-        TextView firstMetric = cell(resistance ? RESISTANCE_NAMES[selectedResistance] : "HP", 1f, true);
-        header.addView(firstMetric, weightedCellParams(1f));
-        if (resistance) resistanceHeaders[firstIndex == 10 ? 0 : 1] = firstMetric;
-        if (!resistance) {
-            header.addView(cell("MP", 1f, true), weightedCellParams(1f));
-            header.addView(cell("SP", 1f, true), weightedCellParams(1f));
+        LinearLayout formations = new LinearLayout(this);
+        formations.setOrientation(LinearLayout.HORIZONTAL);
+        boolean ownSide = firstIndex == 0;
+        int firstFormationIndex = ownSide ? firstIndex + 5 : firstIndex;
+        int secondFormationIndex = ownSide ? firstIndex : firstIndex + 5;
+        String firstFormationName = ownSide ? "宠物" : "人物";
+        String secondFormationName = ownSide ? "人物" : "宠物";
+        LinearLayout.LayoutParams firstFormationParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        firstFormationParams.setMargins(0, 0, dp(4), 0);
+        formations.addView(buildFormationSection(firstFormationName, firstFormationIndex,
+                resistance), firstFormationParams);
+        formations.addView(buildFormationSection(secondFormationName, secondFormationIndex,
+                resistance), new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        section.addView(formations, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return section;
+    }
+
+    private View buildFormationSection(String name, int firstIndex, boolean resistance) {
+        LinearLayout section = new LinearLayout(this);
+        section.setOrientation(LinearLayout.VERTICAL);
+        section.setPadding(dp(7), dp(6), dp(7), dp(7));
+        section.setBackground(roundBackground(Color.argb(170, 21, 38, 55),
+                Color.argb(132, 130, 180, 198), dp(12), dp(1)));
+
+        TextView heading = text(name, 13f, Color.rgb(226, 240, 247));
+        heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        heading.setPadding(dp(3), 0, 0, 0);
+        section.addView(heading, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(resistance ? 20 : 22)));
+
+        LinearLayout tableHeader = new LinearLayout(this);
+        tableHeader.setGravity(Gravity.CENTER_VERTICAL);
+        tableHeader.setPadding(dp(2), 0, dp(2), 0);
+        float positionWeight = resistance ? 1f : 0.9f;
+        tableHeader.addView(cell("槽位", positionWeight, true),
+                weightedCellParams(positionWeight));
+        if (resistance) {
+            TextView metric = cell(RESISTANCE_NAMES[selectedResistance], 1f, true);
+            resistanceHeaders[resistanceHeaderIndex(firstIndex)] = metric;
+            tableHeader.addView(metric, weightedCellParams(1f));
+        } else {
+            tableHeader.addView(cell("HP", 1f, true), weightedCellParams(1f));
+            tableHeader.addView(cell("MP", 1f, true), weightedCellParams(1f));
+            tableHeader.addView(cell("SP", 1f, true), weightedCellParams(1f));
         }
-        section.addView(header, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(31)));
+        section.addView(tableHeader, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(resistance ? 20 : 23)));
 
-        for (int offset = 0; offset < BattleFrameProtocol.SIDE_SLOT_COUNT; offset++) {
-            int index = firstIndex + offset;
+        for (int rowNumber = 0; rowNumber < 5; rowNumber++) {
+            int index = firstIndex + 4 - rowNumber;
             LinearLayout row = new LinearLayout(this);
             row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(3), dp(2), dp(3), dp(2));
-            row.setBackground(roundBackground(Color.argb(100, 35, 50, 65),
-                    Color.argb(65, 190, 220, 232), dp(7), dp(1)));
-            row.addView(cell(slotLabel(offset), 0.9f, false), weightedCellParams(0.9f));
+            row.setPadding(dp(2), 0, dp(2), 0);
+            row.setBackground(roundBackground(Color.argb(155, 31, 48, 64),
+                    Color.argb(82, 185, 215, 228), dp(8), dp(1)));
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(resistance ? 24 : 32));
+            rowParams.setMargins(0, dp(2), 0, 0);
+
             if (resistance) {
+                TextView position = cell(slotLabel(index % BattleFrameProtocol.SIDE_SLOT_COUNT),
+                        1f, false);
                 TextView value = cell("未提供", 1f, false);
-                row.addView(value, weightedCellParams(1f));
-                resistancePositions[index] = (TextView) row.getChildAt(0);
+                value.setTextColor(Color.rgb(224, 237, 173));
+                value.setSingleLine(true);
+                resistancePositions[index] = position;
                 resistanceValues[index] = value;
+                row.addView(position, weightedCellParams(1f));
+                row.addView(value, weightedCellParams(1f));
             } else {
+                TextView position = cell(slotLabel(index % BattleFrameProtocol.SIDE_SLOT_COUNT),
+                        0.9f, false);
                 TextView hp = cell("—", 1f, false);
                 TextView mp = cell("—", 1f, false);
                 TextView sp = cell("—", 1f, false);
-                row.addView(hp, weightedCellParams(1f));
-                row.addView(mp, weightedCellParams(1f));
-                row.addView(sp, weightedCellParams(1f));
-                slotNames[index] = (TextView) row.getChildAt(0);
+                slotNames[index] = position;
                 slotHp[index] = hp;
                 slotMp[index] = mp;
                 slotSp[index] = sp;
+                row.addView(position, weightedCellParams(0.9f));
+                row.addView(hp, weightedCellParams(1f));
+                row.addView(mp, weightedCellParams(1f));
+                row.addView(sp, weightedCellParams(1f));
             }
-            section.addView(row, marginParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(36), 0, 0, 0, dp(3)));
+            section.addView(row, rowParams);
         }
         return section;
+    }
+
+    private int resistanceHeaderIndex(int firstIndex) {
+        if (firstIndex == 10) return 0;
+        if (firstIndex == 15) return 1;
+        if (firstIndex == 5) return 2;
+        return 3;
     }
 
     private void requestNotificationsThenStart() {
@@ -398,10 +477,10 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
         }
         String status = state.label;
         if (state.detail != null && !state.detail.isEmpty()) status += " · " + state.detail;
-        setStatus(status, state.active);
+        setStatus(status, state.status);
         if (startButton != null) {
             startButton.setEnabled(!state.active);
-            startButton.setText(state.active ? "后台读取中" : "启动后台读取");
+            startButton.setText(state.active ? "正在读取" : "启动读取");
         }
         if (stopButton != null) stopButton.setEnabled(state.active);
         renderBattle(state.frame);
@@ -445,7 +524,7 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
             View row = slotNames[i].getParent() instanceof View
                     ? (View) slotNames[i].getParent() : null;
             if (row != null) row.setBackground(roundBackground(fill,
-                    Color.argb(65, 190, 220, 232), dp(7), dp(1)));
+                    Color.argb(82, 190, 220, 232), dp(8), dp(1)));
             int inactiveColor = state == BattleFrameProtocol.SLOT_EMPTY
                     ? Color.rgb(161, 179, 190)
                     : state == BattleFrameProtocol.SLOT_DEAD
@@ -483,10 +562,28 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     }
 
     private void setStatus(String value, boolean running) {
+        setStatus(value, running ? BattleFrameProtocol.STATUS_LIVE
+                : BattleFrameProtocol.STATUS_LOCATING);
+    }
+
+    private void setStatus(String value, int status) {
         if (statusView != null) {
             statusView.setText(value);
-            statusView.setTextColor(running
-                    ? Color.rgb(179, 244, 210) : Color.rgb(199, 219, 224));
+            statusView.setTextColor(statusColor(status));
+        }
+    }
+
+    private int statusColor(int status) {
+        switch (status) {
+            case BattleFrameProtocol.STATUS_LIVE:
+                return Color.rgb(180, 244, 212);
+            case BattleFrameProtocol.STATUS_ROOT_DENIED:
+            case BattleFrameProtocol.STATUS_READ_ERROR:
+                return Color.rgb(255, 190, 178);
+            case BattleFrameProtocol.STATUS_EXPIRED:
+                return Color.rgb(255, 218, 155);
+            default:
+                return Color.rgb(211, 226, 236);
         }
     }
 
@@ -505,10 +602,10 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     }
 
     private TextView cell(String value, float sizeWeight, boolean header) {
-        TextView view = text(value, header ? 11f : 12f,
-                header ? Color.rgb(162, 191, 204) : Color.rgb(230, 239, 245));
+        TextView view = text(value, header ? 11.5f : 11.2f,
+                header ? Color.rgb(197, 219, 232) : Color.WHITE);
         view.setGravity(Gravity.CENTER);
-        view.setSingleLine(false);
+        if (!header) view.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         return view;
     }
 
@@ -520,9 +617,14 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
         Button button = new Button(this);
         button.setText(label);
         button.setAllCaps(false);
-        button.setTextSize(14f);
+        button.setTextSize(13f);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         button.setTextColor(Color.WHITE);
-        button.setBackground(roundBackground(fill, Color.rgb(120, 177, 187), dp(11), dp(1)));
+        button.setMinHeight(0);
+        button.setMinimumHeight(0);
+        button.setMinWidth(0);
+        button.setPadding(dp(8), 0, dp(8), 0);
+        button.setBackground(roundBackground(fill, Color.rgb(173, 239, 247), dp(11), dp(1)));
         return button;
     }
 
@@ -552,5 +654,9 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private boolean isLandscape() {
+        return getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
     }
 }
