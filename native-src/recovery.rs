@@ -299,6 +299,23 @@ mod tests {
     }
 
     #[test]
+    fn live_original_process_does_not_prove_end() {
+        assert_eq!(
+            decide(
+                valid_lock(),
+                StoredIdentity::Valid(identity()),
+                BootObservation::Value(BOOT_A.into()),
+                OriginalProcess::SameIdentity {
+                    exe: EXE.into(),
+                    cmdline_first_arg: TARGET_PACKAGE.as_bytes().to_vec(),
+                },
+                ProcessScan::Error,
+            ),
+            Decision::Waiting(identity())
+        );
+    }
+
+    #[test]
     fn denied_proc_read_is_unknown() {
         assert_eq!(
             decide(

@@ -388,6 +388,22 @@ fn inspect_after_proc_entry_disappeared(
         },
     }
 }
+fn original_process_end_decision(identity: &recovery::RecoveryIdentity) -> recovery::Decision {
+    let boot = boot_observation();
+    let original_process = match &boot {
+        recovery::BootObservation::Value(current) if current == &identity.boot_id => {
+            inspect_original_process(identity.pid, identity.start_ticks)
+        }
+        _ => recovery::OriginalProcess::ReadError,
+    };
+    recovery::decide(
+        recovery::LockObservation::Acquired,
+        recovery::StoredIdentity::Valid(identity.clone()),
+        boot,
+        original_process,
+        recovery::ProcessScan::Error,
+    )
+}
 fn persist_run_identity(
     dir: &Path,
     identity: &recovery::RecoveryIdentity,
@@ -834,10 +850,8 @@ fn run(dir: PathBuf) -> Result<(), String> {
             }
         }
         let boot_id = read_boot_id().map_err(|e| format!("boot id unavailable before attach: {e}"))?;
-        persist_run_identity(
-            &dir,
-            &recovery::RecoveryIdentity::from_process(&target, boot_id),
-        )?;
+        let run_identity = recovery::RecoveryIdentity::from_process(&target, boot_id);
+        persist_run_identity(&dir, &run_identity)?;
         let prefix = format!("{base}-{run_id}");
         let work = cache.join(format!("{prefix}-tick"));
         if active_paths
@@ -1020,9 +1034,36 @@ fn run(dir: PathBuf) -> Result<(), String> {
             if identity_checked.elapsed() >= Duration::from_secs(1) {
                 let ident = game_pids();
                 identity_checked = std::time::Instant::now();
-                if !matches!(ident, Ok(ref processes) if processes.len() == 1 && processes[0] == target) {
-                    status(&dir, "state=waiting_game\nstatus=waiting_game\nreason=game_gone");
-                    break;
+                match ident {
+                    Ok(processes) if processes.len() == 1 && processes[0] == target => {}
+                    Err(error) => {
+                        eprintln!("worker: target identity scan failed: {error}");
+                        status(
+                            &dir,
+                            "state=stopping\nstatus=stopping\nreason=identity_read_unconfirmed",
+                        );
+                        fatal_exit = Some("identity_read_unconfirmed".into());
+                        stopping = true;
+                    }
+                    Ok(_) => {
+                        if matches!(
+                            original_process_end_decision(&run_identity),
+                            recovery::Decision::VerifiedOldProcess(_)
+                        ) {
+                            status(
+                                &dir,
+                                "state=waiting_game\nstatus=waiting_game\nreason=original_process_ended",
+                            );
+                            detached = true;
+                        } else {
+                            status(
+                                &dir,
+                                "state=stopping\nstatus=stopping\nreason=identity_changed_unconfirmed",
+                            );
+                            fatal_exit = Some("identity_changed_unconfirmed".into());
+                            stopping = true;
+                        }
+                    }
                 }
             }
             if result_checked.elapsed() >= Duration::from_millis(100) {
