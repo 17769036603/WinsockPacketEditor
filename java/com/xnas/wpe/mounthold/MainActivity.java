@@ -5,10 +5,8 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -29,7 +27,6 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     private TextView statusView;
     private Button startButton;
     private Button stopButton;
-    private boolean waitingForOverlayPermission;
     private String inactiveStatusOverride;
     private final android.os.Handler handler = new android.os.Handler();
 
@@ -44,16 +41,7 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     @Override
     protected void onResume() {
         super.onResume();
-        if (waitingForOverlayPermission) {
-            waitingForOverlayPermission = false;
-            if (Settings.canDrawOverlays(this)) {
-                requestNotificationThenStart();
-            } else if (statusView != null) {
-                setInactiveStatus("悬浮窗权限未授予，点“启动保持”重试。");
-            }
-        } else {
-            refreshState();
-        }
+        refreshState();
         handler.postDelayed(refreshTask, 500L);
     }
 
@@ -104,18 +92,6 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     }
 
     private void requestNotificationThenStart() {
-        if (!Settings.canDrawOverlays(this)) {
-            waitingForOverlayPermission = true;
-            setInactiveStatus("请开启“允许显示在其他应用上层”，返回后会继续启动。");
-            try {
-                startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:" + getPackageName())));
-            } catch (RuntimeException error) {
-                waitingForOverlayPermission = false;
-                setInactiveStatus("无法打开悬浮窗授权页面，请到应用信息中手动开启。");
-            }
-            return;
-        }
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestModulePermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
@@ -128,10 +104,6 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
         String packageName = com.xnas.wpe.suite.TargetGame.getSelectedPackage(this);
         if (!com.xnas.wpe.suite.TargetGame.supportsModule(com.xnas.wpe.suite.TargetGame.MOUNT_HOLD, packageName)) {
             setInactiveStatus("目标游戏不支持");
-            return;
-        }
-        if (!Settings.canDrawOverlays(this)) {
-            setInactiveStatus("缺少悬浮窗权限，尚未启动保持服务。");
             return;
         }
         inactiveStatusOverride = null;
@@ -209,7 +181,7 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
         return new ModuleStatus(state, label, target,
                 safeDetail + "；服务活动状态=" + (active ? "是" : "否") + "，目标绑定未确认。",
                 active || state == ModuleStatus.State.UNKNOWN ? "服务运行不等同于已绑定游戏/角色；如需停止，请在功能页点击“停止并恢复”。"
-                        : "选择目标游戏和速度后，点击“启动保持”；运行需要模拟器 Root 与悬浮窗权限。");
+                        : "选择目标游戏和速度后，点击“启动保持”；运行需要模拟器 Root 权限。");
     }
 
     private EditText input(String value, String hint) {

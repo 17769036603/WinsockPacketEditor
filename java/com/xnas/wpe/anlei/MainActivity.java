@@ -1,11 +1,8 @@
 package com.xnas.wpe.anlei;
 
-import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
-import android.net.Uri;
-import android.provider.Settings;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -25,7 +22,7 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
         @Override public void run() {
             if (status != null) {
                 File f = new File(getFilesDir(), "status");
-                try { status.setText("状态：" + (!TargetGame.supportsModule(TargetGame.ANLEI, TargetGame.getSelectedPackage(MainActivity.this)) ? "此功能仅支持 DHXY" : android.os.Build.VERSION.SDK_INT>=23&&!Settings.canDrawOverlays(MainActivity.this) ? "悬浮窗权限未开启" : (f.isFile() ? display(read(f)) : "未启动"))); }
+                try { status.setText("状态：" + (!TargetGame.supportsModule(TargetGame.ANLEI, TargetGame.getSelectedPackage(MainActivity.this)) ? "此功能仅支持 DHXY" : (f.isFile() ? display(read(f)) : "未启动"))); }
                 catch (Exception e) { status.setText("运行状态：读取状态失败"); }
                 handler.postDelayed(this, 1000);
             }
@@ -37,13 +34,12 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL);
         int pad = Math.round(24 * getResources().getDisplayMetrics().density); root.setPadding(pad,pad,pad,pad);
         status = new TextView(this); root.addView(status);
-        Button overlayPermission = new Button(this); overlayPermission.setText("开启悬浮窗权限"); overlayPermission.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:"+getPackageName())))); root.addView(overlayPermission);
         Button start = new Button(this); start.setText("启动"); start.setOnClickListener(v -> { if (!TargetGame.supportsModule(TargetGame.ANLEI, TargetGame.getSelectedPackage(this))) { status.setText("此功能仅支持 DHXY"); return; } Intent i=new Intent(this,AnleiService.class).setAction(AnleiService.START);if(android.os.Build.VERSION.SDK_INT>=26)startForegroundService(i);else startService(i); }); root.addView(start);
         Button stop = new Button(this); stop.setText("停止"); stop.setOnClickListener(v -> startService(new Intent(this, AnleiService.class).setAction(AnleiService.STOP))); root.addView(stop);
         scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
         setContentView(scroll);
     }
-    @Override protected void onResume() { super.onResume(); if(TargetGame.supportsModule(TargetGame.ANLEI, TargetGame.getSelectedPackage(this))&&(android.os.Build.VERSION.SDK_INT<23||Settings.canDrawOverlays(this)))startService(new Intent(this,AnleiService.class).setAction(AnleiService.OVERLAY));handler.post(refresh); }
+    @Override protected void onResume() { super.onResume(); handler.post(refresh); }
     @Override protected void onPause() { handler.removeCallbacks(refresh); super.onPause(); }
     private static String read(File f) throws Exception { try(FileInputStream in=new FileInputStream(f);ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] b=new byte[4096];int n;while((n=in.read(b))>0)out.write(b,0,n);return out.toString("UTF-8");} }
     private static String display(String s) {
@@ -59,7 +55,6 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
         if (s.contains("battle")) return "战斗中，暂停位置同步" + mapSuffix;
         if (s.contains("waiting_map")) return "等待地图准备" + mapSuffix;
         if (s.contains("waiting_role")) return "等待角色登录" + mapSuffix;
-        if (s.contains("overlay_permission_required")) return "请开启悬浮窗权限后启动";
         if (s.contains("identity_unconfirmed")) return "游戏进程身份未确认，等待旧会话清理";
         if (s.contains("game_gone") || s.contains("identity_changed")) return "游戏进程变化，正在重新连接";
         if (WorkerStatus.isStopped(s)) return "已停止";
@@ -76,9 +71,6 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
             return new ModuleStatus(AnleiService.isActive() ? ModuleStatus.State.UNKNOWN : ModuleStatus.State.STOPPED,
                     AnleiService.isActive() ? "状态未确认" : "不支持", target,
                     AnleiService.isActive() ? "暗雷遇敌服务状态未确认。" : "此功能仅支持 DHXY。", "");
-        if (android.os.Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this))
-            return new ModuleStatus(ModuleStatus.State.WAITING, "等待权限", target,
-                    "暗雷助手需要悬浮窗权限；当前运行状态未确认。", "授予悬浮窗权限后手动启动。\n权限就绪不代表游戏已绑定。");
         File file = new File(getFilesDir(), "status");
         if (!file.isFile()) return new ModuleStatus(AnleiService.isActive() ? ModuleStatus.State.UNKNOWN : ModuleStatus.State.STOPPED, AnleiService.isActive() ? "状态未确认" : "未启动", target,
                 "尚无本地 worker 状态文件。", "点击本功能页的启动按钮；目标游戏绑定状态未确认。");

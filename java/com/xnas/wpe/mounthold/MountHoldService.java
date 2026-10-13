@@ -7,23 +7,11 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
-import android.graphics.Color;
-import android.graphics.PixelFormat;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.provider.Settings;
-import android.view.Gravity;
-import android.view.HapticFeedbackConstants;
-import android.view.MotionEvent;
-import android.view.View;
-import android.view.ViewConfiguration;
-import android.view.WindowManager;
-import android.widget.TextView;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -42,7 +30,6 @@ public final class MountHoldService extends com.xnas.wpe.suite.ModuleService {
 
     private static final String CHANNEL_ID = "mount_speed_hold";
     private static final int NOTIFICATION_ID = 7404;
-    private static final long CLOSE_HOLD_MS = 3_000L;
     private static volatile boolean active;
     private static volatile String statusText = "尚未启动";
 
@@ -76,48 +63,6 @@ public final class MountHoldService extends com.xnas.wpe.suite.ModuleService {
     private volatile String targetSpeed;
     private final Object workerLock = new Object();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private WindowManager windowManager;
-    private View overlayView;
-    private TextView overlayIconView;
-    private WindowManager.LayoutParams overlayParams;
-    private float dragStartRawX;
-    private float dragStartRawY;
-    private int dragStartX;
-    private int dragStartY;
-    private boolean dragging;
-    private boolean closeHoldTriggered;
-    private long closeHoldStartedAt;
-    private int lastCloseCountdown = -1;
-    private final Runnable closeHoldAction = new Runnable() {
-        @Override
-        public void run() {
-            TextView icon = overlayIconView;
-            if (icon == null || !icon.isPressed() || dragging || stopping) return;
-            long remainingMs = CLOSE_HOLD_MS - (SystemClock.uptimeMillis() - closeHoldStartedAt);
-            if (remainingMs <= 0L) {
-                closeHoldTriggered = true;
-                icon.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-                if (active || foregroundStarted) {
-                    startService(new Intent(MountHoldService.this, MountHoldService.class)
-                            .setAction(ACTION_STOP)
-                            .putExtra(EXTRA_PACKAGE, gamePackage)
-                            .putExtra(EXTRA_SPEED, targetSpeed));
-                    setStatus("正在安全恢复原值");
-                } else {
-                    stopSelf();
-                }
-                return;
-            }
-            int seconds = (int) ((remainingMs + 999L) / 1000L);
-            if (seconds != lastCloseCountdown) {
-                lastCloseCountdown = seconds;
-                icon.setText(String.valueOf(seconds));
-            }
-            long untilNextSecond = remainingMs - (seconds - 1L) * 1000L;
-            mainHandler.postDelayed(this, Math.max(1L, untilNextSecond));
-        }
-    };
-
     public static boolean isActive() { return active; }
     public static String getPackageForStop(String fallback) {
         String captured = lastTargetPackage;
@@ -141,7 +86,6 @@ public final class MountHoldService extends com.xnas.wpe.suite.ModuleService {
         runtimeLog = new MountHoldRuntimeLog(getFilesDir());
         sessionId = UUID.randomUUID().toString();
         log("service_created", null, null, null, null, null, null, null, null);
-        windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         createNotificationChannel();
     }
 
@@ -155,10 +99,6 @@ public final class MountHoldService extends com.xnas.wpe.suite.ModuleService {
             ensureSession();
             log("service_stop_requested", null, null, null, null, null, null, null, null);
             ensureForeground("正在安全恢复原值");
-            if (overlayView == null) {
-                if (!Settings.canDrawOverlays(this)) log("overlay_permission_missing", null, null, null, null, null, null, null, null);
-                else if (!showOverlay()) log("overlay_creation_failed", null, null, null, null, null, null, null, null);
-            }
             setStatus("正在安全恢复原值");
             stopRecoveryAttempted = false;
             requestUserStop();
@@ -186,19 +126,6 @@ public final class MountHoldService extends com.xnas.wpe.suite.ModuleService {
         retryDelaySeconds = 1L;
         workerFailed = false;
         setStatus("正在启动 Root worker");
-        boolean overlayPermission = Settings.canDrawOverlays(this);
-        boolean overlayCreated = overlayPermission && showOverlay();
-        if (!overlayPermission || !overlayCreated) {
-            log(overlayPermission ? "overlay_creation_failed" : "overlay_permission_missing",
-                    null, null, null, null, null, null, null, null);
-            active = false;
-            setStatus("悬浮窗权限缺失或创建失败，保持服务未启动");
-            if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE);
-            else stopForeground(true);
-            foregroundStarted = false;
-            stopSelf(startId);
-            return START_NOT_STICKY;
-        }
         launchWorker(false);
         return START_REDELIVER_INTENT;
     }
@@ -595,177 +522,8 @@ public final class MountHoldService extends com.xnas.wpe.suite.ModuleService {
 
     private void setStatus(String text) {
         statusText = text;
-        mainHandler.post(this::refreshFloatingBall);
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null && foregroundStarted) manager.notify(NOTIFICATION_ID, notification(text));
-    }
-
-    private void refreshFloatingBall() {
-        TextView icon = overlayIconView;
-        if (icon == null) return;
-        String label;
-        int fill;
-        int stroke;
-        if (workerFailed) {
-            label = "异常";
-            fill = Color.rgb(166, 48, 56);
-            stroke = Color.rgb(255, 154, 158);
-            icon.setTextSize(14);
-        } else if (active) {
-            label = "运行中";
-            fill = Color.rgb(38, 126, 67);
-            stroke = Color.rgb(139, 224, 157);
-            icon.setTextSize(12);
-        } else {
-            label = "速";
-            fill = Color.rgb(24, 55, 67);
-            stroke = Color.rgb(153, 214, 211);
-            icon.setTextSize(24);
-        }
-        icon.setText(label);
-        icon.setBackground(roundedCircleBackground(fill, stroke, dp(2)));
-        icon.setContentDescription("角色速度保持；" + label + "；" + statusText + "；长按 3 秒结束");
-    }
-
-    private boolean showOverlay() {
-        if (overlayView != null) return true;
-        if (windowManager == null || !Settings.canDrawOverlays(this)) return false;
-
-        return showCollapsedOverlay(dp(12), dp(96));
-    }
-
-    private boolean showCollapsedOverlay(int x, int y) {
-        if (windowManager == null) return false;
-        TextView icon = new TextView(this);
-        icon.setTextColor(Color.WHITE);
-        icon.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        icon.setGravity(Gravity.CENTER);
-        icon.setElevation(dp(8));
-        installOverlayLongPress(icon);
-
-        int type = Build.VERSION.SDK_INT >= 26
-                ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                : WindowManager.LayoutParams.TYPE_PHONE;
-        overlayParams = new WindowManager.LayoutParams(dp(64), dp(64), type,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT);
-        overlayParams.gravity = Gravity.TOP | Gravity.START;
-        int screenWidth = getResources().getDisplayMetrics().widthPixels;
-        int screenHeight = getResources().getDisplayMetrics().heightPixels;
-        overlayParams.x = Math.max(0, Math.min(screenWidth - dp(64), x));
-        overlayParams.y = Math.max(0, Math.min(screenHeight - dp(64), y));
-        overlayView = icon;
-        overlayIconView = icon;
-        refreshFloatingBall();
-        try {
-            windowManager.addView(overlayView, overlayParams);
-            return true;
-        } catch (RuntimeException error) {
-            overlayView = null;
-            overlayIconView = null;
-            overlayParams = null;
-            return false;
-        }
-    }
-
-    private void installOverlayLongPress(TextView view) {
-        view.setOnTouchListener((icon, event) -> {
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    icon.setPressed(true);
-                    closeHoldTriggered = false;
-                    closeHoldStartedAt = SystemClock.uptimeMillis();
-                    lastCloseCountdown = 3;
-                    view.setText("3");
-                    mainHandler.removeCallbacks(closeHoldAction);
-                    mainHandler.postDelayed(closeHoldAction, 1_000L);
-                    icon.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-                    dragStartRawX = event.getRawX();
-                    dragStartRawY = event.getRawY();
-                    dragStartX = overlayParams == null ? 0 : overlayParams.x;
-                    dragStartY = overlayParams == null ? 0 : overlayParams.y;
-                    dragging = false;
-                    return true;
-                case MotionEvent.ACTION_MOVE:
-                    float dx = event.getRawX() - dragStartRawX;
-                    float dy = event.getRawY() - dragStartRawY;
-                    if (!dragging) {
-                        int slop = Math.round(ViewConfiguration.get(MountHoldService.this)
-                                .getScaledTouchSlop() * 1.5f);
-                        if (Math.abs(dx) > slop || Math.abs(dy) > slop) dragging = true;
-                    }
-                    if (dragging) {
-                        mainHandler.removeCallbacks(closeHoldAction);
-                        closeHoldStartedAt = 0L;
-                        lastCloseCountdown = -1;
-                        icon.setPressed(false);
-                        refreshFloatingBall();
-                        if (overlayParams != null && overlayView != null) {
-                            int maxX = Math.max(0, getResources().getDisplayMetrics().widthPixels
-                                    - overlayParams.width);
-                            int maxY = Math.max(0, getResources().getDisplayMetrics().heightPixels
-                                    - overlayParams.height);
-                            overlayParams.x = Math.max(0, Math.min(maxX, dragStartX + Math.round(dx)));
-                            overlayParams.y = Math.max(0, Math.min(maxY, dragStartY + Math.round(dy)));
-                            try {
-                                windowManager.updateViewLayout(overlayView, overlayParams);
-                            } catch (RuntimeException ignored) {
-                                return false;
-                            }
-                        }
-                    }
-                    return true;
-                case MotionEvent.ACTION_UP:
-                    resetCloseHoldHint();
-                    icon.setPressed(false);
-                    if (!dragging && !closeHoldTriggered) {
-                        icon.performClick();
-                    }
-                    dragging = false;
-                    closeHoldTriggered = false;
-                    return true;
-                case MotionEvent.ACTION_CANCEL:
-                    resetCloseHoldHint();
-                    icon.setPressed(false);
-                    dragging = false;
-                    closeHoldTriggered = false;
-                    return true;
-                default:
-                    return false;
-            }
-        });
-    }
-
-    private void resetCloseHoldHint() {
-        mainHandler.removeCallbacks(closeHoldAction);
-        closeHoldStartedAt = 0L;
-        lastCloseCountdown = -1;
-        refreshFloatingBall();
-    }
-
-    private void removeOverlay() {
-        View current = overlayView;
-        overlayView = null;
-        overlayIconView = null;
-        overlayParams = null;
-        mainHandler.removeCallbacks(closeHoldAction);
-        if (current != null && windowManager != null) {
-            try { windowManager.removeView(current); } catch (RuntimeException ignored) { }
-        }
-    }
-
-    private GradientDrawable roundedCircleBackground(int color, int stroke, int strokeWidth) {
-        GradientDrawable background = new GradientDrawable();
-        background.setShape(GradientDrawable.OVAL);
-        background.setColor(color);
-        background.setStroke(strokeWidth, stroke);
-        return background;
-    }
-
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private Notification notification(String text) {
@@ -815,7 +573,6 @@ public final class MountHoldService extends com.xnas.wpe.suite.ModuleService {
         closeWorkerInput();
         active = cleanupUnconfirmed;
         mainHandler.removeCallbacksAndMessages(null);
-        removeOverlay();
         if (foregroundStarted) {
             if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE);
             else stopForeground(true);

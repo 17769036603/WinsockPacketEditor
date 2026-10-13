@@ -4,7 +4,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <queries>
         <package android:name="com.gdoo.dhxy" />
@@ -92,7 +91,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Displays a user-requested read-only battle status overlay for the target game while the foreground service samples snapshots." />
+                android:value="Samples user-requested read-only battle snapshots in the background for display inside the application." />
         </service>
     </application>
 </manifest>
