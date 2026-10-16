@@ -1,0 +1,54 @@
+plugins {
+    id 'com.android.application'
+}
+
+def licenseUrl = providers.gradleProperty('piaomiaoLicenseUrl').getOrElse('')
+if (licenseUrl.contains('"') || licenseUrl.contains('\\')) {
+    throw new GradleException('piaomiaoLicenseUrl must not contain quotes or backslashes')
+}
+
+android {
+    namespace 'com.xnas.wpe.suite'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.xnas.wpe.suite'
+        minSdk 23
+        targetSdk 35
+        versionCode 8
+        versionName '2026.10.16.2-online'
+        buildConfigField 'String', 'PIAOMIAO_LICENSE_URL', '"' + licenseUrl + '"'
+        ndk {
+            abiFilters 'x86_64'
+        }
+    }
+
+    buildFeatures { buildConfig true }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDir(layout.buildDirectory.dir('generated/jniLibs'))
+        }
+    }
+}
+
+def buildSuiteNative = tasks.register('buildSuiteNative', Exec) {
+    workingDir rootProject.projectDir
+    def fridaMode = providers.gradleProperty('piaomiaoFridaMode').getOrElse('shared')
+    if (!(fridaMode in ['shared', 'static'])) {
+        throw new GradleException('piaomiaoFridaMode must be shared or static')
+    }
+    commandLine 'powershell.exe', '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+            '-File', new File(rootProject.projectDir, 'build-native.ps1').absolutePath,
+            '-FridaLinkMode', fridaMode
+}
+
+tasks.named('preBuild').configure {
+    dependsOn buildSuiteNative
+}
