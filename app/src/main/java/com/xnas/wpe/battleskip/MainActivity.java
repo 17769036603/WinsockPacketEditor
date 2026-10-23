@@ -11,6 +11,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.xnas.wpe.suite.BattleConflictGate;
+import com.xnas.wpe.suite.BattleWorkerStatus;
 import com.xnas.wpe.suite.GlassSkin;
 import com.xnas.wpe.suite.ModuleActivity;
 import com.xnas.wpe.suite.ModuleStatus;
@@ -155,6 +156,8 @@ public final class MainActivity extends ModuleActivity implements ModuleStatusPr
     private static String currentStatus(File dir) {
         String actual = read(new File(dir, "status"));
         if (BattleSkipRecoveryService.isChecking()) return "state=checking";
+        String running = BattleWorkerStatus.normalizedRunning(actual);
+        if (running != null) return running;
         if (BattleConflictGate.isClean(dir.getParentFile(), "battleskip")) return actual;
         String recovery = read(new File(dir, "recovery-status"));
         if (!recovery.isEmpty()) return recovery;
@@ -174,6 +177,7 @@ public final class MainActivity extends ModuleActivity implements ModuleStatusPr
             if (line.startsWith("message=")) return "状态：" + line.substring("message=".length());
             if (line.startsWith("state=")) {
                 String state = line.substring("state=".length());
+                if ("running".equals(state)) return "状态：运行中";
                 if ("starting".equals(state)) return "状态：已预留启动位，等待 worker";
                 if ("stopping".equals(state)) return "状态：正在清理；未确认前不会释放战斗功能启动位";
                 if ("stopped".equals(state)) return clean ? "状态：已停止" : "状态：停止未确认";
@@ -212,7 +216,7 @@ public final class MainActivity extends ModuleActivity implements ModuleStatusPr
         else if ("starting".equals(state) || "waiting_game".equals(state)
                 || "waiting_role".equals(state)) {
             mapped = ModuleStatus.State.WAITING; label = "等待游戏绑定";
-        } else if ("running".equals(state)) { mapped = ModuleStatus.State.RUNNING; label = "worker 运行中"; }
+        } else if ("running".equals(state)) { mapped = ModuleStatus.State.RUNNING; label = "运行中"; }
         else if ("checking".equals(state)) { mapped = ModuleStatus.State.WAITING; label = "正在准备"; }
         else if ("waiting_restart".equals(state)) { mapped = ModuleStatus.State.WAITING; label = "需重启游戏"; }
         else if ("error".equals(state)) { mapped = ModuleStatus.State.ERROR; label = "运行失败"; }
