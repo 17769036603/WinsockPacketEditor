@@ -14,6 +14,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.StateListDrawable;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
@@ -21,6 +22,8 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.WindowManager;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.widget.Toast;
 import android.widget.TextView;
 
@@ -101,8 +104,14 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
     private android.content.Context overlayContext;
     private View overlayPanelView;
     private View overlayBallView;
+    private FrameLayout overlayBallHostView;
     private WindowManager.LayoutParams panelParams;
+    // Window geometry expands during an active touch; ballParams remains the 76dp ball geometry.
+    private WindowManager.LayoutParams ballHostParams;
     private WindowManager.LayoutParams ballParams;
+    private int lastBallCenterX;
+    private int lastBallCenterY;
+    private boolean hasLastBallCenter;
     private BattleOverlayRenderer overlayRenderer;
 
     final class LocalBinder extends Binder {
@@ -321,12 +330,17 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
             return true;
         }
 
-        int anchorX = ballParams == null ? displayWidth() / 2
+        int anchorX = ballParams == null
+                ? (hasLastBallCenter ? lastBallCenterX : displayWidth() / 2)
                 : ballParams.x + ballParams.width / 2;
-        int anchorY = ballParams == null ? displayHeight() / 2
+        int anchorY = ballParams == null
+                ? (hasLastBallCenter ? lastBallCenterY : displayHeight() / 2)
                 : ballParams.y + ballParams.height / 2;
-        removeOverlay(overlayBallView);
+        rememberBallCenter(anchorX, anchorY);
+        removeOverlay(overlayBallHostView);
+        overlayBallHostView = null;
         overlayBallView = null;
+        ballHostParams = null;
         ballParams = null;
 
         if (overlayRenderer == null) {
@@ -360,9 +374,11 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
 
     private void collapseOverlay() {
         if (overlayPanelView == null || windowManager == null) return;
-        int anchorX = panelParams == null ? displayWidth() / 2
+        int anchorX = hasLastBallCenter ? lastBallCenterX
+                : panelParams == null ? displayWidth() / 2
                 : panelParams.x + panelParams.width / 2;
-        int anchorY = panelParams == null ? displayHeight() / 2
+        int anchorY = hasLastBallCenter ? lastBallCenterY
+                : panelParams == null ? displayHeight() / 2
                 : panelParams.y + panelParams.height / 2;
         removeOverlay(overlayPanelView);
         overlayPanelView = null;
@@ -379,102 +395,302 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
                 && !Settings.canDrawOverlays(this))) {
             return false;
         }
-        TextView ball = new TextView(overlayContext);
-        ball.setText("战");
-        ball.setTextColor(Color.WHITE);
-        ball.setTextSize(15f);
-        ball.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
-        ball.setGravity(Gravity.CENTER);
-        ball.setIncludeFontPadding(false);
-        ball.setContentDescription("战斗面板；点击展开，拖动移动");
-        GradientDrawable background = new GradientDrawable();
-        background.setShape(GradientDrawable.OVAL);
-        background.setColor(Color.argb(235, 24, 55, 67));
-        background.setStroke(overlayDp(2), Color.rgb(153, 214, 211));
+        int size = overlayDp(76);
+        FrameLayout ball = new FrameLayout(overlayContext);
+        ball.setClickable(false);
+        StateListDrawable background = new StateListDrawable();
+        background.addState(new int[] { android.R.attr.state_pressed }, ballRing(true));
+        background.addState(new int[0], ballRing(false));
         ball.setBackground(background);
         ball.setElevation(overlayDp(8));
-        ball.setOnClickListener(view -> {
+
+        FrameLayout center = new FrameLayout(overlayContext);
+        GradientDrawable centerBackground = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[] { Color.rgb(25, 67, 80), Color.rgb(8, 32, 49) });
+        centerBackground.setShape(GradientDrawable.OVAL);
+        centerBackground.setStroke(overlayDp(1), Color.argb(150, 219, 255, 243));
+        center.setBackground(centerBackground);
+        FrameLayout.LayoutParams centerParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT);
+        centerParams.setMargins(overlayDp(6), overlayDp(6), overlayDp(6), overlayDp(6));
+        ball.addView(center, centerParams);
+
+        LinearLayout labels = new LinearLayout(overlayContext);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setGravity(Gravity.CENTER);
+        TextView battleLabel = new TextView(overlayContext);
+        battleLabel.setText("战");
+        battleLabel.setTextColor(Color.WHITE);
+        battleLabel.setTextSize(23f);
+        battleLabel.setTypeface(android.graphics.Typeface.DEFAULT,
+                android.graphics.Typeface.BOLD);
+        battleLabel.setGravity(Gravity.CENTER);
+        battleLabel.setIncludeFontPadding(false);
+        TextView panelLabel = new TextView(overlayContext);
+        panelLabel.setText("面板");
+        panelLabel.setTextColor(Color.rgb(175, 239, 222));
+        panelLabel.setTextSize(9f);
+        panelLabel.setTypeface(android.graphics.Typeface.DEFAULT,
+                android.graphics.Typeface.BOLD);
+        panelLabel.setGravity(Gravity.CENTER);
+        panelLabel.setIncludeFontPadding(false);
+        LinearLayout.LayoutParams battleParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        LinearLayout.LayoutParams panelLabelParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        panelLabelParams.topMargin = overlayDp(2);
+        labels.addView(battleLabel, battleParams);
+        labels.addView(panelLabel, panelLabelParams);
+        center.addView(labels, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        FrameLayout host = new FrameLayout(overlayContext);
+        host.setContentDescription("战斗面板；点击展开，拖动移动");
+        host.setClickable(true);
+        host.addView(ball, new FrameLayout.LayoutParams(size, size));
+        host.setOnClickListener(view -> {
             if (!showExpandedOverlay()) {
                 stopReading(BattleFrameProtocol.STATUS_READ_ERROR,
                         "悬浮面板无法展开，读取已停止");
             }
         });
-        installBallDragListener(ball);
+        installBallDragListener(host, ball);
 
-        int size = overlayDp(56);
-        WindowManager.LayoutParams params = baseOverlayParams(size, size);
-        params.gravity = Gravity.TOP | Gravity.START;
-        params.x = clamp(anchorX - size / 2, 0, Math.max(0, displayWidth() - size));
-        params.y = clamp(anchorY - size / 2, overlayDp(16),
+        WindowManager.LayoutParams geometry = baseOverlayParams(size, size);
+        geometry.gravity = Gravity.TOP | Gravity.START;
+        geometry.x = clamp(anchorX - size / 2, 0, Math.max(0, displayWidth() - size));
+        geometry.y = clamp(anchorY - size / 2, overlayDp(16),
                 Math.max(overlayDp(16), displayHeight() - size - overlayDp(16)));
+        WindowManager.LayoutParams hostParams = baseOverlayParams(size, size);
+        hostParams.gravity = Gravity.TOP | Gravity.START;
+        hostParams.x = geometry.x;
+        hostParams.y = geometry.y;
         try {
-            windowManager.addView(ball, params);
+            windowManager.addView(host, hostParams);
+            overlayBallHostView = host;
             overlayBallView = ball;
-            ballParams = params;
+            ballHostParams = hostParams;
+            ballParams = geometry;
+            rememberBallCenter(geometry.x + geometry.width / 2,
+                    geometry.y + geometry.height / 2);
             if (overlayRenderer != null) overlayRenderer.render(getDisplayState());
             return true;
         } catch (RuntimeException error) {
-            removeOverlay(ball);
+            removeOverlay(host);
+            overlayBallHostView = null;
             overlayBallView = null;
+            ballHostParams = null;
             ballParams = null;
             return false;
         }
     }
 
-    private void installBallDragListener(View ball) {
-        final float[] downRawX = new float[1];
-        final float[] downRawY = new float[1];
-        final int[] startX = new int[1];
-        final int[] startY = new int[1];
-        final boolean[] dragging = new boolean[1];
+    private void installBallDragListener(FrameLayout host, View ball) {
+        final FloatingBallGesture gesture = new FloatingBallGesture();
+        final int[] trackedPointerId = new int[] { -1 };
         final int touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
-        ball.setOnTouchListener((view, event) -> {
+        host.setOnTouchListener((view, event) -> {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    downRawX[0] = event.getRawX();
-                    downRawY[0] = event.getRawY();
-                    startX[0] = ballParams == null ? 0 : ballParams.x;
-                    startY[0] = ballParams == null ? 0 : ballParams.y;
-                    dragging[0] = false;
-                    view.setPressed(true);
+                    int downIndex = event.getActionIndex();
+                    float downRawX = rawPointerX(event, downIndex);
+                    float downRawY = rawPointerY(event, downIndex);
+                    if (!isPointerOverBall(downRawX, downRawY)) {
+                        gesture.cancel();
+                        trackedPointerId[0] = -1;
+                        ball.setPressed(false);
+                        restoreBallHostAfterGesture();
+                        return true;
+                    }
+                    trackedPointerId[0] = event.getPointerId(downIndex);
+                    gesture.begin(trackedPointerId[0], downRawX, downRawY,
+                            ballParams == null ? 0 : ballParams.x,
+                            ballParams == null ? 0 : ballParams.y, touchSlop);
+                    view.requestUnbufferedDispatch(event);
+                    ball.setPressed(true);
+                    if (!expandBallHostForDrag()) {
+                        gesture.cancel();
+                        trackedPointerId[0] = -1;
+                        ball.setPressed(false);
+                    }
                     return true;
                 case MotionEvent.ACTION_MOVE:
-                    float dx = event.getRawX() - downRawX[0];
-                    float dy = event.getRawY() - downRawY[0];
-                    if (!dragging[0]
-                            && (Math.abs(dx) > touchSlop || Math.abs(dy) > touchSlop)) {
-                        dragging[0] = true;
+                    int moveIndex = event.findPointerIndex(trackedPointerId[0]);
+                    if (moveIndex < 0) {
+                        cancelBallGesture(gesture, trackedPointerId, ball);
+                        return true;
                     }
-                    if (dragging[0] && ballParams != null && overlayBallView == view) {
-                        ballParams.x = clamp(startX[0] + Math.round(dx), 0,
-                                Math.max(0, displayWidth() - ballParams.width));
-                        ballParams.y = clamp(startY[0] + Math.round(dy), overlayDp(16),
-                                Math.max(overlayDp(16), displayHeight() - ballParams.height
-                                        - overlayDp(16)));
-                        try {
-                            windowManager.updateViewLayout(view, ballParams);
-                        } catch (RuntimeException ignored) {
-                            // Window permission can be revoked while dragging.
-                        }
-                    }
+                    FloatingBallGesture.Result moved = gesture.move(trackedPointerId[0],
+                            rawPointerX(event, moveIndex), rawPointerY(event, moveIndex),
+                            ballMinX(), ballMaxX(), ballMinY(), ballMaxY());
+                    applyBallGesture(view, ball, moved);
+                    if (moved != null && moved.dragging) ball.setPressed(false);
                     return true;
                 case MotionEvent.ACTION_UP:
-                    view.setPressed(false);
-                    if (dragging[0]) {
-                        view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+                    int upIndex = event.findPointerIndex(trackedPointerId[0]);
+                    if (upIndex >= 0) {
+                        finishBallGesture(view, ball, gesture.release(trackedPointerId[0],
+                                rawPointerX(event, upIndex), rawPointerY(event, upIndex),
+                                ballMinX(), ballMaxX(), ballMinY(), ballMaxY()));
                     } else {
-                        view.performClick();
+                        cancelBallGesture(gesture, trackedPointerId, ball);
                     }
-                    dragging[0] = false;
+                    trackedPointerId[0] = -1;
+                    return true;
+                case MotionEvent.ACTION_POINTER_UP:
+                    int liftedIndex = event.getActionIndex();
+                    if (event.getPointerId(liftedIndex) == trackedPointerId[0]) {
+                        cancelBallGesture(gesture, trackedPointerId, ball);
+                    }
                     return true;
                 case MotionEvent.ACTION_CANCEL:
-                    view.setPressed(false);
-                    dragging[0] = false;
+                    cancelBallGesture(gesture, trackedPointerId, ball);
                     return true;
                 default:
-                    return false;
+                    return true;
             }
         });
+    }
+
+    private void finishBallGesture(View host, View ball,
+                                   FloatingBallGesture.Result result) {
+        applyBallGesture(host, ball, result);
+        boolean restored = restoreBallHostAfterGesture();
+        ball.setPressed(false);
+        if (!restored) return;
+        if (result == null) return;
+        if (result.dragging) {
+            host.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+        } else if (result.shouldClick) {
+            host.performClick();
+        }
+    }
+
+    private void cancelBallGesture(FloatingBallGesture gesture, int[] trackedPointerId,
+                                   View ball) {
+        gesture.cancel();
+        trackedPointerId[0] = -1;
+        ball.setPressed(false);
+        restoreBallHostAfterGesture();
+    }
+
+    private boolean expandBallHostForDrag() {
+        FrameLayout host = overlayBallHostView;
+        if (host == null || overlayBallView == null || ballHostParams == null
+                || ballParams == null || windowManager == null) {
+            return false;
+        }
+        overlayBallView.setTranslationX(ballParams.x);
+        overlayBallView.setTranslationY(ballParams.y);
+        ballHostParams.gravity = Gravity.TOP | Gravity.START;
+        ballHostParams.x = 0;
+        ballHostParams.y = 0;
+        ballHostParams.width = displayWidth();
+        ballHostParams.height = displayHeight();
+        try {
+            windowManager.updateViewLayout(host, ballHostParams);
+            return true;
+        } catch (RuntimeException ignored) {
+            overlayBallView.setTranslationX(0f);
+            overlayBallView.setTranslationY(0f);
+            ballHostParams.x = ballParams.x;
+            ballHostParams.y = ballParams.y;
+            ballHostParams.width = ballParams.width;
+            ballHostParams.height = ballParams.height;
+            restoreBallHostAfterGesture();
+            return false;
+        }
+    }
+
+    private boolean restoreBallHostAfterGesture() {
+        FrameLayout host = overlayBallHostView;
+        if (host == null || overlayBallView == null || ballHostParams == null
+                || ballParams == null || windowManager == null) {
+            return false;
+        }
+        overlayBallView.setTranslationX(0f);
+        overlayBallView.setTranslationY(0f);
+        ballHostParams.gravity = Gravity.TOP | Gravity.START;
+        ballHostParams.x = ballParams.x;
+        ballHostParams.y = ballParams.y;
+        ballHostParams.width = ballParams.width;
+        ballHostParams.height = ballParams.height;
+        try {
+            windowManager.updateViewLayout(host, ballHostParams);
+            return true;
+        } catch (RuntimeException ignored) {
+            removeOverlay(host);
+            overlayBallHostView = null;
+            overlayBallView = null;
+            ballHostParams = null;
+            ballParams = null;
+            return false;
+        }
+    }
+
+    private void applyBallGesture(View host, View ball,
+                                  FloatingBallGesture.Result result) {
+        if (result == null || ballParams == null || overlayBallHostView != host
+                || overlayBallView != ball) {
+            return;
+        }
+        ballParams.x = result.x;
+        ballParams.y = result.y;
+        rememberBallCenter(ballParams.x + ballParams.width / 2,
+                ballParams.y + ballParams.height / 2);
+        ball.setTranslationX(ballParams.x);
+        ball.setTranslationY(ballParams.y);
+    }
+
+    private boolean isPointerOverBall(float rawX, float rawY) {
+        return ballParams != null
+                && rawX >= ballParams.x && rawX < (double) ballParams.x + ballParams.width
+                && rawY >= ballParams.y && rawY < (double) ballParams.y + ballParams.height;
+    }
+
+    private float rawPointerX(MotionEvent event, int pointerIndex) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) return event.getRawX(pointerIndex);
+        return event.getRawX() + event.getX(pointerIndex) - event.getX(0);
+    }
+
+    private float rawPointerY(MotionEvent event, int pointerIndex) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) return event.getRawY(pointerIndex);
+        return event.getRawY() + event.getY(pointerIndex) - event.getY(0);
+    }
+
+    private int ballMinX() {
+        return 0;
+    }
+
+    private int ballMaxX() {
+        return Math.max(0, displayWidth() - (ballParams == null ? 0 : ballParams.width));
+    }
+
+    private int ballMinY() {
+        return overlayDp(16);
+    }
+
+    private int ballMaxY() {
+        return Math.max(ballMinY(), displayHeight()
+                - (ballParams == null ? 0 : ballParams.height) - overlayDp(16));
+    }
+
+    private GradientDrawable ballRing(boolean pressed) {
+        GradientDrawable ring = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                pressed
+                        ? new int[] { Color.rgb(178, 255, 227), Color.rgb(34, 198, 168) }
+                        : new int[] { Color.rgb(82, 247, 199), Color.rgb(9, 125, 139) });
+        ring.setShape(GradientDrawable.OVAL);
+        ring.setStroke(overlayDp(2), pressed
+                ? Color.WHITE : Color.rgb(190, 255, 234));
+        return ring;
+    }
+
+    private void rememberBallCenter(int centerX, int centerY) {
+        lastBallCenterX = centerX;
+        lastBallCenterY = centerY;
+        hasLastBallCenter = true;
     }
 
     private WindowManager.LayoutParams panelLayoutParams(int anchorX, int anchorY) {
@@ -540,16 +756,18 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
 
     private void removeOverlayWindows() {
         removeOverlay(overlayPanelView);
-        removeOverlay(overlayBallView);
+        removeOverlay(overlayBallHostView);
         overlayPanelView = null;
+        overlayBallHostView = null;
         overlayBallView = null;
         panelParams = null;
+        ballHostParams = null;
         ballParams = null;
         overlayRenderer = null;
     }
 
     private void renderOverlay() {
-        if (active && (overlayPanelView != null || overlayBallView != null)
+        if (active && (overlayPanelView != null || overlayBallHostView != null)
                 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
                 && !Settings.canDrawOverlays(this)) {
             stopReading(BattleFrameProtocol.STATUS_READ_ERROR, "悬浮窗权限已关闭");
