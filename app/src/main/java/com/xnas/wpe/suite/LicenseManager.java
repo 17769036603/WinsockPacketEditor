@@ -172,9 +172,10 @@ public final class LicenseManager {
     private static void clearLease(Context c, boolean removeSession) {
         Context app=c.getApplicationContext();
         SharedPreferences prefs=app.getSharedPreferences(PREFS,Context.MODE_PRIVATE);
-        boolean hadLease=deadlineElapsed>0
-                || new File(app.getFilesDir(),"license-lease.json").exists();
+        boolean hadLease;
         synchronized(LicenseManager.class) {
+            hadLease=deadlineElapsed>0
+                    || new File(app.getFilesDir(),"license-lease.json").exists();
             SharedPreferences.Editor edit=prefs.edit();
             if(removeSession) edit.remove(TOKEN_KEY);
             edit.commit();

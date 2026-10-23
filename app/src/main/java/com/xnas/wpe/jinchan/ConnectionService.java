@@ -29,7 +29,7 @@ public final class ConnectionService extends com.xnas.wpe.suite.ModuleService {
     @Override public void onCreate(){super.onCreate();if(Build.VERSION.SDK_INT>=26){NotificationChannel c=new NotificationChannel(CHANNEL,"金蟾连接",NotificationManager.IMPORTANCE_LOW);getSystemService(NotificationManager.class).createNotificationChannel(c);}}
     @Override public int onStartCommand(Intent i,int flags,int id){
         startForeground(6103,notification());
-        if(i!=null&&ACTION_STOP.equals(i.getAction())){stopConnection();return START_NOT_STICKY;}
+        if(i!=null&&ACTION_STOP.equals(i.getAction())){stopConnection(id);return START_NOT_STICKY;}
         if(!com.xnas.wpe.suite.LicenseManager.isActive()){stopForeground(true);stopSelfResult(id);return START_NOT_STICKY;}
         String pkg=i==null?"":i.getStringExtra(EXTRA_PACKAGE);if(pkg==null)pkg="";if(!com.xnas.wpe.suite.TargetGame.supportsModule(com.xnas.wpe.suite.TargetGame.JINCHAN,pkg)){state="error";message="目标游戏不支持";if(Build.VERSION.SDK_INT>=24)stopForeground(STOP_FOREGROUND_REMOVE);else stopForeground(true);stopSelfResult(id);return START_NOT_STICKY;}
         Connection c=current;if(c!=null&&pkg.equals(c.pkg)&&!c.stop&&c.process!=null&&isRunning(c.process)&&("connecting".equals(state)||"connected".equals(state)||"busy".equals(state)))return START_STICKY;
@@ -84,7 +84,8 @@ public final class ConnectionService extends com.xnas.wpe.suite.ModuleService {
         }catch(Exception e){return false;}
     }
     private void requestStop(Connection c){c.stop=true;try(FileOutputStream o=new FileOutputStream(new File(getFilesDir(),"stop-"+c.token))){o.write(1);o.getFD().sync();}catch(Exception ignored){}}
-    private synchronized void stopConnection(){wanted=null;Connection c=current;if(c==null){targetSwitchLocked=false;state="disconnected";message="已断开";if(Build.VERSION.SDK_INT>=24)stopForeground(STOP_FOREGROUND_REMOVE);else stopForeground(true);return;}state="disconnected";message="正在断开";refreshNotification();requestStop(c);control.execute(()->{if(awaitExit(c,15000)){if(current==c&&wanted==null)current=null;if(wanted==null){targetSwitchLocked=false;state="disconnected";message="已断开";if(Build.VERSION.SDK_INT>=24)stopForeground(STOP_FOREGROUND_REMOVE);else stopForeground(true);}}else{targetSwitchLocked=true;state="error";message="worker 未确认退出，仍保持连接保护";}refreshNotification();});}
+    private synchronized void stopConnection(int startId){wanted=null;Connection c=current;if(c==null){targetSwitchLocked=false;state="disconnected";message="已断开";if(stopSelfResult(startId))stopForegroundSafely();return;}state="disconnected";message="正在断开";refreshNotification();requestStop(c);control.execute(()->{if(awaitExit(c,15000)){synchronized(ConnectionService.this){if(current!=c||wanted!=null)return;current=null;targetSwitchLocked=false;state="disconnected";message="已断开";if(stopSelfResult(startId))stopForegroundSafely();}return;}synchronized(ConnectionService.this){if(current!=c||wanted!=null)return;targetSwitchLocked=true;state="error";message="worker 未确认退出，仍保持连接保护";}refreshNotification();});}
+    private void stopForegroundSafely(){if(Build.VERSION.SDK_INT>=24)stopForeground(STOP_FOREGROUND_REMOVE);else stopForeground(true);}
     boolean submit(String action,int pos,int base,int refine,String role,String uid,String preview,String nonce,String expectedPackage,String expectedToken){
         Connection c=current;if(c==null||c.stop||!c.pkg.equals(expectedPackage)||!c.token.equals(expectedToken)||!"connected".equals(c.state))return false;
         JSONObject s=readState(c.token);if(s==null||!validState(s,c)||!"connected".equals(s.optString("state"))||System.currentTimeMillis()/1000-s.optLong("heartbeat",0)>5)return false;

@@ -189,8 +189,33 @@ public final class MountHoldService extends com.xnas.wpe.suite.ModuleService {
             stopping = true;
             mainHandler.removeCallbacks(retryWorkerAction);
             requestWorkerStop();
-            if (workerThread == null) launchStopRecoveryWorker();
+            if (workerThread == null) {
+                boolean recoveryStateUnresolved = blockedJournal
+                        || (recoveringOldJournal && !oldJournalResolved);
+                Boolean journalPresent = currentJournalPresent();
+                if (Boolean.FALSE.equals(journalPresent) && !recoveryStateUnresolved) {
+                    setStatus("已停止，未修改速度");
+                    finishService();
+                } else {
+                    launchStopRecoveryWorker();
+                }
+            }
         }
+    }
+
+    /** Returns null when the private files directory cannot be inspected safely. */
+    private Boolean currentJournalPresent() {
+        final File[] files;
+        try {
+            files = getFilesDir().listFiles();
+        } catch (SecurityException denied) {
+            return null;
+        }
+        if (files == null) return null;
+        for (File file : files) {
+            if ("mount_hold.journal".equals(file.getName())) return true;
+        }
+        return false;
     }
 
     private void runWorker(String gamePackage, String targetSpeed, boolean sendStop,
