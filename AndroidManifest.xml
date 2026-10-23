@@ -20,6 +20,7 @@
 
         <activity
             android:name="com.xnas.wpe.suite.MainActivity"
+            android:screenOrientation="landscape"
             android:configChanges="keyboardHidden|orientation|screenSize"
             android:exported="true">
             <intent-filter>
@@ -28,14 +29,14 @@
             </intent-filter>
         </activity>
 
-        <activity android:name="com.xnas.wpe.anlei.MainActivity" android:exported="false" />
-        <activity android:name="com.xnas.wpe.mounthold.MainActivity" android:exported="false" />
-        <activity android:name="com.xnas.wpe.battleloop.MainActivity" android:exported="false" />
-        <activity android:name="com.xnas.wpe.battleskip.MainActivity" android:exported="false" />
-        <activity android:name="com.xnas.wpe.jinchan.MainActivity" android:exported="false" />
-        <activity android:name="com.xnas.wpe.battlepanel.MainActivity" android:exported="false" />
+        <activity android:name="com.xnas.wpe.anlei.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.mounthold.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.battleloop.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.battleskip.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.jinchan.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.battlepanel.MainActivity" android:screenOrientation="landscape" android:exported="false" />
 
-        <activity android:name="android.app.NativeActivity" android:exported="false">
+        <activity android:name="android.app.NativeActivity" android:screenOrientation="landscape" android:exported="false">
             <meta-data android:name="android.app.lib_name" android:value="battle_skip_launcher" />
         </activity>
         <activity-alias
