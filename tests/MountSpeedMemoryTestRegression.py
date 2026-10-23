@@ -5,6 +5,7 @@ import importlib.util
 import base64
 import io
 import json
+import shlex
 import struct
 import tempfile
 from pathlib import Path
@@ -77,6 +78,8 @@ class FakeRootBroker:
         self.raw, self.commands = raw, []
 
     def execute(self, command, _timeout):
+        if command.startswith("sh -c "):
+            command = shlex.split(command)[2]
         self.commands.append(command)
         if " if=/proc/" in command:
             return base64.b64encode(self.raw)

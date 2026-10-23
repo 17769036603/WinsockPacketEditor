@@ -10,6 +10,7 @@ import json
 import math
 import os
 import queue
+import shlex
 import struct
 import subprocess
 import sys
@@ -165,6 +166,8 @@ class AdbTransport:
             f"printf '{escaped}' | {self.dd_command} "
             f"of=/proc/$$/fd/3 bs=1 seek={address} conv=notrunc 2>/dev/null"
         )
+        if self.root_broker is not None:
+            command = f"sh -c {shlex.quote(command)}"
         # ponytail: the bound fd still races LuaJIT table relocation/GC; use a thread-synchronized client test hook if needed.
         self.shell(command)
 
