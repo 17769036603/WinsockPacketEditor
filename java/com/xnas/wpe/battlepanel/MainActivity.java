@@ -81,6 +81,7 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     private final TextView[] resistanceHeaders = new TextView[4];
     private final Button[] resistanceButtons = new Button[RESISTANCE_NAMES.length];
     private int resistanceGridColumns;
+    private boolean resistanceGridUpdatePending;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -244,22 +245,38 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
             option.setOnClickListener(view -> selectResistance(selectedIndex));
             resistanceButtons[index] = option;
         }
+        rebuildResistanceOptionGrid(3);
         resistanceOptions.addOnLayoutChangeListener((view, left, top, right, bottom,
                                                      oldLeft, oldTop, oldRight, oldBottom) ->
-                updateResistanceOptionGrid(right - left));
+                scheduleResistanceOptionGridUpdate());
         body.addView(resistanceOptions, marginParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, 5));
-        resistanceOptions.post(() -> updateResistanceOptionGrid(resistanceOptions.getWidth()));
         addSideSections(body, true);
         return body;
     }
 
-    private void updateResistanceOptionGrid(int availableWidth) {
-        if (availableWidth <= 0 || resistanceOptions == null) return;
-        float density = getResources().getDisplayMetrics().density;
-        int widthDp = (int) (availableWidth / density + 0.5f);
-        int columns = widthDp < 390 ? 3 : widthDp < 600 ? 5 : 6;
-        if (columns == resistanceGridColumns) return;
+    private void scheduleResistanceOptionGridUpdate() {
+        if (resistanceOptions == null || resistanceGridUpdatePending) return;
+        resistanceGridUpdatePending = true;
+        resistanceOptions.post(() -> {
+            resistanceGridUpdatePending = false;
+            if (resistanceOptions == null) return;
+            int availableWidth = resistanceOptions.getWidth();
+            if (availableWidth <= 0) return;
+            float density = getResources().getDisplayMetrics().density;
+            int widthDp = (int) (availableWidth / density + 0.5f);
+            int columns = widthDp < 390 ? 3 : widthDp < 600 ? 5 : 6;
+            if (columns != resistanceGridColumns) rebuildResistanceOptionGrid(columns);
+        });
+    }
+
+    private void rebuildResistanceOptionGrid(int columns) {
+        if (resistanceOptions == null || columns <= 0) return;
+        for (Button option : resistanceButtons) {
+            if (option != null && option.getParent() instanceof ViewGroup) {
+                ((ViewGroup) option.getParent()).removeView(option);
+            }
+        }
         resistanceGridColumns = columns;
         resistanceOptions.removeAllViews();
         for (int start = 0; start < resistanceButtons.length; start += columns) {
@@ -269,12 +286,18 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
             int end = Math.min(start + columns, resistanceButtons.length);
             for (int index = start; index < end; index++) {
                 LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                        0, dp(32), 1f);
+                        0, dp(44), 1f);
                 params.setMargins(dp(2), dp(2), dp(2), dp(2));
                 row.addView(resistanceButtons[index], params);
             }
+            for (int empty = end - start; empty < columns; empty++) {
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                        0, dp(44), 1f);
+                params.setMargins(dp(2), dp(2), dp(2), dp(2));
+                row.addView(new View(this), params);
+            }
             resistanceOptions.addView(row, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(36)));
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
         }
         updateResistanceButtonStyles();
     }
@@ -517,6 +540,7 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
     private void showResistance() {
         showingResistance = true;
         setPageVisibility();
+        scheduleResistanceOptionGridUpdate();
         if (service != null) service.requestResistanceIfNeeded();
         refreshState();
     }
