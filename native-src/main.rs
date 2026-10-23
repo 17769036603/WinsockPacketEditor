@@ -1037,6 +1037,16 @@ fn run(dir: PathBuf) -> Result<(), String> {
                 match ident {
                     Ok(processes) if processes.len() == 1 && processes[0] == target => {}
                     Err(error) => {
+                        if matches!(
+                            original_process_end_decision(&run_identity),
+                            recovery::Decision::VerifiedOldProcess(_)
+                        ) {
+                            status(
+                                &dir,
+                                "state=waiting_game\nstatus=waiting_game\nreason=game_gone",
+                            );
+                            break;
+                        }
                         eprintln!("worker: target identity scan failed: {error}");
                         status(
                             &dir,
