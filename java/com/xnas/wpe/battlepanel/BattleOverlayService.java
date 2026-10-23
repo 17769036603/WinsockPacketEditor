@@ -6,11 +6,23 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Color;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.graphics.PixelFormat;
+import android.graphics.drawable.GradientDrawable;
+import android.provider.Settings;
+import android.util.DisplayMetrics;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewConfiguration;
+import android.view.WindowManager;
+import android.widget.Toast;
+import android.widget.TextView;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -79,12 +91,19 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
     private ResistanceQuery resistanceQuery;
     private ResistanceSnapshot resistanceSnapshot;
     private BattleFrameProtocol.Frame resistanceRequestedFrame;
-    private String resistanceMessage = "进入战斗后打开抗性页查询";
+    private String resistanceMessage = "";
     private volatile BattleFrameProtocol.Frame currentFrame;
     private long currentFrameTimestampUnixMs;
     private int currentStatus = BattleFrameProtocol.STATUS_LOCATING;
     private int lastNotifiedStatus = Integer.MIN_VALUE;
     private String currentDetail = "正在启动只读读取器…";
+    private WindowManager windowManager;
+    private android.content.Context overlayContext;
+    private View overlayPanelView;
+    private View overlayBallView;
+    private WindowManager.LayoutParams panelParams;
+    private WindowManager.LayoutParams ballParams;
+    private BattleOverlayRenderer overlayRenderer;
 
     final class LocalBinder extends Binder {
         BattleOverlayService getService() {
@@ -138,7 +157,8 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
         BattleFrameProtocol.Frame frame = currentFrame;
         if (!active || stopping || frame == null
                 || currentStatus != BattleFrameProtocol.STATUS_LIVE) {
-            resistanceMessage = "进入战斗后打开抗性页查询";
+            resistanceMessage = "";
+            renderOverlay();
             return;
         }
         if (resistanceSnapshot != null && resistanceSnapshot.matches(frame)) {
@@ -150,20 +170,23 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
         }
         resistanceRequestedFrame = frame;
         resistanceSnapshot = null;
-        resistanceMessage = "正在查询本场抗性…";
+        resistanceMessage = "正在查询抗性…";
+        renderOverlay();
         String packageName = targetPackage == null ? getSelectedGamePackage(this) : targetPackage;
         resistanceQuery.query(frame, packageName, (snapshot, error) -> {
             if (stopping || activeService != this) return;
             BattleFrameProtocol.Frame latest = currentFrame;
             if (latest == null || !frame.sameProcessAndBattle(latest)) {
-                resistanceMessage = "查询期间战斗状态已变化，结果未采用";
+                resistanceMessage = "战斗状态已变化，结果未采用";
                 resistanceSnapshot = null;
+                renderOverlay();
                 return;
             }
             resistanceSnapshot = snapshot != null && snapshot.matches(latest) ? snapshot : null;
             resistanceMessage = resistanceSnapshot == null
                     ? "本场未取得抗性 · " + (error == null ? "返回身份未确认" : error)
-                    : "第 " + resistanceSnapshot.sampleRound + " 回合发起的查询快照 · 每场查询一次";
+                    : "第 " + resistanceSnapshot.sampleRound + " 回合查询结果";
+            renderOverlay();
         });
     }
 
@@ -177,9 +200,10 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
         resistanceQuery.cancel();
         resistanceSnapshot = null;
         resistanceRequestedFrame = null;
-        resistanceMessage = "进入战斗后打开抗性页查询";
-        mainHandler.removeCallbacks(freshnessCheck);
+        resistanceMessage = "";
+        mainHandler.removeCallbacksAndMessages(null);
         stopWorker();
+        removeOverlayWindows();
         setPanelState(status, detail, null);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE);
@@ -192,6 +216,8 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
     @Override
     public void onCreate() {
         super.onCreate();
+        windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+        overlayContext = com.xnas.wpe.suite.CompactUi.wrap(this);
         resistanceQuery = new ResistanceQuery(this);
         createNotificationChannel();
         activeService = this;
@@ -199,32 +225,48 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        startAsForeground();
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             requestStop();
+            return START_NOT_STICKY;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            stopReading(BattleFrameProtocol.STATUS_READ_ERROR,
+                    "缺少悬浮窗权限，读取未启动");
             return START_NOT_STICKY;
         }
         String requested = intent == null ? getSelectedGamePackage(this)
                 : intent.getStringExtra(EXTRA_PACKAGE);
         if (requested == null || !com.xnas.wpe.suite.TargetGame.supportsModule(
                 com.xnas.wpe.suite.TargetGame.BATTLE_PANEL, requested)) {
-            startAsForeground();
             stopReading(BattleFrameProtocol.STATUS_READ_ERROR, "目标游戏不支持");
             return START_NOT_STICKY;
         }
-        if (active && targetPackage != null && !targetPackage.equals(requested)) {
-            setPanelState(BattleFrameProtocol.STATUS_READ_ERROR,
-                    "当前面板仍绑定另一个目标，请先停止后再切换", null);
+        if (active && targetPackage != null) {
+            if (!targetPackage.equals(requested)) {
+                Toast.makeText(this, "当前面板仍绑定另一个目标，请先停止后再切换",
+                        Toast.LENGTH_LONG).show();
+            }
+            if (!showExpandedOverlay()) {
+                stopReading(BattleFrameProtocol.STATUS_READ_ERROR,
+                        "悬浮面板无法展开，读取已停止");
+                return START_NOT_STICKY;
+            }
             return START_STICKY;
         }
         targetPackage = requested;
         resistanceSnapshot = null;
         resistanceRequestedFrame = null;
-        resistanceMessage = "进入战斗后打开抗性页查询";
-        startAsForeground();
+        resistanceMessage = "";
 
         stopping = false;
         active = true;
         setPanelState(BattleFrameProtocol.STATUS_LOCATING, "正在启动只读读取器…", null);
+        if (!showExpandedOverlay()) {
+            stopReading(BattleFrameProtocol.STATUS_READ_ERROR,
+                    "悬浮面板创建失败，读取未启动");
+            return START_NOT_STICKY;
+        }
         startWorkerIfNeeded(targetPackage);
         return START_STICKY;
     }
@@ -234,8 +276,12 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
         stopping = true;
         active = false;
         resistanceQuery.shutdown();
-        mainHandler.removeCallbacks(freshnessCheck);
+        mainHandler.removeCallbacksAndMessages(null);
         stopWorker();
+        removeOverlayWindows();
+        overlayRenderer = null;
+        overlayContext = null;
+        windowManager = null;
         if (activeService == this) {
             active = false;
             activeService = null;
@@ -251,6 +297,254 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
     @Override
     public IBinder onBind(Intent intent) {
         return binder;
+    }
+
+    private boolean showExpandedOverlay() {
+        if (windowManager == null || overlayContext == null
+                || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && !Settings.canDrawOverlays(this))) {
+            return false;
+        }
+        if (overlayPanelView != null) {
+            if (overlayRenderer != null) overlayRenderer.render(getDisplayState());
+            return true;
+        }
+
+        int anchorX = ballParams == null ? displayWidth() / 2
+                : ballParams.x + ballParams.width / 2;
+        int anchorY = ballParams == null ? displayHeight() / 2
+                : ballParams.y + ballParams.height / 2;
+        removeOverlay(overlayBallView);
+        overlayBallView = null;
+        ballParams = null;
+
+        if (overlayRenderer == null) {
+            overlayRenderer = new BattleOverlayRenderer(this,
+                    new BattleOverlayRenderer.Listener() {
+                        @Override public void onCollapseRequested() {
+                            collapseOverlay();
+                        }
+
+                        @Override public void onResistancePageSelected() {
+                            requestResistanceIfNeeded();
+                        }
+                    });
+        }
+        View panel = overlayRenderer.getView();
+        WindowManager.LayoutParams params = panelLayoutParams(anchorX, anchorY);
+        try {
+            windowManager.addView(panel, params);
+            overlayPanelView = panel;
+            panelParams = params;
+            overlayRenderer.render(getDisplayState());
+            return true;
+        } catch (RuntimeException error) {
+            removeOverlay(panel);
+            overlayPanelView = null;
+            panelParams = null;
+            overlayRenderer = null;
+            return false;
+        }
+    }
+
+    private void collapseOverlay() {
+        if (overlayPanelView == null || windowManager == null) return;
+        int anchorX = panelParams == null ? displayWidth() / 2
+                : panelParams.x + panelParams.width / 2;
+        int anchorY = panelParams == null ? displayHeight() / 2
+                : panelParams.y + panelParams.height / 2;
+        removeOverlay(overlayPanelView);
+        overlayPanelView = null;
+        panelParams = null;
+        if (!showCollapsedBall(anchorX, anchorY)) {
+            stopReading(BattleFrameProtocol.STATUS_READ_ERROR,
+                    "悬浮球创建失败，读取已停止");
+        }
+    }
+
+    private boolean showCollapsedBall(int anchorX, int anchorY) {
+        if (windowManager == null || overlayContext == null
+                || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && !Settings.canDrawOverlays(this))) {
+            return false;
+        }
+        TextView ball = new TextView(overlayContext);
+        ball.setText("战");
+        ball.setTextColor(Color.WHITE);
+        ball.setTextSize(15f);
+        ball.setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD);
+        ball.setGravity(Gravity.CENTER);
+        ball.setIncludeFontPadding(false);
+        ball.setContentDescription("战斗面板；点击展开，拖动移动");
+        GradientDrawable background = new GradientDrawable();
+        background.setShape(GradientDrawable.OVAL);
+        background.setColor(Color.argb(235, 24, 55, 67));
+        background.setStroke(overlayDp(2), Color.rgb(153, 214, 211));
+        ball.setBackground(background);
+        ball.setElevation(overlayDp(8));
+        ball.setOnClickListener(view -> {
+            if (!showExpandedOverlay()) {
+                stopReading(BattleFrameProtocol.STATUS_READ_ERROR,
+                        "悬浮面板无法展开，读取已停止");
+            }
+        });
+        installBallDragListener(ball);
+
+        int size = overlayDp(56);
+        WindowManager.LayoutParams params = baseOverlayParams(size, size);
+        params.gravity = Gravity.TOP | Gravity.START;
+        params.x = clamp(anchorX - size / 2, 0, Math.max(0, displayWidth() - size));
+        params.y = clamp(anchorY - size / 2, overlayDp(16),
+                Math.max(overlayDp(16), displayHeight() - size - overlayDp(16)));
+        try {
+            windowManager.addView(ball, params);
+            overlayBallView = ball;
+            ballParams = params;
+            if (overlayRenderer != null) overlayRenderer.render(getDisplayState());
+            return true;
+        } catch (RuntimeException error) {
+            removeOverlay(ball);
+            overlayBallView = null;
+            ballParams = null;
+            return false;
+        }
+    }
+
+    private void installBallDragListener(View ball) {
+        final float[] downRawX = new float[1];
+        final float[] downRawY = new float[1];
+        final int[] startX = new int[1];
+        final int[] startY = new int[1];
+        final boolean[] dragging = new boolean[1];
+        final int touchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
+        ball.setOnTouchListener((view, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    downRawX[0] = event.getRawX();
+                    downRawY[0] = event.getRawY();
+                    startX[0] = ballParams == null ? 0 : ballParams.x;
+                    startY[0] = ballParams == null ? 0 : ballParams.y;
+                    dragging[0] = false;
+                    view.setPressed(true);
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    float dx = event.getRawX() - downRawX[0];
+                    float dy = event.getRawY() - downRawY[0];
+                    if (!dragging[0]
+                            && (Math.abs(dx) > touchSlop || Math.abs(dy) > touchSlop)) {
+                        dragging[0] = true;
+                    }
+                    if (dragging[0] && ballParams != null && overlayBallView == view) {
+                        ballParams.x = clamp(startX[0] + Math.round(dx), 0,
+                                Math.max(0, displayWidth() - ballParams.width));
+                        ballParams.y = clamp(startY[0] + Math.round(dy), overlayDp(16),
+                                Math.max(overlayDp(16), displayHeight() - ballParams.height
+                                        - overlayDp(16)));
+                        try {
+                            windowManager.updateViewLayout(view, ballParams);
+                        } catch (RuntimeException ignored) {
+                            // Window permission can be revoked while dragging.
+                        }
+                    }
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    view.setPressed(false);
+                    if (dragging[0]) {
+                        view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
+                    } else {
+                        view.performClick();
+                    }
+                    dragging[0] = false;
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    view.setPressed(false);
+                    dragging[0] = false;
+                    return true;
+                default:
+                    return false;
+            }
+        });
+    }
+
+    private WindowManager.LayoutParams panelLayoutParams(int anchorX, int anchorY) {
+        int maxWidth = Math.max(overlayDp(200), displayWidth() - overlayDp(20));
+        int width = Math.min(overlayDp(isLandscape() ? 820 : 600), maxWidth);
+        int maxHeight = Math.max(overlayDp(200), displayHeight() - overlayDp(52));
+        int height = Math.min(overlayDp(isLandscape() ? 480 : 690), maxHeight);
+        WindowManager.LayoutParams params = baseOverlayParams(width, height);
+        params.gravity = Gravity.TOP | Gravity.START;
+        params.x = clamp(anchorX - width / 2, overlayDp(8),
+                Math.max(overlayDp(8), displayWidth() - width - overlayDp(8)));
+        params.y = clamp(anchorY - height / 2, overlayDp(24),
+                Math.max(overlayDp(24), displayHeight() - height - overlayDp(24)));
+        return params;
+    }
+
+    private WindowManager.LayoutParams baseOverlayParams(int width, int height) {
+        int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                : WindowManager.LayoutParams.TYPE_PHONE;
+        int windowFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
+        return new WindowManager.LayoutParams(width, height, type, windowFlags,
+                PixelFormat.TRANSLUCENT);
+    }
+
+    private int displayWidth() {
+        DisplayMetrics metrics = new DisplayMetrics();
+        if (windowManager != null) windowManager.getDefaultDisplay().getRealMetrics(metrics);
+        return metrics.widthPixels;
+    }
+
+    private int displayHeight() {
+        DisplayMetrics metrics = new DisplayMetrics();
+        if (windowManager != null) windowManager.getDefaultDisplay().getRealMetrics(metrics);
+        return metrics.heightPixels;
+    }
+
+    private boolean isLandscape() {
+        return getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+    }
+
+    private int overlayDp(int value) {
+        float density = overlayContext == null ? getResources().getDisplayMetrics().density
+                : overlayContext.getResources().getDisplayMetrics().density;
+        return (int) (value * density + 0.5f);
+    }
+
+    private int clamp(int value, int minimum, int maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
+    }
+
+    private void removeOverlay(View view) {
+        if (view == null || windowManager == null) return;
+        try {
+            windowManager.removeView(view);
+        } catch (RuntimeException ignored) {
+            // The system may already have removed the window after permission revocation.
+        }
+    }
+
+    private void removeOverlayWindows() {
+        removeOverlay(overlayPanelView);
+        removeOverlay(overlayBallView);
+        overlayPanelView = null;
+        overlayBallView = null;
+        panelParams = null;
+        ballParams = null;
+        overlayRenderer = null;
+    }
+
+    private void renderOverlay() {
+        if (active && (overlayPanelView != null || overlayBallView != null)
+                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && !Settings.canDrawOverlays(this)) {
+            stopReading(BattleFrameProtocol.STATUS_READ_ERROR, "悬浮窗权限已关闭");
+            return;
+        }
+        if (overlayRenderer != null) overlayRenderer.render(getDisplayState());
     }
 
     private void setPanelState(int status, String detail, BattleFrameProtocol.Frame frame) {
@@ -269,7 +563,7 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
                 && !resistanceRequestedFrame.sameProcessAndBattle(currentFrame)) {
             resistanceSnapshot = null;
             resistanceRequestedFrame = null;
-            resistanceMessage = "新战斗已确认，打开抗性页后查询";
+            resistanceMessage = "新战斗已确认";
         }
         currentFrameTimestampUnixMs = currentFrame == null ? 0L : currentFrame.timestampUnixMs;
         mainHandler.removeCallbacks(freshnessCheck);
@@ -278,6 +572,11 @@ public final class BattleOverlayService extends com.xnas.wpe.suite.ModuleService
                     Math.max(250L, BattleFrameProtocol.MAX_FRAME_AGE_MS));
         }
         updateNotificationText();
+        if (overlayRenderer != null && overlayRenderer.isShowingResistance()
+                && currentFrame != null && active && !stopping) {
+            requestResistanceIfNeeded();
+        }
+        renderOverlay();
     }
 
     private void acceptFrame(BattleFrameProtocol.Frame frame) {

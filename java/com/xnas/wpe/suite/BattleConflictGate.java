@@ -37,9 +37,9 @@ public final class BattleConflictGate {
         if (marker.exists()) {
             String owner = read(marker).trim();
             if (!isManagedId(owner) || !isClean(root, owner)) {
-                return denied(root, moduleId, guidance(owner));
+                return denied(root, moduleId, guidance(owner, moduleId));
             }
-            if (!marker.delete()) return denied(root, moduleId, guidance(owner));
+            if (!marker.delete()) return denied(root, moduleId, guidance(owner, moduleId));
         }
 
         for (String candidate : new String[]{LOOP, SKIP}) {
@@ -48,12 +48,16 @@ public final class BattleConflictGate {
             File launcherStatus = new File(module, "launcher-status");
             boolean hasRunEvidence = status.exists() || (SKIP.equals(candidate) && launcherStatus.exists());
             if (hasRunEvidence && !isClean(root, candidate)) {
-                return denied(root, moduleId, guidance(candidate));
+                return denied(root, moduleId, guidance(candidate, moduleId));
             }
         }
 
         try {
-            if (!marker.createNewFile()) return denied(root, moduleId, "另一项战斗功能正在启动或清理，已阻止启动");
+            if (!marker.createNewFile()) {
+                String owner = read(marker).trim();
+                return denied(root, moduleId, isManagedId(owner) ? guidance(owner, moduleId)
+                        : "另一项战斗功能正在启动或清理，已阻止启动");
+            }
             // The empty marker already excludes contenders. Publish its owner only
             // after starting replaces any clean status left by a previous run.
             File own = ensureDirectory(new File(root, moduleId));
@@ -114,11 +118,34 @@ public final class BattleConflictGate {
         File status = new File(new File(modulesRoot, moduleId), "status");
         if (!status.isFile()) return false;
         Map<String, String> fields = parse(read(status));
-        if (LOOP.equals(moduleId) && verifiedProcessEnded(fields)) return true;
+        if (LOOP.equals(moduleId) && (fields.get("recoveryModule") == null
+                || LOOP.equals(fields.get("recoveryModule"))) && verifiedProcessEnded(fields)) return true;
+        if (SKIP.equals(moduleId) && SKIP.equals(fields.get("recoveryModule"))
+                && verifiedProcessEnded(fields)) return true;
         if (!"stopped".equals(fields.get("state"))
                 || !"true".equals(fields.get("hooksRemoved"))
                 || !"true".equals(fields.get("bindingCleared"))) return false;
         return !LOOP.equals(moduleId) || "true".equals(fields.get("restoreConfirmed"));
+    }
+
+    /** True only when a persisted loop reservation or loop status still lacks terminal proof. */
+    public static synchronized boolean hasUnconfirmedLoopActivity(File modulesRoot) {
+        if (modulesRoot == null) return false;
+        File loop = new File(modulesRoot, LOOP);
+        File marker = new File(modulesRoot, RESERVATION);
+        boolean hasRunEvidence = new File(loop, "status").exists()
+                || (marker.isFile() && LOOP.equals(read(marker).trim()));
+        return hasRunEvidence && !isClean(modulesRoot, LOOP);
+    }
+
+    public static synchronized boolean hasUnconfirmedSkipActivity(File modulesRoot) {
+        if (modulesRoot == null) return false;
+        File skip = new File(modulesRoot, SKIP);
+        File marker = new File(modulesRoot, RESERVATION);
+        boolean hasRunEvidence = new File(skip, "status").exists()
+                || new File(skip, "launcher-status").exists()
+                || (marker.isFile() && SKIP.equals(read(marker).trim()));
+        return hasRunEvidence && !isClean(modulesRoot, SKIP);
     }
 
     private static boolean verifiedProcessEnded(Map<String, String> fields) {
@@ -165,10 +192,20 @@ public final class BattleConflictGate {
         return new Decision(false, "", message);
     }
 
-    private static String guidance(String moduleId) {
-        if (LOOP.equals(moduleId)) return "上次战投跳过尚未确认退出；请到战投跳过页面点“检查旧任务”。核查完成前不能启动战斗功能。";
-        if (SKIP.equals(moduleId)) return "先停止战斗快进并等待清理完成；清理未确认时不能启动战投跳过。";
-        return "战投跳过/快进状态未确认；请先停止战投跳过/快进并等待清理完成。";
+    private static String guidance(String owner, String requester) {
+        if (LOOP.equals(owner)) {
+            if (SKIP.equals(requester)) {
+                return "战投跳过旧任务状态未确认，已阻止启动战斗快进；请到战投跳过页面点击“启动”触发只读核查，核查完成后再启动战斗快进。两项功能仍保持互斥。";
+            }
+            return "战投跳过旧任务状态未确认；再次点击“启动战投跳过”会触发只读核查，核查完成并确认后再启动。战投跳过与战斗快进仍保持互斥。";
+        }
+        if (SKIP.equals(owner)) {
+            if (SKIP.equals(requester)) {
+                return "战斗快进旧状态未确认退出，已阻止重新启动战斗快进；请停止战斗快进并等待清理确认后重试。战投跳过仍保持互斥。";
+            }
+            return "战斗快进未确认退出，已阻止启动战投跳过；请停止战斗快进并等待清理确认后重试。两项功能仍保持互斥。";
+        }
+        return "战投跳过与战斗快进的状态未确认，已阻止当前启动请求；请等待状态明确后重试。";
     }
 
     private static boolean isManagedId(String id) { return LOOP.equals(id) || SKIP.equals(id); }

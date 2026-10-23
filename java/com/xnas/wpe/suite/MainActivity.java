@@ -17,9 +17,6 @@ import android.view.Window;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.AdapterView;
-import android.widget.ArrayAdapter;
-import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -66,7 +63,7 @@ public final class MainActivity extends ActivityGroup {
     private String selectedTargetPackage = TargetGame.DHXY_PACKAGE;
     private TextView moduleTitle;
     private TextView statusLabel;
-    private Spinner targetSelector;
+    private TextView targetButton;
     private FrameLayout moduleContainer;
     private LinearLayout sidebarView;
     private String pendingPermissionModuleId;
@@ -77,6 +74,10 @@ public final class MainActivity extends ActivityGroup {
             statusHandler.postDelayed(this, 1000L);
         }
     };
+
+    @Override protected void attachBaseContext(android.content.Context base) {
+        super.attachBaseContext(CompactUi.wrap(base));
+    }
 
     public MainActivity() {
         super(true);
@@ -242,7 +243,7 @@ public final class MainActivity extends ActivityGroup {
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.VERTICAL);
-        header.setPadding(dp(18), dp(12), dp(18), dp(10));
+        header.setPadding(dp(12), dp(8), dp(12), dp(8));
         header.setBackgroundColor(Color.rgb(16, 31, 42));
         detail.addView(header, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -255,100 +256,47 @@ public final class MainActivity extends ActivityGroup {
 
         moduleTitle = new TextView(this);
         moduleTitle.setTextColor(COLOR_TEXT);
-        moduleTitle.setTextSize(18);
+        moduleTitle.setTextSize(16);
         moduleTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         titleRow.addView(moduleTitle, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
+        moduleTitle.setSingleLine(true);
+        moduleTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        statusLabel = new TextView(this);
+        statusLabel.setText("状态未确认");
+        statusLabel.setTextSize(10);
+        statusLabel.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        statusLabel.setPadding(dp(7), dp(3), dp(7), dp(3));
+        titleRow.addView(statusLabel, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        targetButton = new TextView(this);
+        targetButton.setText(TARGET_LABELS[targetIndex(selectedTargetPackage)] + " ▾");
+        targetButton.setTextSize(11);
+        targetButton.setTextColor(COLOR_TEXT);
+        targetButton.setGravity(Gravity.CENTER);
+        targetButton.setMinHeight(dp(32));
+        targetButton.setMinWidth(dp(76));
+        targetButton.setPadding(dp(8), dp(4), dp(8), dp(4));
+        targetButton.setBackground(background(COLOR_SURFACE, COLOR_ACCENT, dp(8), dp(1)));
+        targetButton.setContentDescription("目标游戏，点击切换");
+        targetButton.setFocusable(true);
+        targetButton.setOnClickListener(view -> showTargetPicker());
+        LinearLayout.LayoutParams targetParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        targetParams.leftMargin = dp(8);
+        titleRow.addView(targetButton, targetParams);
+
         TextView version = new TextView(this);
         version.setText(APP_VERSION);
         version.setTextColor(COLOR_MUTED);
-        version.setTextSize(10);
+        version.setTextSize(9);
+        version.setPadding(dp(8), 0, 0, 0);
         version.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
         version.setContentDescription("应用版本 " + APP_VERSION);
         titleRow.addView(version, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        LinearLayout targetRow = new LinearLayout(this);
-        targetRow.setOrientation(LinearLayout.HORIZONTAL);
-        targetRow.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams targetRowParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        targetRowParams.topMargin = dp(7);
-        header.addView(targetRow, targetRowParams);
-
-        statusLabel = new TextView(this);
-        statusLabel.setText("状态未确认");
-        statusLabel.setTextSize(12);
-        statusLabel.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        statusLabel.setPadding(dp(9), dp(4), dp(9), dp(4));
-        statusLabel.setBackground(background(COLOR_SURFACE, Color.rgb(38, 62, 75), dp(20), dp(1)));
-        targetRow.addView(statusLabel, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        TextView targetCaption = new TextView(this);
-        targetCaption.setText("目标");
-        targetCaption.setTextColor(COLOR_MUTED);
-        targetCaption.setTextSize(11);
-        targetCaption.setPadding(dp(12), 0, dp(5), 0);
-        targetRow.addView(targetCaption, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        targetSelector = new Spinner(this);
-        ArrayAdapter<String> targetAdapter = new ArrayAdapter<String>(this,
-                android.R.layout.simple_spinner_item, TARGET_LABELS) {
-            @Override public View getView(int position, View convertView, ViewGroup parent) {
-                TextView row = (TextView) super.getView(position, convertView, parent);
-                row.setText(getItem(position) + "  ▾");
-                row.setTextColor(COLOR_TEXT);
-                row.setTextSize(13);
-                row.setGravity(Gravity.CENTER_VERTICAL);
-                row.setMinHeight(dp(48));
-                row.setPadding(dp(12), dp(6), dp(12), dp(6));
-                return row;
-            }
-            @Override public View getDropDownView(int position, View convertView, ViewGroup parent) {
-                TextView row = (TextView) super.getDropDownView(position, convertView, parent);
-                row.setTextColor(COLOR_TEXT);
-                row.setBackgroundColor(position == targetIndex(selectedTargetPackage)
-                        ? Color.rgb(26, 78, 72) : COLOR_SURFACE);
-                row.setTextSize(14);
-                row.setMinHeight(dp(48));
-                row.setGravity(Gravity.CENTER_VERTICAL);
-                row.setPadding(dp(12), dp(8), dp(12), dp(8));
-                return row;
-            }
-        };
-        targetAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        GradientDrawable targetSurface = new GradientDrawable();
-        targetSurface.setColor(COLOR_SURFACE);
-        targetSurface.setCornerRadius(dp(8));
-        targetSurface.setStroke(dp(1), COLOR_ACCENT);
-        targetSelector.setBackground(targetSurface);
-        targetSelector.setAdapter(targetAdapter);
-        targetSelector.setSelection(targetIndex(selectedTargetPackage));
-        targetSelector.setContentDescription("目标游戏");
-        targetSelector.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                String target = packageForTargetIndex(position);
-                if (target.equals(selectedTargetPackage)) return;
-                if (isTargetSelectionLocked()) {
-                    targetSelector.setSelection(targetIndex(selectedTargetPackage));
-                    Toast.makeText(MainActivity.this, "请先停止运行中的功能并完成清理",
-                            Toast.LENGTH_SHORT).show();
-                    return;
-                }
-                if (!TargetGame.setSelectedPackage(MainActivity.this, target)) return;
-                selectedTargetPackage = target;
-                renderNavigation();
-                showModule(selectedModuleId);
-            }
-
-            @Override public void onNothingSelected(AdapterView<?> parent) {
-            }
-        });
-        targetRow.addView(targetSelector, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         moduleContainer = new FrameLayout(this);
         detail.addView(moduleContainer, new LinearLayout.LayoutParams(
@@ -491,6 +439,27 @@ public final class MainActivity extends ActivityGroup {
             }
         }
         return false;
+    }
+
+    private void showTargetPicker() {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("目标游戏")
+                .setSingleChoiceItems(TARGET_LABELS, targetIndex(selectedTargetPackage), (dialog, index) -> {
+                    String target = packageForTargetIndex(index);
+                    dialog.dismiss();
+                    if (target.equals(selectedTargetPackage)) return;
+                    if (isTargetSelectionLocked()) {
+                        Toast.makeText(this, "请先停止运行中的功能并完成清理", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    if (!TargetGame.setSelectedPackage(this, target)) return;
+                    selectedTargetPackage = target;
+                    targetButton.setText(TARGET_LABELS[index] + " ▾");
+                    renderNavigation();
+                    showModule(selectedModuleId);
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private static int targetIndex(String packageName) {

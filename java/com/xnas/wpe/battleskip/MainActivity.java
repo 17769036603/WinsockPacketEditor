@@ -24,17 +24,16 @@ import java.nio.charset.StandardCharsets;
 public final class MainActivity extends ModuleActivity implements ModuleStatusProvider {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView status;
+    private long lastRecoveryRequest;
     private final Runnable refreshStatus = new Runnable() {
         @Override public void run() {
             if (status == null) return;
             File moduleDir = getFilesDir();
-            String gate = read(new File(moduleDir, "gate-status"));
-            String raw = gate.isEmpty() ? read(new File(moduleDir, "status")) : gate;
-            boolean cleanStopped = raw.isEmpty() || raw.contains("state=stopped")
-                    && raw.contains("hooksRemoved=true") && raw.contains("bindingCleared=true");
+            String raw = currentStatus(moduleDir);
+            boolean cleanStopped = raw.isEmpty() || BattleConflictGate.isClean(moduleDir.getParentFile(), "battleskip");
             status.setText(!TargetGame.supportsModule(TargetGame.BATTLE_SKIP,
                     TargetGame.getSelectedPackage(MainActivity.this)) && cleanStopped
-                    ? "此功能仅支持 DHXY" : formatStatus(raw));
+                    ? "此功能仅支持 DHXY" : formatStatus(raw, cleanStopped));
             handler.postDelayed(this, 1000);
         }
     };
@@ -57,6 +56,29 @@ public final class MainActivity extends ModuleActivity implements ModuleStatusPr
         start.setOnClickListener(view -> {
             if (!TargetGame.supportsModule(TargetGame.BATTLE_SKIP, TargetGame.getSelectedPackage(this))) {
                 status.setText("此功能仅支持 DHXY");
+                return;
+            }
+            if (BattleSkipRecoveryService.isChecking()
+                    || com.xnas.wpe.battleloop.BattleLoopService.isCheckingOldTask()) {
+                status.setText("正在准备，请稍候。");
+                return;
+            }
+            boolean oldLoop = BattleConflictGate.hasUnconfirmedLoopActivity(getFilesDir().getParentFile())
+                    && !com.xnas.wpe.battleloop.BattleLoopService.isActive();
+            boolean oldSkip = BattleConflictGate.hasUnconfirmedSkipActivity(getFilesDir().getParentFile());
+            if (oldLoop || oldSkip) {
+                long now = android.os.SystemClock.elapsedRealtime();
+                if (lastRecoveryRequest != 0 && now - lastRecoveryRequest < 10000) return;
+                lastRecoveryRequest = now;
+                Intent check = oldLoop
+                        ? new Intent(this, com.xnas.wpe.battleloop.BattleLoopService.class)
+                            .setAction(com.xnas.wpe.battleloop.BattleLoopService.CHECK)
+                        : new Intent(this, BattleSkipRecoveryService.class);
+                try {
+                    if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(check);
+                    else startService(check);
+                    status.setText("正在确认上次任务是否退出；完成后请再次点击启动。");
+                } catch (RuntimeException error) { status.setText("无法确认上次任务，暂未启动。"); }
                 return;
             }
             BattleConflictGate.Decision decision = BattleConflictGate.reserve(
@@ -116,13 +138,23 @@ public final class MainActivity extends ModuleActivity implements ModuleStatusPr
         } catch (Exception ignored) { return ""; }
     }
 
-    private static String formatStatus(String raw) {
+    private static String currentStatus(File dir) {
+        String actual = read(new File(dir, "status"));
+        if (BattleSkipRecoveryService.isChecking()) return "state=checking";
+        if (BattleConflictGate.isClean(dir.getParentFile(), "battleskip")) return actual;
+        String recovery = read(new File(dir, "recovery-status"));
+        if (!recovery.isEmpty()) return recovery;
+        String gate = read(new File(dir, "gate-status"));
+        return gate.isEmpty() ? actual : gate;
+    }
+
+    private static String formatStatus(String raw, boolean clean) {
         if (raw.isEmpty()) return "状态：未启动";
         if (raw.contains("state=conflict_wait")) {
             for (String line : raw.split("\\r?\\n")) {
                 if (line.startsWith("message=")) return "启动受阻：" + line.substring(8);
             }
-            return "启动受阻：等待另一战斗功能退出或完成旧任务检查";
+            return "启动受阻：战斗快进与战投跳过的运行或清理状态尚未确认";
         }
         for (String line : raw.split("\\r?\\n")) {
             if (line.startsWith("message=")) return "状态：" + line.substring("message=".length());
@@ -130,8 +162,10 @@ public final class MainActivity extends ModuleActivity implements ModuleStatusPr
                 String state = line.substring("state=".length());
                 if ("starting".equals(state)) return "状态：已预留启动位，等待 worker";
                 if ("stopping".equals(state)) return "状态：正在清理；未确认前不会释放战斗功能启动位";
-                if ("stopped".equals(state)) return "状态：" + (raw.contains("hooksRemoved=true")
-                        && raw.contains("bindingCleared=true") ? "已停止，Hook 与绑定清理已确认" : "停止状态未确认");
+                if ("stopped".equals(state)) return clean ? "状态：已停止" : "状态：停止未确认";
+                if ("checking".equals(state)) return "正在准备，请稍候。";
+                if ("waiting_restart".equals(state)) return "请重启游戏后再点击启动。";
+                if ("unconfirmed".equals(state)) return "无法确认上次任务是否退出，暂未启动。";
                 return "状态：" + state;
             }
         }
@@ -140,10 +174,7 @@ public final class MainActivity extends ModuleActivity implements ModuleStatusPr
 
     @Override public ModuleStatus getModuleStatus() {
         File dir = getFilesDir();
-        File gateFile = new File(dir, "gate-status");
-        File statusFile = new File(dir, "status");
-        String gate = read(gateFile);
-        String raw = !gate.isEmpty() ? gate : read(statusFile);
+        String raw = currentStatus(dir);
         String selected = TargetGame.getSelectedPackage(this);
         if (raw.isEmpty()) return new ModuleStatus(ModuleStatus.State.STOPPED,
                 TargetGame.supportsModule(TargetGame.BATTLE_SKIP, selected) ? "未启动" : "不支持",
@@ -157,17 +188,19 @@ public final class MainActivity extends ModuleActivity implements ModuleStatusPr
         ModuleStatus.State mapped;
         String label;
         if ("stopped".equals(state)) {
-            boolean clean = raw.contains("hooksRemoved=true") && raw.contains("bindingCleared=true");
+            boolean clean = BattleConflictGate.isClean(dir.getParentFile(), "battleskip");
             mapped = clean ? ModuleStatus.State.STOPPED : ModuleStatus.State.UNKNOWN;
             label = clean ? "已停止" : "停止未确认";
         } else if ("stopping".equals(state)) { mapped = ModuleStatus.State.STOPPING; label = "正在清理"; }
         else if ("conflict_wait".equals(state)) {
-            mapped = ModuleStatus.State.WAITING; label = "等待旧任务检查";
+            mapped = ModuleStatus.State.WAITING; label = "战斗功能互斥";
         }
         else if ("starting".equals(state) || "waiting_game".equals(state)
                 || "waiting_role".equals(state)) {
             mapped = ModuleStatus.State.WAITING; label = "等待游戏绑定";
         } else if ("running".equals(state)) { mapped = ModuleStatus.State.RUNNING; label = "worker 运行中"; }
+        else if ("checking".equals(state)) { mapped = ModuleStatus.State.WAITING; label = "正在准备"; }
+        else if ("waiting_restart".equals(state)) { mapped = ModuleStatus.State.WAITING; label = "需重启游戏"; }
         else if ("error".equals(state)) { mapped = ModuleStatus.State.ERROR; label = "运行失败"; }
         else { mapped = ModuleStatus.State.UNKNOWN; label = "状态未确认"; }
         if (!TargetGame.supportsModule(TargetGame.BATTLE_SKIP, selected)
@@ -175,10 +208,14 @@ public final class MainActivity extends ModuleActivity implements ModuleStatusPr
             return new ModuleStatus(ModuleStatus.State.STOPPED, "不支持", selected,
                     "此功能仅支持 DHXY。", "");
         }
+        String nextStep = "本功能仅支持 DHXY；请在本页面明确启动或停止，状态不代表有效战斗帧。";
+        if (mapped == ModuleStatus.State.STOPPING || mapped == ModuleStatus.State.UNKNOWN) {
+            nextStep = "保持游戏在前台，等待 Hook 与绑定清理结果明确后再启动其他战斗功能。";
+        } else if ("conflict_wait".equals(state)) {
+            nextStep = "按上方阻塞说明处理；清理确认前，战投跳过与战斗快进继续互斥。";
+        }
         return new ModuleStatus(mapped, label, TargetGame.DHXY_PACKAGE,
-                formatStatus(raw) + "；worker/游戏绑定以状态文件报告为准。",
-                mapped == ModuleStatus.State.STOPPING || mapped == ModuleStatus.State.UNKNOWN
-                        ? "保持游戏在前台，等待 Hook 与绑定清理结果明确后再启动其他战斗功能。"
-                        : "本功能仅支持 DHXY；请在本页面明确启动或停止，状态不代表有效战斗帧。");
+                formatStatus(raw, BattleConflictGate.isClean(dir.getParentFile(), "battleskip"))
+                        + "；worker/游戏绑定以状态文件报告为准。", nextStep);
     }
 }

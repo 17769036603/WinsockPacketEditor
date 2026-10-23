@@ -1,7 +1,7 @@
 use std::{
     ffi::{c_char, c_int, c_void, CStr, CString},
     fs,
-    io::{self, Write},
+    io::{self, ErrorKind, Write},
     os::unix::fs::{MetadataExt, PermissionsExt},
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
@@ -11,6 +11,8 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+mod recovery;
 
 #[repr(C)]
 struct GError {
@@ -145,20 +147,57 @@ fn replace_atomic(path: &Path, data: &[u8], mode: u32, owner: Option<u32>) -> io
     fs::rename(&tmp, path)?;
     Ok(())
 }
+fn replace_atomic_durable(
+    path: &Path,
+    data: &[u8],
+    mode: u32,
+    owner: Option<u32>,
+) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "target has no parent directory"))?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let tmp = path.with_extension(format!("tmp-{}-{nonce}", std::process::id()));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        file.write_all(data)?;
+        if let Some(uid) = owner {
+            if unsafe { fchown(file.as_raw_fd(), uid, u32::MAX) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        file.set_permissions(fs::Permissions::from_mode(mode))?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&tmp, path)?;
+        fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
 fn status(dir: &Path, s: &str) {
     let p = dir.join("status");
     let owner = fs::metadata(dir).ok().map(|metadata| metadata.uid());
     let _ = replace_atomic(&p, s.as_bytes(), 0o644, owner);
+}
+fn write_worker_status(dir: &Path, contents: &str) -> io::Result<()> {
+    let owner = fs::metadata(dir)?.uid();
+    replace_atomic_durable(&dir.join("status"), contents.as_bytes(), 0o644, Some(owner))
 }
 fn valid_dir(p: &Path) -> bool {
     let s = p.to_string_lossy();
     p.is_absolute()
         && (s == "/data/user/0/com.xnas.wpe.suite/files/modules/battleskip"
             || s == "/data/data/com.xnas.wpe.suite/files/modules/battleskip")
-}
-fn proc_start(pid: u32) -> Option<u64> {
-    let s = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    parse_start_ticks(&s)
 }
 fn parse_start_ticks(stat: &str) -> Option<u64> {
     stat.rsplit_once(") ")?
@@ -171,26 +210,440 @@ fn parse_start_ticks(stat: &str) -> Option<u64> {
 fn first_cmdline_arg(cmdline: &[u8]) -> &[u8] {
     cmdline.split(|b| *b == 0).next().unwrap_or_default()
 }
-fn game_pids() -> Vec<(u32, u64)> {
-    let mut out = Vec::new();
-    let Ok(entries) = fs::read_dir("/proc") else {
-        return out;
+fn proc_pid_gone(pid: u32) -> Result<bool, String> {
+    match fs::metadata(format!("/proc/{pid}")) {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(format!(
+            "proc pid directory unreadable for pid {pid}: {error}"
+        )),
+    }
+}
+fn original_process_missing_stat(pid: u32) -> recovery::OriginalProcess {
+    let observation = match fs::metadata(format!("/proc/{pid}")) {
+        Ok(_) => recovery::ProcDirectoryObservation::Present,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            recovery::ProcDirectoryObservation::Missing
+        }
+        Err(_) => recovery::ProcDirectoryObservation::Unreadable,
     };
-    for e in entries.flatten() {
-        let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else {
+    recovery::missing_stat_result(observation)
+}
+fn game_pids() -> Result<Vec<recovery::ProcessIdentity>, String> {
+    let mut out = Vec::new();
+    let entries = fs::read_dir("/proc").map_err(|e| format!("proc root unreadable: {e}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("proc directory entry unreadable: {e}"))?;
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
             continue;
         };
-        let cmd = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
-        if first_cmdline_arg(&cmd) == b"com.gdoo.dhxy" {
-            if let (Some(t), Ok(exe)) = (proc_start(pid), fs::read_link(format!("/proc/{pid}/exe")))
-            {
-                if exe.to_string_lossy().contains("app_process") {
-                    out.push((pid, t));
+        let proc_path = format!("/proc/{pid}");
+        let cmdline = match fs::read(format!("{proc_path}/cmdline")) {
+            Ok(contents) => contents,
+            Err(error) => {
+                if proc_pid_gone(pid)? {
+                    continue;
                 }
+                if error.kind() == ErrorKind::NotFound {
+                    return Err(format!("proc cmdline missing while pid {pid} remains"));
+                }
+                return Err(format!("proc cmdline unreadable for pid {pid}: {error}"));
+            }
+        };
+        if first_cmdline_arg(&cmdline) != recovery::TARGET_PACKAGE.as_bytes() {
+            continue;
+        }
+
+        let stat = match fs::read_to_string(format!("{proc_path}/stat")) {
+            Ok(contents) => contents,
+            Err(error) => {
+                if proc_pid_gone(pid)? {
+                    continue;
+                }
+                if error.kind() == ErrorKind::NotFound {
+                    return Err(format!("proc stat missing while target pid {pid} remains"));
+                }
+                return Err(format!(
+                    "target proc stat unreadable for pid {pid}: {error}"
+                ));
+            }
+        };
+        let start_ticks = parse_start_ticks(&stat)
+            .filter(|ticks| *ticks > 0)
+            .ok_or_else(|| format!("target proc start ticks invalid for pid {pid}"))?;
+        let exe = match fs::read_link(format!("{proc_path}/exe")) {
+            Ok(path) => path
+                .to_str()
+                .ok_or_else(|| format!("target proc exe is not UTF-8 for pid {pid}"))?
+                .to_owned(),
+            Err(error) => {
+                if proc_pid_gone(pid)? {
+                    continue;
+                }
+                if error.kind() == ErrorKind::NotFound {
+                    return Err(format!("proc exe missing while target pid {pid} remains"));
+                }
+                return Err(format!("target proc exe unreadable for pid {pid}: {error}"));
+            }
+        };
+        if !recovery::is_app_process_exe(&exe) {
+            return Err(format!("target proc exe mismatch for pid {pid}"));
+        }
+        out.push(recovery::ProcessIdentity {
+            pid,
+            start_ticks,
+            exe,
+        });
+    }
+    Ok(out)
+}
+fn read_boot_id() -> io::Result<String> {
+    let value = fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
+    let value = value.trim().to_owned();
+    if !recovery::is_valid_boot_id(&value) {
+        return Err(io::Error::new(ErrorKind::InvalidData, "invalid boot id"));
+    }
+    Ok(value)
+}
+fn read_stored_identity(path: &Path) -> recovery::StoredIdentity {
+    match fs::read_to_string(path) {
+        Ok(contents) => recovery::parse_identity(&contents)
+            .map(recovery::StoredIdentity::Valid)
+            .unwrap_or(recovery::StoredIdentity::Corrupt),
+        Err(error) if error.kind() == ErrorKind::NotFound => recovery::StoredIdentity::Missing,
+        Err(_) => recovery::StoredIdentity::Unreadable,
+    }
+}
+fn inspect_original_process(pid: u32, expected_ticks: u64) -> recovery::OriginalProcess {
+    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return original_process_missing_stat(pid)
+        }
+        Err(_) => return recovery::OriginalProcess::ReadError,
+    };
+    let Some(start_ticks) = parse_start_ticks(&stat).filter(|ticks| *ticks > 0) else {
+        return recovery::OriginalProcess::ReadError;
+    };
+    if start_ticks != expected_ticks {
+        return recovery::OriginalProcess::StartTicksChanged(start_ticks);
+    }
+
+    let exe = match fs::read_link(format!("/proc/{pid}/exe")) {
+        Ok(path) => match path.to_str() {
+            Some(value) => value.to_owned(),
+            None => return recovery::OriginalProcess::ReadError,
+        },
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return inspect_after_proc_entry_disappeared(pid, expected_ticks)
+        }
+        Err(_) => return recovery::OriginalProcess::ReadError,
+    };
+    let cmdline = match fs::read(format!("/proc/{pid}/cmdline")) {
+        Ok(value) => value,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return inspect_after_proc_entry_disappeared(pid, expected_ticks)
+        }
+        Err(_) => return recovery::OriginalProcess::ReadError,
+    };
+    recovery::OriginalProcess::SameIdentity {
+        exe,
+        cmdline_first_arg: first_cmdline_arg(&cmdline).to_vec(),
+    }
+}
+fn inspect_after_proc_entry_disappeared(
+    pid: u32,
+    expected_ticks: u64,
+) -> recovery::OriginalProcess {
+    match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Err(error) if error.kind() == ErrorKind::NotFound => original_process_missing_stat(pid),
+        Err(_) => recovery::OriginalProcess::ReadError,
+        Ok(stat) => match parse_start_ticks(&stat).filter(|ticks| *ticks > 0) {
+            Some(ticks) if ticks != expected_ticks => {
+                recovery::OriginalProcess::StartTicksChanged(ticks)
+            }
+            _ => recovery::OriginalProcess::ReadError,
+        },
+    }
+}
+fn boot_observation() -> recovery::BootObservation {
+    match read_boot_id() {
+        Ok(value) => recovery::BootObservation::Value(value),
+        Err(error) if error.kind() == ErrorKind::InvalidData => recovery::BootObservation::Invalid,
+        Err(_) => recovery::BootObservation::Unreadable,
+    }
+}
+fn original_process_end_decision(identity: &recovery::RecoveryIdentity) -> recovery::Decision {
+    let boot = boot_observation();
+    let original_process = match &boot {
+        recovery::BootObservation::Value(current) if current == &identity.boot_id => {
+            inspect_original_process(identity.pid, identity.start_ticks)
+        }
+        _ => recovery::OriginalProcess::ReadError,
+    };
+    recovery::decide(
+        recovery::LockObservation::Acquired,
+        recovery::StoredIdentity::Valid(identity.clone()),
+        boot,
+        original_process,
+        recovery::ProcessScan::Error,
+    )
+}
+fn persist_recovery_identity(
+    dir: &Path,
+    identity: &recovery::RecoveryIdentity,
+) -> Result<(), String> {
+    let owner = fs::metadata(dir)
+        .map_err(|e| format!("module directory metadata: {e}"))?
+        .uid();
+    replace_atomic_durable(
+        &dir.join("recovery-identity"),
+        identity.serialize().as_bytes(),
+        0o600,
+        Some(owner),
+    )
+    .map_err(|e| format!("persist recovery identity: {e}"))
+}
+fn persist_run_identity(dir: &Path, identity: &recovery::RecoveryIdentity) -> Result<(), String> {
+    match read_stored_identity(&dir.join("recovery-identity")) {
+        recovery::StoredIdentity::Missing => {}
+        recovery::StoredIdentity::Unreadable => {
+            return Err("existing recovery identity is unreadable; refusing attach".into())
+        }
+        recovery::StoredIdentity::Corrupt => {
+            return Err("existing recovery identity is corrupt; refusing attach".into())
+        }
+        recovery::StoredIdentity::Valid(previous) if previous == *identity => return Ok(()),
+        recovery::StoredIdentity::Valid(previous) => {
+            if !matches!(
+                original_process_end_decision(&previous),
+                recovery::Decision::VerifiedOldProcess(_)
+            ) {
+                return Err(
+                    "previous recovery identity is live or uncertain; refusing attach".into(),
+                );
             }
         }
     }
-    out
+    persist_recovery_identity(dir, identity)
+}
+fn write_recovery_status(dir: &Path, contents: &str) -> io::Result<()> {
+    let owner = fs::metadata(dir)?.uid();
+    replace_atomic_durable(
+        &dir.join("recovery-status"),
+        contents.as_bytes(),
+        0o644,
+        Some(owner),
+    )
+}
+fn recovery_message(reason: &str) -> &'static str {
+    match reason {
+        "worker_running" => "工作进程仍持有运行锁，旧任务状态未确认",
+        "worker_lock_unavailable" => "无法安全取得工作进程锁，旧任务状态未确认",
+        "recovery_running" => "恢复检查正在运行，旧任务状态未确认",
+        "new_run_identity_not_recorded" => "新任务已预留但进程身份尚未记录，旧任务状态未确认",
+        "module_status_unreadable" => "模块状态无法读取，旧任务状态未确认",
+        "identity_unreadable" => "旧进程身份记录无法读取，保护仍保留",
+        "identity_corrupt" => "旧进程身份记录损坏，保护仍保留",
+        "boot_id_unreadable" => "系统启动身份无法读取，保护仍保留",
+        "boot_id_invalid" => "系统启动身份格式无效，保护仍保留",
+        "original_process_unreadable" => "原游戏进程信息无法完整读取，保护仍保留",
+        "original_process_exe_changed" => "原进程号仍在运行但程序身份变化，保护仍保留",
+        "original_process_cmdline_changed" => "原进程号仍在运行但命令行身份变化，保护仍保留",
+        "original_process_identity_invalid" => "原进程身份读取结果无效，保护仍保留",
+        "process_scan_unreadable" => "无法完整扫描游戏进程，保护仍保留",
+        "multiple_target_processes" => "发现多个DHXY主进程，无法确认旧任务状态",
+        "process_identity_invalid" => "游戏进程身份信息无效，保护仍保留",
+        _ => "旧任务状态无法确认，保护仍保留",
+    }
+}
+fn apply_recovery_decision(dir: &Path, decision: recovery::Decision) -> Result<(), String> {
+    match decision {
+        recovery::Decision::Unknown(reason) => write_recovery_status(
+            dir,
+            &format!(
+                "state=unconfirmed\nreason={reason}\nrecoveryModule=battleskip\nmessage={}\n",
+                recovery_message(reason)
+            ),
+        )
+        .map_err(|e| format!("write recovery-status: {e}")),
+        recovery::Decision::Observe(identity) => {
+            if let Err(error) = persist_recovery_identity(dir, &identity) {
+                write_recovery_status(
+                    dir,
+                    &format!(
+                        "state=unconfirmed\nreason=identity_write_failed\nrecoveryModule=battleskip\ndetail={}\n",
+                        error.replace(['\r', '\n', '='], " ")
+                    ),
+                )
+                .map_err(|e| format!("write recovery-status: {e}"))?;
+                return Ok(());
+            }
+            write_recovery_status(
+                dir,
+                &format!(
+                    "state=waiting_restart\nreason=legacy_baseline_saved\nrecoveryModule=battleskip\npackage={}\npid={}\nstartTicks={}\nmessage=已记录当前DHXY进程身份；请重启游戏后再次检查\n",
+                    recovery::TARGET_PACKAGE, identity.pid, identity.start_ticks
+                ),
+            )
+            .map_err(|e| format!("write recovery-status: {e}"))
+        }
+        recovery::Decision::Waiting(identity) => write_recovery_status(
+            dir,
+            &format!(
+                "state=waiting_restart\nreason=original_process_alive\nrecoveryModule=battleskip\npackage={}\npid={}\nstartTicks={}\nmessage=旧任务对应的DHXY进程仍在运行；请重启游戏后再次检查\n",
+                recovery::TARGET_PACKAGE, identity.pid, identity.start_ticks
+            ),
+        )
+        .map_err(|e| format!("write recovery-status: {e}")),
+        recovery::Decision::VerifiedNoTarget => {
+            let terminal = "state=stopped\nprocessEnded=true\nrecoveryVerified=true\nrecoveryModule=battleskip\npackage=com.gdoo.dhxy\nrecoveryProof=no_target_process\n";
+            let owner = fs::metadata(dir).map_err(|e| format!("module directory metadata: {e}"))?.uid();
+            replace_atomic_durable(&dir.join("status"), terminal.as_bytes(), 0o644, Some(owner))
+                .map_err(|e| format!("write terminal status: {e}"))?;
+            write_recovery_status(
+                dir,
+                "state=verified\nrecoveryModule=battleskip\npackage=com.gdoo.dhxy\nrecoveryProof=no_target_process\nmessage=完整进程扫描未发现DHXY主进程，旧任务保护核验通过\n",
+            )
+            .map_err(|e| format!("write recovery-status: {e}"))
+        }
+        recovery::Decision::VerifiedOldProcess(identity) => {
+            let terminal = format!(
+                "state=stopped\nprocessEnded=true\nrecoveryVerified=true\nrecoveryModule=battleskip\npackage={}\nrecoveryProof=original_process_ended\npid={}\nstartTicks={}\n",
+                recovery::TARGET_PACKAGE, identity.pid, identity.start_ticks
+            );
+            let owner = fs::metadata(dir).map_err(|e| format!("module directory metadata: {e}"))?.uid();
+            replace_atomic_durable(&dir.join("status"), terminal.as_bytes(), 0o644, Some(owner))
+                .map_err(|e| format!("write terminal status: {e}"))?;
+            write_recovery_status(
+                dir,
+                &format!(
+                    "state=verified\nrecoveryModule=battleskip\npackage={}\nrecoveryProof=original_process_ended\npid={}\nstartTicks={}\nmessage=旧任务对应的DHXY进程已结束，保护核验通过\n",
+                    recovery::TARGET_PACKAGE, identity.pid, identity.start_ticks
+                ),
+            )
+            .map_err(|e| format!("write recovery-status: {e}"))
+        }
+    }
+}
+fn reconcile(dir: PathBuf) -> Result<(), String> {
+    if !valid_dir(&dir) {
+        return Err("--dir must be the app private files directory".into());
+    }
+    fs::create_dir_all(&dir).map_err(|e| format!("module directory: {e}"))?;
+
+    let recovery_lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(dir.join("recovery.lock"))
+        .map_err(|e| format!("open recovery lock: {e}"))?;
+    if unsafe { flock(recovery_lock.as_raw_fd(), 2 | 4) } != 0 {
+        let error = io::Error::last_os_error();
+        if error.kind() == ErrorKind::WouldBlock {
+            write_recovery_status(
+                &dir,
+                "state=unconfirmed\nreason=recovery_running\nrecoveryModule=battleskip\nmessage=恢复检查正在运行，旧任务状态未确认\n",
+            )
+            .map_err(|e| format!("write recovery-status: {e}"))?;
+            return Ok(());
+        }
+        return Err(format!("lock recovery: {error}"));
+    }
+
+    write_recovery_status(
+        &dir,
+        "state=checking\nrecoveryModule=battleskip\nmessage=正在只读检查旧任务进程身份\n",
+    )
+    .map_err(|e| format!("write recovery-status: {e}"))?;
+
+    let worker_lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(dir.join("worker.lock"));
+    let worker_lock = match worker_lock {
+        Ok(lock) => lock,
+        Err(_) => {
+            return apply_recovery_decision(
+                &dir,
+                recovery::decide(
+                    recovery::LockObservation::Unavailable,
+                    recovery::StoredIdentity::Missing,
+                    recovery::BootObservation::Unreadable,
+                    recovery::OriginalProcess::ReadError,
+                    recovery::ProcessScan::Error,
+                ),
+            )
+        }
+    };
+    if unsafe { flock(worker_lock.as_raw_fd(), 2 | 4) } != 0 {
+        let error = io::Error::last_os_error();
+        let lock = if error.kind() == ErrorKind::WouldBlock {
+            recovery::LockObservation::Busy
+        } else {
+            recovery::LockObservation::Unavailable
+        };
+        return apply_recovery_decision(
+            &dir,
+            recovery::decide(
+                lock,
+                recovery::StoredIdentity::Missing,
+                recovery::BootObservation::Unreadable,
+                recovery::OriginalProcess::ReadError,
+                recovery::ProcessScan::Error,
+            ),
+        );
+    }
+    let _worker_lock = worker_lock;
+
+    let module_status = match fs::read_to_string(dir.join("status")) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == ErrorKind::NotFound => String::new(),
+        Err(_) => {
+            return apply_recovery_decision(
+                &dir,
+                recovery::Decision::Unknown("module_status_unreadable"),
+            )
+        }
+    };
+    if recovery::status_has_starting_state(&module_status) {
+        return apply_recovery_decision(
+            &dir,
+            recovery::Decision::Unknown("new_run_identity_not_recorded"),
+        );
+    }
+
+    let stored = read_stored_identity(&dir.join("recovery-identity"));
+    let boot = boot_observation();
+    let mut original_process = recovery::OriginalProcess::ReadError;
+    let mut scan = recovery::ProcessScan::Error;
+    if let recovery::StoredIdentity::Valid(identity) = &stored {
+        if boot == recovery::BootObservation::Value(identity.boot_id.clone()) {
+            original_process = inspect_original_process(identity.pid, identity.start_ticks);
+        }
+    } else if stored == recovery::StoredIdentity::Missing {
+        scan = match game_pids() {
+            Ok(processes) => recovery::ProcessScan::Complete(processes),
+            Err(error) => {
+                eprintln!("reconcile: process scan failed: {error}");
+                recovery::ProcessScan::Error
+            }
+        };
+    }
+
+    let decision = recovery::decide(
+        recovery::LockObservation::Acquired,
+        stored,
+        boot,
+        original_process,
+        scan,
+    );
+    apply_recovery_decision(&dir, decision)
 }
 fn write_lua(
     path: &Path,
@@ -310,6 +763,21 @@ fn run(dir: PathBuf) -> Result<(), String> {
     if unsafe { flock(lock.as_raw_fd(), 2 | 4) } != 0 {
         return Err("worker already running".into());
     }
+    match fs::remove_file(dir.join("recovery-status")) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("remove stale recovery-status: {error}")),
+    }
+    match fs::remove_file(dir.join("recovery-identity")) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("remove prior recovery identity: {error}")),
+    }
+    write_worker_status(
+        &dir,
+        "state=waiting_game\nstatus=waiting_game\nreason=worker_identity_pending\n",
+    )
+    .map_err(|e| format!("publish worker identity-pending state: {e}"))?;
     let stop = dir.join("stop");
     let _ = fs::remove_file(&stop);
     let template = include_str!("../../../../app/src/main/assets/battle_skip.lua.in");
@@ -331,18 +799,22 @@ fn run(dir: PathBuf) -> Result<(), String> {
             if active_paths.is_some() {
                 status(&dir, "stopping");
             } else {
-                status(&dir, "state=stopped\nhooksRemoved=true\nbindingCleared=true");
+                status(
+                    &dir,
+                    "state=stopped\nhooksRemoved=true\nbindingCleared=true",
+                );
                 return Ok(());
             }
         }
-        let pids = game_pids();
+        let pids = game_pids()?;
         if pids.len() != 1 {
             status(&dir, &format!("waiting_game count={}", pids.len()));
             thread::sleep(Duration::from_secs(1));
             continue;
         }
-        let (pid, ticks) = pids[0];
-        let exe = fs::read_link(format!("/proc/{pid}/exe")).map_err(|e| e.to_string())?;
+        let target = pids[0].clone();
+        let pid = target.pid;
+        let ticks = target.start_ticks;
         let base = format!("codex-apk-skip-{pid}-{ticks}");
         let same_identity = active_paths.as_ref().is_some_and(|(old, _, _, _)| {
             old.file_name()
@@ -394,11 +866,8 @@ fn run(dir: PathBuf) -> Result<(), String> {
             }
             active_paths = Some((work, tick, result, binding));
         }
-        let after = game_pids();
-        if after.len() != 1
-            || after[0] != (pid, ticks)
-            || fs::read_link(format!("/proc/{pid}/exe")).ok() != Some(exe.clone())
-        {
+        let after = game_pids()?;
+        if after.len() != 1 || after[0] != target {
             if let Some((work, tick, result, binding)) = active_paths.take() {
                 let cleanup = cache.join(format!("{prefix}-cleanup.lua"));
                 for path in [work, tick, result, binding, cleanup] {
@@ -435,6 +904,66 @@ fn run(dir: PathBuf) -> Result<(), String> {
         if dev.is_null() {
             return Err("local Frida device missing".into());
         }
+        let before_attach = match game_pids() {
+            Ok(processes) => processes,
+            Err(error) => {
+                unsafe {
+                    frida_unref(dev.cast());
+                    frida_device_manager_close_sync(manager, ptr::null_mut(), ptr::null_mut());
+                    frida_unref(manager.cast());
+                }
+                for path in [
+                    &*tick,
+                    &*result,
+                    &*binding,
+                    &cache.join(format!("{prefix}-cleanup.lua")),
+                ] {
+                    let _ = fs::remove_file(path);
+                }
+                status(&dir, "state=error\nreason=identity_read_unconfirmed");
+                return Err(format!(
+                    "target identity scan failed before attach: {error}"
+                ));
+            }
+        };
+        if before_attach.len() != 1 || before_attach[0] != target {
+            unsafe {
+                frida_unref(dev.cast());
+                frida_device_manager_close_sync(manager, ptr::null_mut(), ptr::null_mut());
+                frida_unref(manager.cast());
+            }
+            for path in [
+                &*tick,
+                &*result,
+                &*binding,
+                &cache.join(format!("{prefix}-cleanup.lua")),
+            ] {
+                let _ = fs::remove_file(path);
+            }
+            active_paths = None;
+            status(&dir, "identity_changed_before_attach");
+            continue;
+        }
+        let boot_id = match read_boot_id() {
+            Ok(value) => value,
+            Err(error) => {
+                unsafe {
+                    frida_unref(dev.cast());
+                    frida_device_manager_close_sync(manager, ptr::null_mut(), ptr::null_mut());
+                    frida_unref(manager.cast());
+                }
+                return Err(format!("boot id unavailable before attach: {error}"));
+            }
+        };
+        let run_identity = recovery::RecoveryIdentity::from_process(&target, boot_id);
+        if let Err(error) = persist_run_identity(&dir, &run_identity) {
+            unsafe {
+                frida_unref(dev.cast());
+                frida_device_manager_close_sync(manager, ptr::null_mut(), ptr::null_mut());
+                frida_unref(manager.cast());
+            }
+            return Err(error);
+        }
         let session = unsafe {
             frida_device_attach_sync(dev, pid, ptr::null_mut(), ptr::null_mut(), &mut error)
         };
@@ -443,9 +972,7 @@ fn run(dir: PathBuf) -> Result<(), String> {
             return Err("attach returned null".into());
         }
         let attached_identity = game_pids();
-        if attached_identity.len() != 1
-            || attached_identity[0] != (pid, ticks)
-            || fs::read_link(format!("/proc/{pid}/exe")).ok() != Some(exe.clone())
+        if !matches!(&attached_identity, Ok(processes) if processes.len() == 1 && processes[0] == target)
         {
             unsafe {
                 let _ = frida_session_detach_sync(session, ptr::null_mut(), ptr::null_mut());
@@ -463,7 +990,17 @@ fn run(dir: PathBuf) -> Result<(), String> {
                 let _ = fs::remove_file(p);
             }
             active_paths = None;
-            status(&dir, "identity_changed_after_attach");
+            status(
+                &dir,
+                if attached_identity.is_err() {
+                    "state=error\nreason=identity_read_unconfirmed"
+                } else {
+                    "identity_changed_after_attach"
+                },
+            );
+            if let Err(error) = attached_identity {
+                return Err(format!("target identity scan failed after attach: {error}"));
+            }
             continue;
         }
         let opts = unsafe { frida_script_options_new() };
@@ -546,12 +1083,17 @@ fn run(dir: PathBuf) -> Result<(), String> {
             if identity_checked.elapsed() >= Duration::from_secs(1) {
                 let ident = game_pids();
                 identity_checked = std::time::Instant::now();
-                if ident.len() != 1
-                    || ident[0] != (pid, ticks)
-                    || fs::read_link(format!("/proc/{pid}/exe")).ok() != Some(exe.clone())
-                {
-                    status(&dir, "game_gone detached");
-                    break;
+                match ident {
+                    Ok(processes) if processes.len() == 1 && processes[0] == target => {}
+                    Ok(_) => {
+                        status(&dir, "game_gone detached");
+                        break;
+                    }
+                    Err(error) => {
+                        status(&dir, "state=stopping\nreason=identity_read_unconfirmed");
+                        fatal_exit = Some(format!("identity_read_unconfirmed: {error}"));
+                        stopping = true;
+                    }
                 }
             }
             if result_checked.elapsed() >= Duration::from_millis(250) {
@@ -655,7 +1197,10 @@ fn run(dir: PathBuf) -> Result<(), String> {
         if stop.exists() {
             let _ = fs::remove_file(stop);
             if active_paths.is_none() || cleanup_confirmed {
-                status(&dir, "state=stopped\nhooksRemoved=true\nbindingCleared=true");
+                status(
+                    &dir,
+                    "state=stopped\nhooksRemoved=true\nbindingCleared=true",
+                );
             } else {
                 status(&dir, "state=stopping\nreason=cleanup_unconfirmed");
             }
@@ -673,6 +1218,7 @@ fn run(dir: PathBuf) -> Result<(), String> {
 }
 fn main() -> ExitCode {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    let reconcile_mode = raw_args.first().map(String::as_str) == Some("--reconcile");
     let status_dir = raw_args
         .windows(2)
         .find(|w| w[0] == "--dir")
@@ -704,6 +1250,13 @@ fn main() -> ExitCode {
             fs::write(d.join("stop"), b"stop\n").map_err(|e| e.to_string())?;
             return Ok(());
         }
+        if args.first().map(String::as_str) == Some("--reconcile") {
+            let Some(i) = args.iter().position(|x| x == "--dir") else {
+                return Err("--reconcile requires --dir".into());
+            };
+            let d = PathBuf::from(args.get(i + 1).ok_or("--dir missing")?);
+            return reconcile(d);
+        }
         if args.first().map(String::as_str) == Some("--dir") {
             let d = PathBuf::from(args.get(1).ok_or("--dir missing")?);
             return run(d);
@@ -715,21 +1268,50 @@ fn main() -> ExitCode {
             let d = PathBuf::from(args.get(i + 1).ok_or("--dir missing")?);
             return run(d);
         }
-        Err("usage: battle_skip_worker --daemon --dir <private-files> | --stop --dir <private-files> | --self-test".into())
+        Err("usage: battle_skip_worker --daemon --dir <private-files> | --stop --dir <private-files> | --reconcile --dir <private-files> | --self-test".into())
     });
     match r {
         Ok(Ok(())) => ExitCode::SUCCESS,
         Ok(Err(e)) => {
             if let Some(dir) = status_dir.as_deref().filter(|p| valid_dir(p)) {
-                status(
-                    dir,
-                    &format!("error {}", e.chars().take(220).collect::<String>()),
-                );
+                if reconcile_mode {
+                    let existing =
+                        fs::read_to_string(dir.join("recovery-status")).unwrap_or_default();
+                    if !existing.starts_with("state=unconfirmed\n") {
+                        let _ = write_recovery_status(
+                            dir,
+                            &format!(
+                                "state=unconfirmed\nreason=reconcile_error\nrecoveryModule=battleskip\ndetail={}\n",
+                                e.chars()
+                                    .take(220)
+                                    .collect::<String>()
+                                    .replace(['\r', '\n', '='], " ")
+                            ),
+                        );
+                    }
+                } else {
+                    status(
+                        dir,
+                        &format!("error {}", e.chars().take(220).collect::<String>()),
+                    );
+                }
             }
             eprintln!("worker: {e}");
             ExitCode::FAILURE
         }
         Err(_) => {
+            if reconcile_mode {
+                if let Some(dir) = status_dir.as_deref().filter(|p| valid_dir(p)) {
+                    let existing =
+                        fs::read_to_string(dir.join("recovery-status")).unwrap_or_default();
+                    if !existing.starts_with("state=unconfirmed\n") {
+                        let _ = write_recovery_status(
+                            dir,
+                            "state=unconfirmed\nreason=reconcile_panic\nrecoveryModule=battleskip\nmessage=旧任务检查异常中断，保护仍保留\n",
+                        );
+                    }
+                }
+            }
             eprintln!("worker panic caught");
             ExitCode::FAILURE
         }

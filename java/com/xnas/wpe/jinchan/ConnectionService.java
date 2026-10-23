@@ -28,8 +28,9 @@ public final class ConnectionService extends com.xnas.wpe.suite.ModuleService {
     }
     @Override public void onCreate(){super.onCreate();if(Build.VERSION.SDK_INT>=26){NotificationChannel c=new NotificationChannel(CHANNEL,"金蟾连接",NotificationManager.IMPORTANCE_LOW);getSystemService(NotificationManager.class).createNotificationChannel(c);}}
     @Override public int onStartCommand(Intent i,int flags,int id){
+        startForeground(6103,notification());
         if(i!=null&&ACTION_STOP.equals(i.getAction())){stopConnection();return START_NOT_STICKY;}
-        String pkg=i==null?"":i.getStringExtra(EXTRA_PACKAGE);if(pkg==null)pkg="";if(!com.xnas.wpe.suite.TargetGame.supportsModule(com.xnas.wpe.suite.TargetGame.JINCHAN,pkg)){state="error";message="目标游戏不支持";startForeground(6103,notification());if(Build.VERSION.SDK_INT>=24)stopForeground(STOP_FOREGROUND_REMOVE);else stopForeground(true);stopSelfResult(id);return START_NOT_STICKY;}
+        String pkg=i==null?"":i.getStringExtra(EXTRA_PACKAGE);if(pkg==null)pkg="";if(!com.xnas.wpe.suite.TargetGame.supportsModule(com.xnas.wpe.suite.TargetGame.JINCHAN,pkg)){state="error";message="目标游戏不支持";if(Build.VERSION.SDK_INT>=24)stopForeground(STOP_FOREGROUND_REMOVE);else stopForeground(true);stopSelfResult(id);return START_NOT_STICKY;}
         Connection c=current;if(c!=null&&pkg.equals(c.pkg)&&!c.stop&&c.process!=null&&isRunning(c.process)&&("connecting".equals(state)||"connected".equals(state)||"busy".equals(state)))return START_STICKY;
         startConnection(pkg);return START_STICKY;
     }

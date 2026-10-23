@@ -15,31 +15,74 @@ import com.xnas.wpe.suite.ModuleStatusProvider;
 import com.xnas.wpe.suite.TargetGame;
 
 public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implements ModuleStatusProvider {
+    private static final long OLD_TASK_CHECK_THROTTLE_MS=10_000L;
     private final Handler handler=new Handler();
     private TextView status;
-    private final Runnable refresh=new Runnable(){@Override public void run(){if(status!=null){try{File dir=getFilesDir();String raw=currentStatus(dir);status.setText(TargetGame.supportsModule(TargetGame.BATTLE_LOOP,TargetGame.getSelectedPackage(MainActivity.this))?display(raw):"此功能仅支持 DHXY");}catch(Exception e){status.setText("状态：读取失败");}handler.postDelayed(this,1000);}}};
-    @Override public void onCreate(Bundle saved){super.onCreate(saved);ScrollView scroll=new ScrollView(this);LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);int pad=Math.round(20*getResources().getDisplayMetrics().density);root.setPadding(pad,pad,pad,pad);status=new TextView(this);status.setTextColor(android.graphics.Color.rgb(224,239,243));root.addView(status);Button start=new Button(this);start.setText("启动");start.setOnClickListener(v->{if(!TargetGame.supportsModule(TargetGame.BATTLE_LOOP,TargetGame.getSelectedPackage(this))){status.setText("此功能仅支持 DHXY");return;}Intent i=new Intent(this,BattleLoopService.class).setAction(BattleLoopService.START);if(android.os.Build.VERSION.SDK_INT>=26)startForegroundService(i);else startService(i);});root.addView(start);Button stop=new Button(this);stop.setText("停止");stop.setOnClickListener(v->startService(new Intent(this,BattleLoopService.class).setAction(BattleLoopService.STOP)));root.addView(stop);Button check=new Button(this);check.setText("检查旧任务");check.setOnClickListener(v->{Intent i=new Intent(this,BattleLoopService.class).setAction(BattleLoopService.CHECK);if(android.os.Build.VERSION.SDK_INT>=26)startForegroundService(i);else startService(i);});root.addView(check);scroll.addView(root,new ScrollView.LayoutParams(-1,-2));setContentView(scroll);}
+    private long lastOldTaskCheckRequestAt;
+    private final Runnable refresh=new Runnable(){@Override public void run(){if(status!=null){try{File dir=getFilesDir();String raw=currentStatus(dir);status.setText(TargetGame.supportsModule(TargetGame.BATTLE_LOOP,TargetGame.getSelectedPackage(MainActivity.this))?display(raw,dir):"此功能仅支持 DHXY");}catch(Exception e){status.setText("状态：读取失败");}handler.postDelayed(this,1000);}}};
+    @Override public void onCreate(Bundle saved){super.onCreate(saved);ScrollView scroll=new ScrollView(this);LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);int pad=Math.round(20*getResources().getDisplayMetrics().density);root.setPadding(pad,pad,pad,pad);status=new TextView(this);status.setTextColor(android.graphics.Color.rgb(224,239,243));root.addView(status);Button start=new Button(this);start.setText("启动");start.setOnClickListener(v->requestStart());root.addView(start);Button stop=new Button(this);stop.setText("停止");stop.setOnClickListener(v->dispatchServiceAction(BattleLoopService.STOP));root.addView(stop);scroll.addView(root,new ScrollView.LayoutParams(-1,-2));setContentView(scroll);}
+    private void requestStart(){
+        if(!TargetGame.supportsModule(TargetGame.BATTLE_LOOP,TargetGame.getSelectedPackage(this))){status.setText("此功能仅支持 DHXY");return;}
+        File dir=getFilesDir();
+        if(BattleLoopService.isCheckingOldTask()||com.xnas.wpe.battleskip.BattleSkipRecoveryService.isChecking()){
+            status.setText("正在准备，请稍候。");return;
+        }
+        if(!BattleLoopService.isActive()&&com.xnas.wpe.suite.BattleConflictGate.hasUnconfirmedLoopActivity(dir.getParentFile())){
+            long now=System.currentTimeMillis();File recovery=new File(dir,"recovery-status");long recoveryAge=now-recovery.lastModified();
+            boolean recentlyChecked=recovery.isFile()&&recoveryAge>=0&&recoveryAge<OLD_TASK_CHECK_THROTTLE_MS;
+            long requestAge=now-lastOldTaskCheckRequestAt;
+            if(recentlyChecked||(lastOldTaskCheckRequestAt!=0&&requestAge>=0&&requestAge<OLD_TASK_CHECK_THROTTLE_MS)){
+                status.setText("战投跳过旧任务刚核查过，保护状态仍有效；请查看当前结果，确认后再次点击启动。");return;
+            }
+            lastOldTaskCheckRequestAt=now;
+            try{
+                dispatchServiceAction(BattleLoopService.CHECK);
+                status.setText("发现未确认的战投跳过旧任务，正在只读核查；这次不会启动功能。核查完成并确认后，请再次点击启动。");
+            }catch(RuntimeException error){
+                status.setText("旧任务核查请求未发送；战斗启动保护仍保留，暂未启动。");
+            }
+            return;
+        }
+        if(!BattleLoopService.isActive()&&com.xnas.wpe.suite.BattleConflictGate.hasUnconfirmedSkipActivity(dir.getParentFile())){
+            long now=System.currentTimeMillis();
+            if(lastOldTaskCheckRequestAt!=0&&now-lastOldTaskCheckRequestAt<OLD_TASK_CHECK_THROTTLE_MS)return;
+            lastOldTaskCheckRequestAt=now;
+            Intent check=new Intent(this,com.xnas.wpe.battleskip.BattleSkipRecoveryService.class);
+            try{if(android.os.Build.VERSION.SDK_INT>=26)startForegroundService(check);else startService(check);
+                status.setText("正在确认上次快进是否退出；完成后请再次点击启动。");}
+            catch(RuntimeException error){status.setText("无法确认上次快进是否退出，暂未启动。");}
+            return;
+        }
+        try{dispatchServiceAction(BattleLoopService.START);}
+        catch(RuntimeException error){status.setText("启动请求未发送；现有战斗保护状态保留。");}
+    }
+    private void dispatchServiceAction(String action){Intent intent=new Intent(this,BattleLoopService.class).setAction(action);if(android.os.Build.VERSION.SDK_INT>=26)startForegroundService(intent);else startService(intent);}
     @Override protected void onResume(){super.onResume();handler.post(refresh);}
     @Override protected void onPause(){handler.removeCallbacks(refresh);super.onPause();}
-    private static String currentStatus(File dir)throws Exception{File statusFile=new File(dir,"status");String actual=statusFile.isFile()?read(statusFile):"state=stopped";if(com.xnas.wpe.suite.BattleConflictGate.isClean(dir.getParentFile(),"battleloop"))return actual;File recovery=new File(dir,"recovery-status");if(!BattleLoopService.isActive()&&recovery.isFile())return read(recovery);File gate=new File(dir,"gate-status");return gate.isFile()?read(gate):actual;}
+    private static String currentStatus(File dir)throws Exception{File statusFile=new File(dir,"status");String actual=statusFile.isFile()?read(statusFile):"";if(com.xnas.wpe.suite.BattleConflictGate.isClean(dir.getParentFile(),"battleloop"))return actual;File recovery=new File(dir,"recovery-status");if(!BattleLoopService.isActive()&&recovery.isFile())return read(recovery);File gate=new File(dir,"gate-status");return gate.isFile()?read(gate):actual;}
     private static String read(File f)throws Exception{try(FileInputStream in=new FileInputStream(f);ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] b=new byte[4096];int n;while((n=in.read(b))>0)out.write(b,0,n);return out.toString("UTF-8");}}
     private static String value(String s,String key){for(String line:s.split("\\r?\\n"))if(line.startsWith(key+"="))return line.substring(key.length()+1).trim();return null;}
-    private static String display(String s){String gateMessage=value(s,"message");if(gateMessage!=null&&!gateMessage.isEmpty())return "状态："+gateMessage;String state=value(s,"state");String result="状态：";switch(state==null?"unknown":state){case "stopped":result+="已停止";break;case "starting":result+="已保留启动位，等待 worker";break;case "waiting_game":result+="等待游戏启动";break;case "waiting_role":result+="等待角色登录或重新绑定";break;case "waiting_battle":result+="等待战斗";break;case "waiting_config":result+="等待人物/宝宝当前自动技能设置";break;case "waiting_conflict":result+="检测到桌面辅助冲突，已暂停";break;case "conflict_wait":result+="先停止战投跳过/快进并等待清理完成";break;case "running":result+="运行中";break;case "stopping":result+="正在恢复自动状态并清理 Hooks；清理未确认前启动位保持锁定";break;case "error":result+="运行失败，请查看 worker 日志";break;default:result+="状态未确认";}String player=value(s,"characterSkillId"),pet=value(s,"petSkillId"),petId=value(s,"petId");if(player!=null)result+="\n人物技能 ID："+player;if(pet!=null&&!pet.equals("none"))result+="\n宝宝 ID："+(petId==null?"未确认":petId)+"，技能 ID："+pet;return result;}
+    private static String display(String s,File dir){if(s.isEmpty())return com.xnas.wpe.suite.BattleConflictGate.hasUnconfirmedLoopActivity(dir.getParentFile())?"状态：战投跳过旧任务未确认；点击启动将触发只读核查":"状态：未启动";String gateMessage=value(s,"message");if(gateMessage!=null&&!gateMessage.isEmpty())return "状态："+gateMessage;String state=value(s,"state");String result="状态：";switch(state==null?"unknown":state){case "stopped":if(!com.xnas.wpe.suite.BattleConflictGate.isClean(dir.getParentFile(),"battleloop"))result+="停止状态未确认";else if("true".equals(value(s,"processEnded")))result+="旧进程已确认结束；未将此结果作为 Hook 或自动状态恢复证明";else result+="已停止，Hook、绑定与自动状态恢复均已确认";break;case "checking":result+="正在只读核查旧任务";break;case "waiting_restart":result+="等待重启游戏后继续核查旧任务";break;case "verified":result+="旧进程核查已通过，但启动保护仍保留；清理状态未确认";break;case "unconfirmed":result+="旧任务未确认；战斗启动保护仍保留";break;case "starting":result+="已保留启动位，等待 worker";break;case "waiting_game":result+="等待游戏启动";break;case "waiting_role":result+="等待角色登录或重新绑定";break;case "waiting_battle":result+="等待战斗";break;case "waiting_config":result+="等待人物/宝宝当前自动技能设置";break;case "waiting_conflict":result+="与其他战斗辅助冲突，已暂停";break;case "conflict_wait":result+="战斗功能互斥，等待另一功能停止或清理确认";break;case "running":result+="运行中";break;case "stopping":result+="正在恢复自动状态并清理 Hooks；清理未确认前启动位保持锁定";break;case "error":result+="运行失败，请查看 worker 日志";break;default:result+="状态未确认";}String player=value(s,"characterSkillId"),pet=value(s,"petSkillId"),petId=value(s,"petId");if(player!=null)result+="\n人物技能 ID："+player;if(pet!=null&&!pet.equals("none"))result+="\n宝宝 ID："+(petId==null?"未确认":petId)+"，技能 ID："+pet;return result;}
 
     @Override public ModuleStatus getModuleStatus(){
         String raw;
-        try{File dir=getFilesDir();raw=currentStatus(dir);}
+        File dir=getFilesDir();
+        try{raw=currentStatus(dir);}
         catch(Exception error){return ModuleStatus.unknown("com.gdoo.dhxy","读取战投跳过状态失败；游戏与角色绑定未确认。");}
         String selected=TargetGame.getSelectedPackage(this);
         if(!TargetGame.supportsModule(TargetGame.BATTLE_LOOP,selected))return new ModuleStatus(BattleLoopService.isActive()?ModuleStatus.State.UNKNOWN:ModuleStatus.State.STOPPED,BattleLoopService.isActive()?"状态未确认":"不支持",selected,BattleLoopService.isActive()?"战投跳过状态未确认。":"此功能仅支持 DHXY。","");
-        String state=value(raw,"state"), message=value(raw,"message"); if(BattleLoopService.isCheckingOldTask())return new ModuleStatus(ModuleStatus.State.WAITING,"检查旧任务中",selected,"正在只读核对旧任务进程身份。","");
+        if(raw.isEmpty()){
+            if(com.xnas.wpe.suite.BattleConflictGate.hasUnconfirmedLoopActivity(dir.getParentFile()))return new ModuleStatus(ModuleStatus.State.UNKNOWN,"旧任务未确认",selected,"存在未确认的战投跳过旧记录；打开页面不会触发 Root 核查。","点击启动会进行一次只读核查；核查后仍需再次点击启动。");
+            return new ModuleStatus(ModuleStatus.State.STOPPED,"未启动",selected,"没有战投跳过运行记录；打开页面不会触发 Root 核查。","点击启动以运行；本功能仅支持 DHXY。");
+        }
+        String state=value(raw,"state"), message=value(raw,"message"); if(BattleLoopService.isCheckingOldTask())return new ModuleStatus(ModuleStatus.State.WAITING,"正在准备",selected,"正在只读核对旧任务进程身份。核查不会自动启动功能。","");
         if(message!=null&&!message.isEmpty()&&("conflict_wait".equals(state)||"stopping".equals(state)))return new ModuleStatus("stopping".equals(state)?ModuleStatus.State.STOPPING:ModuleStatus.State.WAITING,
-                "stopping".equals(state)?"清理待确认":"启动受阻", "com.gdoo.dhxy", message+"；状态文件来自战斗互斥保护器，worker/游戏绑定未确认。", "请打开战投跳过页查看详情；不要把保护位状态当成游戏绑定状态。");
+                "stopping".equals(state)?"清理待确认":"启动受阻", "com.gdoo.dhxy", message+"；状态文件来自战斗互斥保护器，worker/游戏绑定未确认。", "等待上方指出的旧任务核查或清理结果；保护状态不代表游戏绑定状态。");
         ModuleStatus.State mapped;
         String label;
         if(state==null){mapped=ModuleStatus.State.UNKNOWN;label="状态未确认";}
         else switch(state){
-            case "stopped": mapped=ModuleStatus.State.STOPPED;label="已停止";break;
+            case "stopped": if(com.xnas.wpe.suite.BattleConflictGate.isClean(dir.getParentFile(),"battleloop")){mapped=ModuleStatus.State.STOPPED;label="已停止";}else{mapped=ModuleStatus.State.UNKNOWN;label="停止状态未确认";}break;
             case "starting": mapped=ModuleStatus.State.WAITING;label="等待 worker";break;
             case "waiting_game": mapped=ModuleStatus.State.WAITING;label="等待游戏";break;
             case "waiting_role": mapped=ModuleStatus.State.WAITING;label="等待角色";break;
@@ -47,12 +90,12 @@ public final class MainActivity extends com.xnas.wpe.suite.ModuleActivity implem
             case "waiting_config": mapped=ModuleStatus.State.WAITING;label="等待技能设置";break;
             case "waiting_conflict": case "conflict_wait": mapped=ModuleStatus.State.WAITING;label="辅助冲突";break;
             case "running": mapped=ModuleStatus.State.RUNNING;label="循环运行中";break;
-            case "stopping": mapped=ModuleStatus.State.STOPPING;label="旧任务待检查";break;
-            case "checking": mapped=ModuleStatus.State.WAITING;label="检查旧任务中";break;case "waiting_restart": mapped=ModuleStatus.State.WAITING;label="等待重启游戏";break;case "unconfirmed": mapped=ModuleStatus.State.UNKNOWN;label="旧任务未确认";break;case "error": mapped=ModuleStatus.State.ERROR;label="运行失败";break;
+            case "stopping": mapped=ModuleStatus.State.STOPPING;label="待确认";break;
+            case "checking": mapped=ModuleStatus.State.WAITING;label="正在准备";break;case "waiting_restart": mapped=ModuleStatus.State.WAITING;label="等待重启游戏";break;case "unconfirmed": mapped=ModuleStatus.State.UNKNOWN;label="旧任务未确认";break;case "error": mapped=ModuleStatus.State.ERROR;label="运行失败";break;
             default: mapped=ModuleStatus.State.UNKNOWN;label="状态未确认";
         }
         if(BattleLoopService.isActive()&&mapped==ModuleStatus.State.STOPPED){mapped=ModuleStatus.State.UNKNOWN;label="状态未确认";}
-        return new ModuleStatus(mapped,label,"com.gdoo.dhxy",display(raw)+"；目标角色/战斗绑定状态以 worker 报告为准。",
+        return new ModuleStatus(mapped,label,"com.gdoo.dhxy",display(raw,dir)+"；目标角色/战斗绑定状态以 worker 报告为准。",
                 mapped==ModuleStatus.State.STOPPED?"点击开始以运行；本功能仅支持 DHXY。":"本功能仅支持 DHXY；循环状态不代表每个游戏帧均已确认。");
     }
 }

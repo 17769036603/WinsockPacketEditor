@@ -25,10 +25,11 @@ public final class AnleiService extends com.xnas.wpe.suite.ModuleService {
     @Override public void onCreate(){super.onCreate();if(Build.VERSION.SDK_INT>=26){NotificationChannel c=new NotificationChannel("anlei","暗雷遇敌助手",NotificationManager.IMPORTANCE_LOW);getSystemService(NotificationManager.class).createNotificationChannel(c);}}
     @Override public synchronized int onStartCommand(Intent i,int flags,int id){
         latestStartId=id;
+        startForeground(6101,notification(i!=null&&STOP.equals(i.getAction())?"正在停止并清理":"正在处理启动请求"));
         if(i!=null&&STOP.equals(i.getAction())){stopWorker(id);return START_NOT_STICKY;}
-        if(desiredRunning&&!stopping&&running(worker))return START_STICKY;
+        if(desiredRunning&&!stopping&&running(worker)){startForeground(6101,notification(displayStatus(readStatus())));return START_STICKY;}
         if(!desiredRunning&&!stopPending&&!com.xnas.wpe.suite.TargetGame.supportsModule(com.xnas.wpe.suite.TargetGame.ANLEI,
-                com.xnas.wpe.suite.TargetGame.getSelectedPackage(this))){writeStatus("stopped:unsupported_target");stopSelfResult(id);return START_NOT_STICKY;}
+                com.xnas.wpe.suite.TargetGame.getSelectedPackage(this))){writeStatus("stopped:unsupported_target");stopForeground(true);stopSelfResult(id);return START_NOT_STICKY;}
         generation++;stopping=false;desiredRunning=true;
         active=true;
         startForeground(6101,notification("正在启动并监控游戏进程"));

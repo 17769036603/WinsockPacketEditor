@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <queries>
         <package android:name="com.gdoo.dhxy" />
@@ -20,6 +21,7 @@
 
         <activity
             android:name="com.xnas.wpe.suite.MainActivity"
+            android:screenOrientation="landscape"
             android:configChanges="keyboardHidden|orientation|screenSize"
             android:exported="true">
             <intent-filter>
@@ -28,14 +30,14 @@
             </intent-filter>
         </activity>
 
-        <activity android:name="com.xnas.wpe.anlei.MainActivity" android:exported="false" />
-        <activity android:name="com.xnas.wpe.mounthold.MainActivity" android:exported="false" />
-        <activity android:name="com.xnas.wpe.battleloop.MainActivity" android:exported="false" />
-        <activity android:name="com.xnas.wpe.battleskip.MainActivity" android:exported="false" />
-        <activity android:name="com.xnas.wpe.jinchan.MainActivity" android:exported="false" />
-        <activity android:name="com.xnas.wpe.battlepanel.MainActivity" android:exported="false" />
+        <activity android:name="com.xnas.wpe.anlei.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.mounthold.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.battleloop.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.battleskip.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.jinchan.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.battlepanel.MainActivity" android:screenOrientation="landscape" android:exported="false" />
 
-        <activity android:name="android.app.NativeActivity" android:exported="false">
+        <activity android:name="android.app.NativeActivity" android:screenOrientation="landscape" android:exported="false">
             <meta-data android:name="android.app.lib_name" android:value="battle_skip_launcher" />
         </activity>
         <activity-alias
@@ -78,6 +80,14 @@
                 android:value="User initiated battle-loop assistance with persistent process monitoring" />
         </service>
         <service
+            android:name="com.xnas.wpe.battleskip.BattleSkipRecoveryService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User initiated read-only verification of the previous battle worker process identity." />
+        </service>
+        <service
             android:name="com.xnas.wpe.jinchan.ConnectionService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
@@ -91,7 +101,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Samples user-requested read-only battle snapshots in the background for display inside the application." />
+                android:value="Samples user-requested battle snapshots for a collapsible floating battle panel." />
         </service>
     </application>
 </manifest>

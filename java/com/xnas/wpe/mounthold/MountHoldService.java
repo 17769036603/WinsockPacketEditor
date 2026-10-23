@@ -91,6 +91,8 @@ public final class MountHoldService extends com.xnas.wpe.suite.ModuleService {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        ensureForeground(intent != null && ACTION_STOP.equals(intent.getAction())
+                ? "正在安全恢复原值" : "正在处理后台请求");
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             if (intent.hasExtra(EXTRA_PACKAGE) && !active && !blockedJournal
                     && !(recoveringOldJournal && !oldJournalResolved)) gamePackage = intent.getStringExtra(EXTRA_PACKAGE);
@@ -105,13 +107,19 @@ public final class MountHoldService extends com.xnas.wpe.suite.ModuleService {
             return START_REDELIVER_INTENT;
         }
         mainHandler.removeCallbacks(retryWorkerAction);
-        if (workerThread != null && workerThread.isAlive()) return START_REDELIVER_INTENT;
+        if (workerThread != null && workerThread.isAlive()) {
+            ensureForeground(getStatusText());
+            return START_REDELIVER_INTENT;
+        }
 
         gamePackage = intent == null ? null : intent.getStringExtra(EXTRA_PACKAGE);
         if (!com.xnas.wpe.suite.TargetGame.supportsModule(
                 com.xnas.wpe.suite.TargetGame.MOUNT_HOLD, gamePackage)) {
             active = false;
             setStatus("目标游戏不支持");
+            if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE);
+            else stopForeground(true);
+            foregroundStarted = false;
             stopSelf(startId);
             return START_NOT_STICKY;
         }

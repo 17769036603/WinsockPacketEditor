@@ -16,6 +16,7 @@ public final class BattleConflictGateSelfTest {
         failedDispatchCanClearOnlyItsStartingReservation();
         verifiedEndedProcessReleasesOnlyTheOldLoop();
         invalidEndedProofKeepsProtection();
+        skipRecoveryRequiresItsOwnVerifiedProof();
         System.out.println("BattleConflictGateSelfTest: PASS");
     }
 
@@ -23,6 +24,27 @@ public final class BattleConflictGateSelfTest {
         return "state=stopped\nprocessEnded=true\nrecoveryVerified=true\n"
                 + "package=com.gdoo.dhxy\nrecoveryProof=" + proof
                 + "\npid=4810\nstartTicks=123456\n";
+    }
+
+    private static void skipRecoveryRequiresItsOwnVerifiedProof() throws Exception {
+        File modules = Files.createTempDirectory("suite-skip-recovery").toFile();
+        require(BattleConflictGate.reserve(modules, "battleskip").allowed, "skip reserves");
+        require(BattleConflictGate.hasUnconfirmedSkipActivity(modules), "starting skip needs proof");
+        String valid = endedProof("original_process_ended") + "recoveryModule=battleskip\n";
+        writeStatus(modules, "battleloop", valid);
+        require(!BattleConflictGate.isClean(modules, "battleloop"), "skip proof cannot clean loop");
+        for (String invalid : new String[]{valid.replace("battleskip", "battleloop"),
+                valid.replace("pid=4810", "pid=0"),
+                valid.replace("recoveryVerified=true", "recoveryVerified=false"),
+                valid.replace("original_process_ended", "process_unreadable")}) {
+            writeStatus(modules, "battleskip", invalid);
+            require(!BattleConflictGate.release(modules, "battleskip"), "invalid skip proof keeps guard");
+        }
+        writeStatus(modules, "battleskip", valid);
+        writeStatus(modules, "battleloop", "state=running\n");
+        require(BattleConflictGate.release(modules, "battleskip"), "verified skip process releases only its guard");
+        require(!BattleConflictGate.hasUnconfirmedSkipActivity(modules), "verified skip is clean");
+        require(!BattleConflictGate.reserve(modules, "battleskip").allowed, "unconfirmed loop still blocks skip");
     }
 
     private static void verifiedEndedProcessReleasesOnlyTheOldLoop() throws Exception {

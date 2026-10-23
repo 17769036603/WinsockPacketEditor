@@ -56,6 +56,10 @@ public final class BattleLoopService extends com.xnas.wpe.suite.ModuleService {
 
     @Override public synchronized int onStartCommand(Intent intent, int flags, int startId) {
         latestStartId = startId;
+        String action = intent == null ? "" : intent.getAction();
+        String requestText = CHECK.equals(action) ? "正在处理旧任务核查请求"
+                : STOP.equals(action) ? "正在处理停止请求" : "正在处理战投跳过请求";
+        startForeground(6102, notification(requestText));
         if (intent != null && CHECK.equals(intent.getAction())) {
             checkOldTask(startId);
             return START_NOT_STICKY;
@@ -71,6 +75,7 @@ public final class BattleLoopService extends com.xnas.wpe.suite.ModuleService {
                         com.xnas.wpe.suite.TargetGame.BATTLE_LOOP,
                         com.xnas.wpe.suite.TargetGame.getSelectedPackage(this))) {
             writeStatus("state=stopped\nreason=unsupported_target");
+            stopForeground(true);
             stopSelfResult(startId);
             return START_NOT_STICKY;
         }
@@ -79,6 +84,7 @@ public final class BattleLoopService extends com.xnas.wpe.suite.ModuleService {
                 com.xnas.wpe.suite.BattleConflictGate.reserve(
                         getFilesDir().getParentFile(), "battleloop");
         if (!gate.allowed) {
+            stopForeground(true);
             stopSelfResult(startId);
             return START_NOT_STICKY;
         }
