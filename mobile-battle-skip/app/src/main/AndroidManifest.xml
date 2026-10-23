@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.ACCESS_SUPERUSER" />
+    <application
+        android:allowBackup="false"
+        android:extractNativeLibs="true"
+        android:label="战斗快进">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Material.Light">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="false">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="battle_skip_launcher" />
+        </activity>
+
+        <activity-alias
+            android:name=".Start"
+            android:targetActivity="android.app.NativeActivity"
+            android:exported="false"
+            android:label="战斗快进">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="battle_skip_launcher" />
+        </activity-alias>
+
+        <activity-alias
+            android:name=".Stop"
+            android:targetActivity="android.app.NativeActivity"
+            android:exported="false"
+            android:label="停止快进">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="battle_skip_launcher" />
+        </activity-alias>
+    </application>
+</manifest>

@@ -1,0 +1,1117 @@
+local cfg=__CONFIG__
+local skipBattleRequested=cfg.skipBattle~=false
+local pausePath=tostring(cfg.resultPath):match('^(.*)/')..'/codex-battle-loop-pause'
+local key=cfg.stateKey
+local stopKey=key..'.coolUntil'
+local playerState='__codex_confusion_pet_continuous_20261013_r7'
+local skipState='__codex_apk_battle_skip_v1'
+local MAX_ACTION_SENDS=4
+local MAX_RESTORE_SENDS=3
+local RESTORE_RETRY_INTERVAL=1
+local function val(v) if type(v)=='table' then return v[1] end return v end
+local function eq(a,b) return tostring(a)==tostring(b) end
+local function writeStatus(state,fields)
+ local f=io.open(cfg.resultPath,'w');if not f then return false end
+ f:write('state=',state,'\nstatus=',state,'\nrunId=',cfg.runId,'\n')
+ local output={skipBattleRequested=skipBattleRequested,hideBattleRequested=cfg.hideBattle==true,visualState=cfg.hideBattle==true and 'waiting_battle' or 'disabled',hiddenBattles=0,visualRounds=0,visibilityRestoreConfirmed=true}
+ for k,v in pairs(fields or {}) do output[k]=v end
+ for k,v in pairs(output) do if v==nil then v='unknown' end;f:write(k,'=',tostring(v):gsub('[\r\n=]',' '),'\n') end
+ f:close();return true
+end
+local function result(state,removed,cleared,reason,calls,restoreConfirmed,visualFields)
+ local fields={hooksRemoved=removed,bindingCleared=cleared,reason=reason or '',calls=calls or 0,restoreConfirmed=restoreConfirmed,
+  skipBattleRequested=skipBattleRequested,hideBattleRequested=cfg.hideBattle==true,visualState=cfg.hideBattle==true and 'not_started' or 'disabled',hiddenBattles=0,visualRounds=0,visibilityRestoreConfirmed=true}
+ for k,v in pairs(visualFields or {}) do fields[k]=v end
+ return writeStatus(state,fields)
+end
+-- 逐回合诊断日志：只追加，不参与任何判定；worker 会把尾部同步到应用私有目录。
+local function roundLog(line)
+ if type(cfg.logPath)~='string' or cfg.logPath=='' then return end
+ local f=io.open(cfg.logPath,'a')
+ if not f then return end
+ f:write(string.format('%d %s\n',os.time(),line));f:close()
+end
+-- 同一回合同一结论只记一次，避免每帧刷屏。
+local function logRound(s,keyName,decision,extra)
+ if type(s)~='table' then return end
+ local mark=tostring(keyName)..':'..decision
+ if s.logged and s.logged[mark] then return end
+ s.logged=s.logged or {};s.logged[mark]=true
+ roundLog('round='..tostring(keyName)..' decision='..decision..(extra and (' '..extra) or ''))
+end
+local function hasCompleteStopReceipt()
+ local ok,complete=pcall(function()
+  local f=io.open(cfg.resultPath,'r');if not f then return false end
+  local content=f:read('*a');f:close()
+  if type(content)~='string' then return false end
+  local required={state=true,status=true,runId=true,hooksRemoved=true,bindingCleared=true,restoreConfirmed=true,hideBattleRequested=true,visibilityRestoreConfirmed=true}
+  local fields={}
+  for line in (content..'\n'):gmatch('(.-)\n') do
+   local key,value=line:match('^([%w_]+)=(.*)$')
+   if key and required[key] then
+    if fields[key]~=nil then return false end
+    fields[key]=value
+   end
+  end
+  local visualGate=not (cfg.hideBattle==true or fields.hideBattleRequested=='true') or fields.visibilityRestoreConfirmed=='true'
+  return fields.state=='stopped' and fields.status=='stopped' and fields.runId==tostring(cfg.runId)
+   and fields.hooksRemoved=='true' and fields.bindingCleared=='true' and fields.restoreConfirmed=='true' and visualGate
+ end)
+ return ok and complete==true
+end
+local function bound(s)
+ local ok,p=pcall(function() return LocalPlayerMgr:getInstance() end)
+ if not ok or p~=s.player then return false end
+ local roleOk,role=pcall(function() return p:getPlayerId() end)
+ return roleOk and eq(role,s.role)
+end
+local function validLocalRole(m,s)
+ if not m or not eq(val(m.m_PlayerId),s.role) then return false end
+ local pos=val(m.m_RoleIdPosDict[s.role]);local r=m.m_RoleIns[pos]
+ return r and eq(val(r.m_RoleId),s.role) and val(r.m_IsLocalPlayer)==true and r.m_Battlefield==m
+end
+local visualUnpack=table.unpack or unpack
+local VISUAL_MENU_FIELDS={'m_MapLayout','m_LeftLayout','m_RightLayout','m_HeadLayout','m_ChatLayout','m_TeamLayout','m_TempLayout','m_TaskLayout'}
+local VISUAL_LOG_LIMIT=64*1024
+local SEND_LOGS_PER_SECOND=20
+local visualBattleInfo,visualInWar
+local function visualPack(...) return {n=select('#',...),...} end
+local function visualCall(object,name,...)
+ if object==nil then return false,nil end
+ local methodOk,fn=pcall(function() return object[name] end)
+ if not methodOk or type(fn)~='function' then return false,nil end
+ local called=visualPack(pcall(fn,object,...))
+ if not called[1] then return false,nil end
+ local values={n=called.n-1}
+ for i=2,called.n do values[i-1]=called[i] end
+ return true,values
+end
+local function visualManager()
+ local ok,m=pcall(function() return ClassIns and ClassIns['BattlefieldView.Ins'] end)
+ if ok then return m end
+ return nil
+end
+local function visualMenuSnapshot()
+ local menu=rawget(_G,'g_CMainMenuHandler')
+ local snapshot={menu=menu,layouts={},valid=false}
+ if menu==nil then return snapshot end
+ for _,name in ipairs(VISUAL_MENU_FIELDS) do
+  local fieldOk,layout=pcall(function() return menu[name] end)
+  if fieldOk and layout~=nil then
+   local item={name=name,object=layout}
+   local visibleOk,visibleValues=visualCall(layout,'isVisible')
+   if visibleOk and visibleValues.n>0 and type(visibleValues[1])=='boolean' then item.visible=visibleValues[1] end
+   local positionOk,positionValues=visualCall(layout,'getPosition')
+   if positionOk and positionValues.n>0 then item.position=positionValues end
+   if item.visible~=nil or item.position~=nil then snapshot.layouts[#snapshot.layouts+1]=item end
+  end
+ end
+ snapshot.valid=#snapshot.layouts>0
+ return snapshot
+end
+local function visualValuesEqual(left,right)
+ if not left or not right or left.n~=right.n then return false end
+ for i=1,left.n do
+  local a,b=left[i],right[i]
+  if a~=b then
+   local ax,ay,bx,by
+   if a~=nil and b~=nil then
+    local aOk=pcall(function() ax,ay=a.x,a.y end)
+    local bOk=pcall(function() bx,by=b.x,b.y end)
+    if not aOk or not bOk then ax,ay,bx,by=nil,nil,nil,nil end
+   end
+   if type(ax)~='number' or type(ay)~='number' or ax~=bx or ay~=by then return false end
+  end
+ end
+ return true
+end
+local function visualRestoreMenus(snapshot)
+ if type(snapshot)~='table' or not snapshot.valid or snapshot.menu==nil or rawget(_G,'g_CMainMenuHandler')~=snapshot.menu then return false end
+ local restored=true
+ for _,item in ipairs(snapshot.layouts) do
+  local layout=item.object
+  if item.visible~=nil then
+   local visibleOk,visibleValues=visualCall(layout,'isVisible')
+   if not visibleOk or visibleValues.n<1 or type(visibleValues[1])~='boolean' then
+    restored=false
+   elseif visibleValues[1]~=item.visible then
+    local setOk=visualCall(layout,'setVisible',item.visible)
+    local verifyOk,verifyValues=visualCall(layout,'isVisible')
+    if not setOk or not verifyOk or verifyValues.n<1 or verifyValues[1]~=item.visible then restored=false end
+   end
+  end
+  if item.position~=nil then
+   local positionOk,positionValues=visualCall(layout,'getPosition')
+   if not positionOk then
+    restored=false
+   elseif not visualValuesEqual(positionValues,item.position) then
+    local args=item.position
+    local setOk=visualCall(layout,'setPosition',visualUnpack(args,1,args.n))
+    local verifyOk,verifyValues=visualCall(layout,'getPosition')
+    if not setOk or not verifyOk or not visualValuesEqual(verifyValues,item.position) then restored=false end
+   end
+  end
+ end
+ return restored
+end
+local function visualRootVisible(root)
+ local ok,values=visualCall(root,'isVisible')
+ if ok and values.n>0 and type(values[1])=='boolean' then return values[1] end
+ return nil
+end
+local function visualSetRoot(root,visible)
+ local current=visualRootVisible(root)
+ if current==visible then return true end
+ local setOk=visualCall(root,'setVisible',visible)
+ return setOk and visualRootVisible(root)==visible
+end
+local function visualLog(s,event,reason,fields)
+ if not s or not s.hideBattleRequested then return false end
+ if event=='error' and reason~=nil and s.visualLastError==reason then return false end
+ if event=='error' then s.visualLastError=reason or 'visual_operation_failed' else s.visualLastError=nil end
+ local ok=pcall(function()
+  local path=cfg.visualLogPath
+  if type(path)~='string' or path=='' or type(io)~='table' or type(io.open)~='function' then return end
+   local function number(value) return type(value)=='number' and tostring(value) or nil end
+   local timeOk,timestamp=pcall(function() return os.time() end)
+  if not timeOk or type(timestamp)~='number' then timestamp=0 end
+   s.visualLogSeq=(s.visualLogSeq or 0)+1
+   local _,battleId,round=visualBattleInfo()
+   local mapId
+   local mapOk,mapValue=pcall(function()
+    local mapManager=ClassIns and ClassIns['MapMgr.Ins']
+    return mapManager and val(mapManager.m_CurMapId)
+   end)
+   if mapOk and type(mapValue)=='number' then mapId=mapValue end
+   local warOk,inWar=visualInWar()
+   local line='ts='..tostring(timestamp)..' runId='..tostring(cfg.runId):gsub('[^%w_.-]','_')
+    ..' seq='..tostring(s.visualLogSeq)..' event='..event..' state='..tostring(s.visualState or 'unknown')
+    ..' skipBattleRequested='..tostring(s.skipBattleRequested==true)..' hideBattleRequested='..tostring(s.hideBattleRequested==true)
+    ..' hiddenBattles='..tostring(s.hiddenBattles or 0)..' visualRounds='..tostring(s.visualRounds or 0)
+    ..' battleId='..tostring(number(battleId) or 'unknown')..' round='..tostring(number(round) or 'unknown')
+   ..' inWar='..(warOk and (inWar and 'true' or 'false') or 'unknown')
+    ..' localMapId='..tostring(number(mapId) or 'unknown')
+   local stage,evidence='visual','client_state'
+  if reason~=nil then line=line..' reason='..tostring(reason) end
+  for name,value in pairs(fields or {}) do
+   if name=='protocol' or name=='serverMapId' or name=='targetMap' then
+    local numeric=number(value);if numeric then line=line..' '..name..'='..numeric
+    elseif name=='serverMapId' then line=line..' serverMapId=unknown'
+    elseif name=='targetMap' then line=line..' targetMap=unknown' end
+    elseif name=='stage' and (value=='receive' or value=='after' or value=='local_observation' or value=='send_call') then stage=value
+    elseif name=='evidence' and (value=='server_message' or value=='client_state' or value=='client_call') then evidence=value
+   end
+  end
+   line=line..' stage='..stage..' evidence='..evidence
+  line=line..'\n'
+  if #line>VISUAL_LOG_LIMIT then return end
+  local file=io.open(path,'a')
+  if not file then return end
+  local sizeOk,size=pcall(function() return file:seek('end') end)
+  if not sizeOk or type(size)~='number' then pcall(function() file:close() end);return end
+  if size+#line>VISUAL_LOG_LIMIT then
+   pcall(function() file:close() end)
+   if type(os)=='table' and type(os.remove)=='function' then pcall(os.remove,path..'.1') end
+   if size<=VISUAL_LOG_LIMIT and type(os)=='table' and type(os.rename)=='function' then
+    local renameOk,renamed=pcall(os.rename,path,path..'.1')
+    if not renameOk or not renamed then
+     if type(os)=='table' and type(os.remove)=='function' then pcall(os.remove,path) end
+    end
+   elseif type(os)=='table' and type(os.remove)=='function' then
+    pcall(os.remove,path)
+   end
+   file=io.open(path,'a')
+   if not file then return end
+   sizeOk,size=pcall(function() return file:seek('end') end)
+   if not sizeOk or type(size)~='number' or size+#line>VISUAL_LOG_LIMIT then pcall(function() file:close() end);return end
+  end
+  pcall(function() file:write(line) end)
+  pcall(function() file:flush() end)
+  pcall(function() file:close() end)
+ end)
+ return ok
+end
+local function visualMapSnapshot(s)
+ if not s or not s.hideBattleRequested then return end
+ local ok,value=pcall(function()
+  local manager=ClassIns and ClassIns['MapMgr.Ins']
+  return manager and val(manager.m_CurMapId)
+ end)
+ if not ok or type(value)~='number' then return end
+ if s.localMapId==nil then
+  s.localMapId=value;visualLog(s,'map_snapshot',nil,{stage='local_observation',evidence='client_state'})
+ elseif s.localMapId~=value then
+  s.localMapId=value;visualLog(s,'map_local_change',nil,{stage='local_observation',evidence='client_state'})
+ end
+end
+local function visualMapReceive(s,data)
+ if not s or not s.hideBattleRequested then return end
+ local value
+ local ok=pcall(function() if type(data)=='table' and type(data.mapId)=='number' then value=data.mapId end end)
+  visualLog(s,'map_receive',nil,{protocol=65505,serverMapId=ok and value or 'unknown',stage='receive',evidence='server_message'})
+end
+local function visualState(s,state,confirmed)
+ s.visualState=state
+ if confirmed~=nil then s.visibilityRestoreConfirmed=confirmed end
+end
+visualBattleInfo=function()
+ local manager=visualManager()
+ local battleId,round
+ if manager~=nil then
+  local idOk,id=pcall(function() return val(manager.m_BattleId) end)
+  if idOk then battleId=id end
+  local roundOk,value=pcall(function() return tonumber(val(manager.m_CurRoundNum)) end)
+  if roundOk then round=value end
+ end
+ return manager,battleId,round
+end
+local function visualBindManager(s,manager)
+ if manager==nil then return false,'manager_unavailable' end
+ local validOk,valid=pcall(validLocalRole,manager,s)
+ if not validOk or not valid then return false,'local_role_binding_changed' end
+ if s.manager and s.manager~=manager then return false,'battle_manager_changed' end
+ if not s.manager then
+  local written=pcall(function()
+   local file=assert(io.open(cfg.bindingPath,'w'))
+   assert(file:write('runId=',cfg.runId,'\nplayer=',tostring(s.role):gsub('[\r\n=]',' '),'\nmanager=',tostring(manager):gsub('[\r\n=]',' '),'\n'))
+   assert(file:close())
+  end)
+  if not written then return false,'binding_write_failed' end
+  s.manager=manager
+ end
+ return true
+end
+visualInWar=function()
+ local ok,value=pcall(JudgeIsInWar)
+ return ok and type(value)=='boolean',value
+end
+local function visualSetup(s)
+ s.hideBattleRequested=cfg.hideBattle==true
+ s.hiddenBattles=0;s.visualRounds=0;s.visibilityRestoreConfirmed=true
+ s.visualBattleActive=false;s.visualApplied=false;s.visualHidden=false;s.visualPauseRestored=false
+ s.visualMenusRestored=false;s.visualCountedBattle=false;s.visualVisibilityCheckAt=0
+ if not s.hideBattleRequested then visualState(s,'disabled',true);return end
+ local known,inWar=visualInWar()
+ s.visualAwaitingBattleEnd=not (known and inWar==false)
+ visualState(s,s.visualAwaitingBattleEnd and 'waiting_next_battle' or 'waiting_battle',true)
+ visualLog(s,'installed')
+ visualMapSnapshot(s)
+end
+local function visualCaptureBeforeHandler(s)
+ if not s.hideBattleRequested or s.visualAwaitingBattleEnd then return nil end
+ s.visualPreMenus=nil
+ s.visualPauseRestored=false
+ if not bound(s) then
+  visualState(s,'restore_unconfirmed_identity_changed',false);visualLog(s,'error','role_changed');return nil
+ end
+ local ok,snapshot=pcall(visualMenuSnapshot)
+ if ok then s.visualPreMenus=snapshot
+ else visualState(s,'hide_unconfirmed',not s.visualApplied);visualLog(s,'error','menu_snapshot_failed') end
+ return s.visualPreMenus
+end
+local function visualAfterHandler(s,mapMenus)
+ if not s.hideBattleRequested or s.visualAwaitingBattleEnd then return end
+ s.visualPreMenus=nil
+ if not bound(s) then
+  visualState(s,'restore_unconfirmed_identity_changed',false);visualLog(s,'error','role_changed');return
+ end
+ local manager,battleId=visualBattleInfo()
+ if not s.skipBattleRequested then
+  local identityOk,identityReason=visualBindManager(s,manager)
+  if not identityOk then
+   if identityReason~='manager_unavailable' then s.stopRequested=true;s.stopReason=identityReason end
+   local state=identityReason=='battle_manager_changed' and 'restore_unconfirmed_scene_changed'
+    or (identityReason=='local_role_binding_changed' and 'restore_unconfirmed_identity_changed' or 'hide_unconfirmed')
+   visualState(s,state,not s.visualApplied)
+   visualLog(s,'error',identityReason)
+   return
+  end
+ end
+ if s.visualApplied then
+  if manager==s.visualManager and (battleId==nil or s.visualBattleId==nil or eq(battleId,s.visualBattleId)) then return end
+  visualState(s,'restore_unconfirmed_scene_changed',false);visualLog(s,'error','scene_changed');return
+ end
+ s.visualBattleActive=true;s.visualManager=manager;s.visualBattleId=battleId;s.visualLastRound=nil
+ s.visualMenusRestored=false;s.visualCountedBattle=false;s.visualVisibilityCheckAt=(s.elapsed or 0)-0.1
+ local battleMenus=visualMenuSnapshot()
+ local root=manager
+ local beforeVisible=visualRootVisible(root)
+ if type(mapMenus)~='table' or not mapMenus.valid or not battleMenus.valid or root==nil or beforeVisible==nil then
+  visualState(s,'hide_unconfirmed',true);visualLog(s,'battle_start');visualLog(s,'error','menu_snapshot_failed');return
+ end
+ s.visualSnapshot={manager=manager,root=root,rootVisible=beforeVisible,battleMenus=battleMenus}
+ s.visualApplied=true;s.visualHidden=false
+ visualState(s,'hiding',false)
+ local rootHidden=visualSetRoot(root,false) and visualRootVisible(root)==false
+ local mapRestored=visualRestoreMenus(mapMenus)
+ s.visualMenusRestored=mapRestored
+ if rootHidden and mapRestored then
+  s.visualHidden=true;s.hiddenBattles=s.hiddenBattles+1;s.visualCountedBattle=true
+  visualState(s,'hidden',false)
+ else
+  visualState(s,'hide_unconfirmed',false);visualLog(s,'error',not rootHidden and 'root_hide_failed' or 'map_menu_restore_failed')
+ end
+ visualLog(s,'battle_start')
+end
+local function visualNaturalEnd(s)
+ s.visualBattleActive=false;s.visualApplied=false;s.visualHidden=false;s.visualPauseRestored=false
+ s.visualMenusRestored=false;s.visualCountedBattle=false
+ s.visualSnapshot=nil;s.visualPreMenus=nil;s.visualAwaitingBattleEnd=false
+ visualState(s,'battle_ended',true);visualLog(s,'battle_end')
+end
+local function visualRestoreImpl(s,reason)
+ if not s.hideBattleRequested then
+  s.visibilityRestoreConfirmed=true
+  return true
+ end
+ if s.visualState=='restore_unconfirmed_identity_changed' then return false end
+ if not bound(s) then visualState(s,'restore_unconfirmed_identity_changed',false);visualLog(s,'error','role_changed');return false end
+ if not s.visualApplied then
+  s.visibilityRestoreConfirmed=true
+  if reason=='pause' and s.visualBattleActive then s.visualPauseRestored=true;visualState(s,'restored_paused',true);visualLog(s,'restore') end
+  return true
+ end
+ local known,inWar=visualInWar()
+ if s.visualBattleActive and known and inWar==false then visualNaturalEnd(s);return true end
+ local snapshot=s.visualSnapshot
+ if type(snapshot)~='table' or visualManager()~=snapshot.manager or rawget(_G,'g_CMainMenuHandler')~=snapshot.battleMenus.menu then
+  visualState(s,'restore_unconfirmed_scene_changed',false);visualLog(s,'error','scene_changed');return false
+ end
+ visualState(s,'restoring',false)
+ local rootRestored=visualSetRoot(snapshot.root,snapshot.rootVisible)
+ local menusRestored=visualRestoreMenus(snapshot.battleMenus)
+ if rootRestored and menusRestored then
+  s.visualApplied=false;s.visualHidden=false;s.visualMenusRestored=false;s.visualSnapshot=nil;s.visibilityRestoreConfirmed=true
+  if reason=='pause' and s.visualBattleActive then s.visualPauseRestored=true;visualState(s,'restored_paused',true)
+  else visualState(s,'restored',true) end
+  visualLog(s,'restore');return true
+ end
+ visualState(s,'restore_unconfirmed',false);visualLog(s,'error',not rootRestored and 'root_restore_failed' or 'battle_menu_restore_failed');return false
+end
+local function visualRestore(s,reason)
+ local ok,restored=pcall(visualRestoreImpl,s,reason)
+ if not ok then
+  if s.visualApplied then visualState(s,'restore_unconfirmed',false) else visualState(s,'hide_unconfirmed',true) end
+  visualLog(s,'error','visual_operation_failed');return false
+ end
+ return restored==true
+end
+local function visualObserve(s)
+ if not s.hideBattleRequested then return end
+ if not bound(s) then visualState(s,'restore_unconfirmed_identity_changed',false);visualLog(s,'error','role_changed');return end
+ local known,inWar=visualInWar()
+ if s.visualAwaitingBattleEnd then
+  if known and inWar==false then s.visualAwaitingBattleEnd=false;visualState(s,'waiting_battle',true) end
+  return
+ end
+ if not s.visualBattleActive then return end
+ if known and inWar==false then visualNaturalEnd(s);return end
+ if not known or inWar~=true then return end
+ local manager,battleId,round=visualBattleInfo()
+ if s.visualManager~=nil and manager~=s.visualManager then
+  visualState(s,'restore_unconfirmed_scene_changed',not s.visualApplied);visualLog(s,'error','scene_changed');return
+ end
+ if s.visualBattleId~=nil and battleId~=nil and not eq(battleId,s.visualBattleId) then
+  visualState(s,'restore_unconfirmed_scene_changed',not s.visualApplied);visualLog(s,'error','scene_changed');return
+ end
+ if s.visualManager==nil then s.visualManager=manager end
+ if round and round>0 and round~=s.visualLastRound then
+  s.visualLastRound=round;s.visualRounds=s.visualRounds+1;visualLog(s,'round')
+ end
+ if s.visualApplied and not s.visualPauseRestored and s.elapsed-(s.visualVisibilityCheckAt or 0)>=0.1 then
+  s.visualVisibilityCheckAt=s.elapsed
+  local snapshot=s.visualSnapshot
+  if type(snapshot)~='table' or snapshot.manager~=manager or snapshot.root==nil then
+   s.visualHidden=false;visualState(s,'hide_unconfirmed',false);visualLog(s,'error','root_snapshot_missing')
+  else
+   local visible=visualRootVisible(snapshot.root)
+   if visible==true then
+    local hidden=visualSetRoot(snapshot.root,false) and visualRootVisible(snapshot.root)==false
+    if hidden then
+     if s.visualMenusRestored then
+      if not s.visualCountedBattle then s.hiddenBattles=s.hiddenBattles+1;s.visualCountedBattle=true end
+      s.visualHidden=true;visualState(s,'hidden',false)
+     else s.visualHidden=false;visualState(s,'hide_unconfirmed',false) end
+    else s.visualHidden=false;visualState(s,'hide_unconfirmed',false);visualLog(s,'error','root_rehide_failed') end
+   elseif visible==false then
+    if s.visualMenusRestored then
+     if not s.visualCountedBattle then s.hiddenBattles=s.hiddenBattles+1;s.visualCountedBattle=true end
+     s.visualHidden=true;visualState(s,'hidden',false)
+    else s.visualHidden=false;visualState(s,'hide_unconfirmed',false) end
+   else s.visualHidden=false;visualState(s,'hide_unconfirmed',false);visualLog(s,'error','root_visibility_unconfirmed') end
+  end
+ end
+end
+local function send(s,op,...)
+ assert(s.skipBattleRequested,'skip_disabled')
+ assert(bound(s),'role_binding_changed');s.inTest=true
+ local ok,e=pcall(netconn.send,netconn,op,...);s.inTest=false;assert(ok,tostring(e))
+end
+-- 兜底 playover：sendHook 用 battleId:round 去重，若先把键写进 playoverKeys 再发包，
+-- 这一包会被自己挡掉（日志写了 skipped、实际没发）。必须先发、后记两份键。
+local function sendFallbackPlayover(s,round,mark)
+ local hookKey=tostring(val(s.manager and s.manager.m_BattleId))..':'..tostring(round)
+ send(s,3472,'',s.role,round)
+ if mark then s.playoverKeys[mark]=true end
+ s.playoverKeys[hookKey]=true
+end
+local function validAnimationBinding(s,t,m,battle,round)
+ if not bound(s) or m~=t.manager or ClassIns['BattlefieldView.Ins']~=m then return false end
+ if not eq(val(m.m_BattleId),battle) or not eq(val(m.m_CurRoundNum),round) or not eq(val(m.m_CmdRound),round) then return false end
+ return validLocalRole(m,s)
+end
+local function finishAnimation(s,t,m,battle,round)
+ if not s.skipBattleRequested then return false,'skip_disabled' end
+ if not t.gotCommands or not validAnimationBinding(s,t,m,battle,round) then return false,'animation_not_ready' end
+ if val(m.m_AnalyzeFinish)==true then return true end
+ if val(m.m_AnalyzeFinish)~=false then return false,'animation_not_ready' end
+ local idx=tonumber(val(m.m_CurCmdPlayIndex));local cmds=m.m_RoundCmdList
+ local count=type(cmds)=='table' and type(table.nums)=='function' and table.nums(cmds) or 0
+ if not eq(val(m.m_CmdRound),round) or not tonumber(count) or count<=0
+  or val(m.m_PauseAnalyze)~=false or not idx or idx<1 or idx>count then return false,'animation_not_ready' end
+ if type(m.fastAnalyzeSurplusCMD)~='function' then return false,'fast_analyze_unavailable' end
+ local ok,e=pcall(m.fastAnalyzeSurplusCMD,m)
+ if not ok then return false,'fast_analyze_failed:'..tostring(e) end
+ if not validAnimationBinding(s,t,m,battle,round) or val(m.m_AnalyzeFinish)~=true then return false,'fast_analyze_binding_changed' end
+ if type(m.verifyRoundData)~='function' then return false,'verify_round_data_unavailable' end
+ ok,e=pcall(m.verifyRoundData,m,true)
+ if not ok then return false,'verify_round_data_failed:'..tostring(e) end
+ if not validAnimationBinding(s,t,m,battle,round) or val(m.m_AnalyzeFinish)~=true then return false,'animation_binding_changed' end
+ return true
+end
+local function status(s,state,extra)
+ local fields={characterSkillId=s.characterSkillId or 'unknown',petId=s.petId or 'none',petSkillId=s.petSkillId or 'none',round=s.target and s.target.round or 'unknown',calls=s.actions,
+  skipBattleRequested=s.skipBattleRequested~=false,hideBattleRequested=s.hideBattleRequested==true,visualState=s.visualState or (s.hideBattleRequested and 'waiting_battle' or 'disabled'),
+  hiddenBattles=s.hiddenBattles or 0,visualRounds=s.visualRounds or 0,visibilityRestoreConfirmed=s.visibilityRestoreConfirmed~=false}
+ for k,v in pairs(extra or {}) do fields[k]=v end
+ -- 状态切换诊断：只记变化，帮助定位“回合开头静默等待”到底停在哪一支。
+ if s.skipBattleRequested and s.lastLoggedState~=state then
+  s.lastLoggedState=state
+  roundLog('state='..tostring(state)..' target='..tostring(s.target and s.target.round or 'none')..(fields.reason and (' reason='..tostring(fields.reason)) or ''))
+ end
+ local signature=table.concat({state,tostring(fields.calls),tostring(fields.characterSkillId),tostring(fields.petId),tostring(fields.petSkillId),tostring(fields.round),tostring(fields.reason or ''),tostring(fields.restoreConfirmed or ''),tostring(fields.hooksRemoved or ''),tostring(fields.bindingCleared or '')},'|')
+ if s.lastStatusSignature==signature and s.elapsed-(s.lastStatusAt or -1)<1 then return end
+ s.lastStatusSignature=signature;s.lastStatusAt=s.elapsed
+ writeStatus(state,fields)
+end
+local function actorResponse(s,d)
+ if eq(d.roleId,s.role) and d.type==5 and s.restoreSent then s.autoConfirmed=true end
+ local t=s.target;if not t or not t.offSent or (d.round~=nil and not eq(d.round,t.round)) then return end
+ if eq(d.roleId,s.role) and d.type==6 then t.offAck=true end
+ for _,a in ipairs(t.actors) do
+  if eq(d.roleId,a.roleId) then
+   if d.type==1 then a.ack=true
+   elseif not t.gotCommands and not a.ack and (d.type==2 or d.type==3 or d.type==4 or d.type==8) then a.rejectedAt=s.elapsed end
+  end
+ end
+end
+local function findEnemy(m,playerPos)
+ local base=playerPos>=10000 and 0 or 10000
+ local firstFallback,fallbackPos,best,bestPos,bestHp=nil,nil,nil,nil,nil
+ for pos=base+1,base+5 do
+  local r=m.m_RoleIns[pos]
+  if r and r.m_Battlefield==m and type(r.getIsAlive)=='function' and r:getIsAlive() and tonumber(val(r.m_RoleId)) and tonumber(val(r.m_RoleId))>0 then
+   local raw=val(r.m_Hp);local hp=tonumber(raw)
+   local known=hp~=nil and hp==hp and hp~=math.huge and hp~=-math.huge
+   if not known or hp>0 then
+    if not firstFallback then firstFallback,fallbackPos=r,pos end
+    if known and (bestHp==nil or hp<bestHp) then best,bestPos,bestHp=r,pos,hp end
+   end
+  end
+ end
+ if best then return best,bestPos end
+ return firstFallback,fallbackPos
+end
+local function knownNonPositiveHp(r)
+ local hp=tonumber(val(r and r.m_Hp))
+ return hp~=nil and hp==hp and hp~=math.huge and hp~=-math.huge and hp<=0
+end
+-- 选敌诊断只读本机快照；读字段或写日志失败不能影响战斗流程。
+local function logTargetChoice(m,playerPos,battle,round,a,phase)
+ if type(cfg.logPath)~='string' or cfg.logPath=='' then return end
+ pcall(function()
+  local function hpText(r)
+   local hp=tonumber(val(r and r.m_Hp))
+   if hp==nil or hp~=hp or hp==math.huge or hp==-math.huge then return 'unknown' end
+   return tostring(hp)
+  end
+  local candidates={}
+  local base=playerPos>=10000 and 0 or 10000
+  for pos=base+1,base+5 do
+   local r=m.m_RoleIns[pos]
+   if r and r.m_Battlefield==m and type(r.getIsAlive)=='function' and r:getIsAlive() and tonumber(val(r.m_RoleId)) and tonumber(val(r.m_RoleId))>0 then
+    candidates[#candidates+1]=tostring(pos)..':'..tostring(val(r.m_RoleId))..':'..hpText(r)
+   end
+  end
+  roundLog('round='..tostring(battle)..':'..tostring(round)..' decision=target_trace phase='..phase
+   ..' actorId='..tostring(a.roleId)..' actType='..tostring(a.actType)..' skillId='..tostring(a.skillId)
+   ..' targetId='..tostring(a.targetId)..' targetPos='..tostring(a.targetPosition)..' targetHp='..hpText(a.target)
+   ..' attempt='..tostring(a.calls)..' policy='..(a.actType==1 and 'self' or 'lowest_current_hp')
+   ..' candidates=pos:roleId:hp['..table.concat(candidates,',')..']')
+ end)
+end
+-- 只读诊断：把服务端下发的回合指令列表与场上角色摘要写进日志，用于判断技能由谁触发。
+local function diagField(obj,name)
+ local ok,v=pcall(function() return obj[name] end)
+ if not ok or v==nil then return "-" end
+ local ok2,u=pcall(val,v)
+ if ok2 and u~=nil then return tostring(u) end
+ return "-"
+end
+local function diagCmds(m)
+ local cmds=m and m.m_RoundCmdList
+ if type(cmds)~="table" then return "cmds=none" end
+ local ok,n=pcall(function() return table.nums(cmds) end)
+ if not ok or type(n)~="number" then return "cmds=none" end
+ local parts={}
+ for i=1,math.min(n,8) do
+  local c=cmds[i]
+  parts[#parts+1]=diagField(c,"roleId").."/"..diagField(c,"type").."/"..diagField(c,"skillId").."/"..diagField(c,"targetId")
+ end
+ return "cmds=n"..n.."["..table.concat(parts," ").."]"
+end
+local function diagRoles(m)
+ local ins=m and m.m_RoleIns
+ local parts={}
+ for pos=1,12 do
+  local r=ins and ins[pos]
+  if r~=nil then parts[#parts+1]=pos..":"..diagField(r,"m_RoleId") end
+ end
+ for pos=10001,10005 do
+  local r=ins and ins[pos]
+  if r~=nil then parts[#parts+1]=pos..":"..diagField(r,"m_RoleId") end
+ end
+ return "roles="..table.concat(parts,",")
+end
+local function skillConfig(ui,roleId)
+ local configs=ui and ui.m_AutoSkill
+ local a=configs and (configs[roleId] or configs[tostring(roleId)])
+ if not a then return nil,'current_auto_skill_missing' end
+ local actType,skillId=val(a.actType),val(a.skillId)
+ if actType~=0 and actType~=1 and actType~=7 then return nil,'unsupported_act_type actType='..tostring(actType)..' skillId='..tostring(skillId) end
+ if skillId==nil or not tonumber(skillId) then return nil,'current_skill_id_missing' end
+ if actType==7 then
+  local data=(data_SeniorPetSkill or {})[skillId] or (data_NormalPetSkill or {})[skillId] or (data_SpecialPetSkill or {})[skillId] or (data_Skill or {})[skillId]
+  if not data or not data.targetType or val(data.targetType[1])~=1 then return nil,'skill_target_type_unconfirmed' end
+ end
+ return {actType=actType,skillId=skillId}
+end
+local function actorValid(m,t,a)
+ local actor=m.m_RoleIns[a.position]
+ if actor~=a.object or actor.m_Battlefield~=m or not eq(val(actor.m_RoleId),a.roleId) or not actor:getIsAlive() then return false end
+ if a.actType==1 then return eq(a.targetId,a.roleId) end
+ local target=m.m_RoleIns[a.targetPosition]
+ return target==a.target and target.m_Battlefield==m and eq(val(target.m_RoleId),a.targetId) and target:getIsAlive()
+end
+-- 本机角色实例查找：优先 m_PlayerPos，取不到时按 roleId 在 1~5 / 10001~10005 里找，
+-- 避免回合开场角色对象重建的瞬间一直停在静默的 waiting_role。
+local function localPlayerInstance(m,s)
+ local function match(pos)
+  if not pos then return nil end
+  local r=m.m_RoleIns and m.m_RoleIns[pos]
+  if not r or r.m_Battlefield~=m then return nil end
+  if not eq(val(r.m_RoleId),s.role) or val(r.m_IsLocalPlayer)~=true then return nil end
+  local ok,alive=pcall(function() return r:getIsAlive() end)
+  if not ok or not alive then return nil end
+  return r
+ end
+ local r=match(tonumber(val(m.m_PlayerPos)))
+ if r then return tonumber(val(m.m_PlayerPos)),r end
+ for _,pos in ipairs({1,2,3,4,5,10001,10002,10003,10004,10005}) do
+  r=match(pos)
+  if r then return pos,r end
+ end
+ return nil,nil
+end
+local function diagLocal(m,s)
+ local parts={}
+ for _,pos in ipairs({1,2,3,4,5,10001,10002,10003,10004,10005}) do
+  local r=m.m_RoleIns and m.m_RoleIns[pos]
+  if r~=nil then
+   local alive='-'
+   local ok,a=pcall(function() return r:getIsAlive() end)
+   if ok then alive=tostring(a) end
+   parts[#parts+1]=pos..':'..diagField(r,'m_RoleId')..':local='..tostring(val(r.m_IsLocalPlayer))..':alive='..alive..':field='..tostring(r.m_Battlefield==m)
+  end
+ end
+ return 'pos='..tostring(val(m.m_PlayerPos))..' want='..tostring(s.role)..' ['..table.concat(parts,',')..']'
+end
+local function requestRestore(s)
+ if not s.skipBattleRequested then s.offPending=false;return true end
+ if not s.offPending or s.autoConfirmed then return true end
+ if not bound(s) then s.restoreAbandoned=true;return true end
+ local m=ClassIns and ClassIns['BattlefieldView.Ins'];local ui=m and m.m_BattleUI
+ if ui and val(ui.m_AutoStatus)==true then s.autoConfirmed=true;return true end
+ if not s.restoreSent or ((s.restoreAttempts or 0)<MAX_RESTORE_SENDS and s.elapsed-(s.restoreAt or -1)>=RESTORE_RETRY_INTERVAL) then
+  local ok=pcall(send,s,3473,1)
+  if not ok then return false end
+  s.restoreSent=true;s.restoreAttempts=(s.restoreAttempts or 0)+1;s.restoreAt=s.elapsed
+ end
+ return s.autoConfirmed
+end
+local function cleanup(s,reason)
+ if s.cleaned then return true end
+ if not s.visualStopLogged then s.visualStopLogged=true;visualLog(s,'stop') end
+ if rawget(_G,key)~=s then status(s,'stopping',{reason='state_ownership_changed',restoreConfirmed=false});return false end
+ if not visualRestore(s,'cleanup') then status(s,'stopping',{reason='visual_restore_unconfirmed',restoreConfirmed=false,visibilityRestoreConfirmed=false});return false end
+ if s.skipBattleRequested and not requestRestore(s) then status(s,'stopping',{reason=reason,restoreConfirmed=false});return false end
+ local clean=true
+ for id,fn in pairs(s.originals) do
+  if ProtoFunc[id]==s.hooks[id] then ProtoFunc[id]=fn elseif ProtoFunc[id]~=fn then clean=false end
+ end
+ if s.sendOriginal then
+   local readOk,current=pcall(function() return s.sendConnection and s.sendConnection.send end)
+   if readOk and current==s.sendHook then
+    local restoreOk=pcall(function() s.sendConnection.send=s.sendOriginal end)
+    if not restoreOk then clean=false end
+   elseif not readOk or not s.sendConnection or current~=s.sendOriginal then clean=false end
+ end
+ if not clean then status(s,'stopping',{reason='owned_hook_changed',restoreConfirmed=s.autoConfirmed or not s.offPending});return false end
+ local binding=io.open(cfg.bindingPath,'w')
+ if binding then binding:write('runId=',cfg.runId,'\nplayer=\nmanager=\n');binding:close() else status(s,'stopping',{reason='binding_clear_failed'});return false end
+ if s.timer then pcall(scheduler.unscheduleGlobal,s.timer);s.timer=nil end
+ rawset(_G,key,nil)
+ s.cleaned=true
+ s.visualState=s.hideBattleRequested and 'stopped' or 'disabled'
+ result('stopped',true,rawget(_G,key)==nil,reason,s.actions,s.autoConfirmed or not s.offPending,{
+  skipBattleRequested=s.skipBattleRequested~=false,hideBattleRequested=s.hideBattleRequested==true,visualState=s.visualState,hiddenBattles=s.hiddenBattles or 0,
+  visualRounds=s.visualRounds or 0,visibilityRestoreConfirmed=s.visibilityRestoreConfirmed~=false
+ })
+ return true
+end
+if cfg.mode=='stop' then
+ local s=rawget(_G,key)
+ if s then s.stopRequested=true;s.stopReason='user_stop';return 0 end
+ if hasCompleteStopReceipt() then return 0 end
+ if cfg.hideBattle==true then result('stopping',true,true,'visual_state_missing',0,false,{visualState='restore_unconfirmed',visibilityRestoreConfirmed=false});return 0 end
+ result('stopped',true,true,'nothing_owned');return 0
+end
+if skipBattleRequested and os.time()<(rawget(_G,stopKey) or 0) then return 0 end
+local prior=rawget(_G,key)
+if prior then
+ if not skipBattleRequested and cfg.hideBattle~=true then return 0 end
+ if prior.runId~=cfg.runId then
+  prior.stopRequested=true;prior.stopReason='worker_replaced';writeStatus('waiting_conflict',{reason='prior_run_cleanup'})
+ end
+ return 0
+end
+if not skipBattleRequested and cfg.hideBattle~=true then result('stopped',true,true,'no_mode_enabled',0,true);return 0 end
+if rawget(_G,playerState) or rawget(_G,skipState) then writeStatus('waiting_conflict',{reason='active_battle_assistant'});return 0 end
+local playerOk,player=pcall(function() return LocalPlayerMgr:getInstance() end)
+if not playerOk or not player then writeStatus('waiting_role',{reason='player_manager_unavailable'});return 0 end
+local roleOk,role=pcall(function() return player:getPlayerId() end)
+if not roleOk or not tonumber(role) or tonumber(role)<=0 then writeStatus('waiting_role',{reason='role_not_ready'});return 0 end
+if skipBattleRequested then assert(C2S_BattleOperate==3470 and C2S_BattleCmdPlayOver==3472 and C2S_BattleChangeAuto==3473 and CMD_TYPE_USESKILL==7,'protocol_changed') end
+local s={runId=cfg.runId,skipBattleRequested=skipBattleRequested,hideBattleRequested=cfg.hideBattle==true,elapsed=0,actions=0,playovers=0,originals={},hooks={},roundMark=nil,stopRequested=false,player=player,role=role,playoverKeys={}}
+rawset(_G,key,s)
+local function leaseAlive()
+ for _,p in ipairs({cfg.leasePath,cfg.workerPath}) do
+  local f=io.open(p,'r');if not f then return false end
+  local n=tonumber(f:read('*a'));f:close();if not n or os.time()-n>5 then return false end
+ end
+ return true
+end
+local ok,e=pcall(function()
+ local handlerIds=s.skipBattleRequested and {3584,3585,3586,3587,3581} or {3584}
+ for _,id in ipairs(handlerIds) do
+  s.originals[id]=assert(ProtoFunc[id],'handler_missing_'..id)
+  if s.skipBattleRequested then
+   s.hooks[id]=function(d,...)
+    local visualMapMenus
+    if id==3584 and not s.cleaned and s.hideBattleRequested then
+     local beforeOk,beforeValue=pcall(visualCaptureBeforeHandler,s)
+     if beforeOk then visualMapMenus=beforeValue
+     else visualState(s,s.visualApplied and 'restore_unconfirmed' or 'hide_unconfirmed',not s.visualApplied);visualLog(s,'error') end
+    end
+    if not s.cleaned and bound(s) and type(d)=='table' then
+     if id==3587 then actorResponse(s,d) end
+     if id==3585 and s.target and eq(d.round,s.target.round) then s.target.gotCommands=true end
+     if id==3586 and d.autoStatus==true and s.restoreSent then s.autoConfirmed=true end
+     if id==3584 and s.restoreSent and val(d.autoStatus)==true then s.autoConfirmed=true end
+    end
+    if id==3584 and not s.cleaned and s.hideBattleRequested then
+     local returned=visualPack(s.originals[id](d,...))
+     local afterOk=pcall(visualAfterHandler,s,visualMapMenus)
+     if not afterOk then
+      visualState(s,s.visualApplied and 'restore_unconfirmed' or 'hide_unconfirmed',not s.visualApplied);visualLog(s,'error')
+     end
+     return visualUnpack(returned,1,returned.n)
+    end
+    return s.originals[id](d,...)
+   end
+  else
+   s.hooks[id]=function(...)
+    local arguments=visualPack(...)
+    local visualMapMenus
+    local visualAllowed=not s.cleaned and not s.stopRequested and s.hideBattleRequested
+    if visualAllowed and s.manager then
+     local manager=visualManager()
+     if manager~=nil and manager~=s.manager then
+      visualAllowed=false;s.stopRequested=true;s.stopReason='battle_manager_changed'
+      visualState(s,s.visualApplied and 'restore_unconfirmed_scene_changed' or 'hide_unconfirmed',not s.visualApplied)
+      visualLog(s,'error','battle_manager_changed')
+     end
+    end
+    if visualAllowed then
+     local beforeOk,beforeValue=pcall(visualCaptureBeforeHandler,s)
+     if beforeOk then visualMapMenus=beforeValue
+     else visualState(s,s.visualApplied and 'restore_unconfirmed' or 'hide_unconfirmed',not s.visualApplied);visualLog(s,'error') end
+    end
+    local returned=visualPack(s.originals[id](visualUnpack(arguments,1,arguments.n)))
+    if visualAllowed then
+     local afterOk=pcall(visualAfterHandler,s,visualMapMenus)
+     if not afterOk then
+      visualState(s,s.visualApplied and 'restore_unconfirmed' or 'hide_unconfirmed',not s.visualApplied);visualLog(s,'error')
+     end
+    end
+    return visualUnpack(returned,1,returned.n)
+   end
+  end
+  ProtoFunc[id]=s.hooks[id]
+ end
+  if s.hideBattleRequested then
+   local mapHandler=ProtoFunc[65505]
+   if type(mapHandler)=='function' then
+    s.originals[65505]=mapHandler
+    s.hooks[65505]=function(d,...)
+     pcall(visualMapReceive,s,d)
+     local returned=visualPack(s.originals[65505](d,...))
+     pcall(visualLog,s,'map_handler_return',nil,{stage='after',evidence='client_state'})
+     return visualUnpack(returned,1,returned.n)
+    end
+    ProtoFunc[65505]=s.hooks[65505]
+   else
+    pcall(visualLog,s,'observation_unavailable','handler_missing')
+   end
+  end
+  if s.skipBattleRequested or s.hideBattleRequested then
+   s.sendConnection=netconn
+   local sendReadOk,sendOriginal=pcall(function() return s.sendConnection and s.sendConnection.send end)
+   if not sendReadOk or type(sendOriginal)~='function' then
+    if s.skipBattleRequested then error('send_unavailable') end
+    s.sendConnection=nil;s.sendOriginal=nil
+    pcall(visualLog,s,'observation_unavailable','send_unavailable')
+   else
+   s.sendOriginal=sendOriginal
+  s.sendHook=function(self,op,...)
+    local firstArgument=...
+    if s.hideBattleRequested then pcall(function()
+     if type(op)~='number' then return end
+     local second=math.floor((s.elapsed or 0))
+     if s.sendLogSecond~=second then s.sendLogSecond=second;s.sendLogCount=0;s.sendLogLimited=false end
+     if (s.sendLogCount or 0)<SEND_LOGS_PER_SECOND then
+      s.sendLogCount=(s.sendLogCount or 0)+1
+      local fields={protocol=op,stage='send_call',evidence='client_call'}
+      if op==22568 then fields.targetMap=type(firstArgument)=='number' and firstArgument or 'unknown' end
+      visualLog(s,'send_call',nil,fields)
+     elseif not s.sendLogLimited then
+      s.sendLogLimited=true;visualLog(s,'send_sample_limited')
+     end
+    end) end
+    if s.skipBattleRequested and self==s.sendConnection and netconn==s.sendConnection and op==3472 and not s.cleaned and bound(s) then
+    local a={...};local t=s.target
+    if eq(a[2],s.role) then
+     local dedupeKey=tostring(val(s.manager and s.manager.m_BattleId))..':'..tostring(a[3])
+     if s.playoverKeys[dedupeKey] then return end
+     if t and t.manager==s.manager and eq(a[3],t.round) and eq(val(t.manager.m_BattleId),t.battle) then
+      if not t.allowPlayover then return end
+      s.playoverKeys[dedupeKey]=true;t.playoverSent=true;s.playovers=s.playovers+1
+     end
+    end
+   end
+    if s.skipBattleRequested and not s.cleaned and bound(s) and (op==3470 or op==3472 or op==3473) then
+    local a={...}
+    if op==3470 then s.lastAction={round=a[1],roleId=a[3],targetId=a[4],actType=a[5],skillId=a[6]} end
+   end
+   return s.sendOriginal(self,op,...)
+  end
+    local installOk=pcall(function() s.sendConnection.send=s.sendHook end)
+    if not installOk then
+     if s.skipBattleRequested then error('send_unavailable') end
+     pcall(visualLog,s,'observation_unavailable','send_unavailable')
+     local verifyOk,current=pcall(function() return s.sendConnection.send end)
+     if verifyOk and current==s.sendHook then
+      pcall(function() s.sendConnection.send=s.sendOriginal end)
+      local restoredOk,restored=pcall(function() return s.sendConnection.send==s.sendOriginal end)
+      if restoredOk and restored then s.sendConnection=nil;s.sendOriginal=nil;s.sendHook=nil end
+     elseif verifyOk and current==s.sendOriginal then
+      s.sendConnection=nil;s.sendOriginal=nil;s.sendHook=nil
+     end
+    end
+   end
+ end
+ visualSetup(s)
+ s.timer=scheduler.scheduleGlobal(function(dt)
+  if s.cleaned then return end
+  s.elapsed=s.elapsed+(type(dt)=='number' and math.max(0,dt) or 0)
+  local tickOk,tickErr=pcall(function()
+    local pauseFile=io.open(pausePath,'r');local paused=pauseFile~=nil;if pauseFile then pauseFile:close() end
+    if paused~=s.paused then s.paused=paused;if paused and s.skipBattleRequested then roundLog('paused') end end
+    local visualIdentityChanged=false
+    if not s.skipBattleRequested and s.manager then
+     local manager=visualManager()
+     if manager~=nil and manager~=s.manager then
+      visualIdentityChanged=true;s.stopRequested=true;s.stopReason='battle_manager_changed'
+      visualState(s,s.visualApplied and 'restore_unconfirmed_scene_changed' or 'hide_unconfirmed',not s.visualApplied)
+      visualLog(s,'error','battle_manager_changed')
+     end
+    end
+    if not s.skipBattleRequested and not visualIdentityChanged then
+     local manager=visualManager()
+     local known,inWar=visualInWar()
+     if manager~=nil and known and inWar==true and val(manager.m_IsClose)~=true then
+      local identityOk,identityReason=visualBindManager(s,manager)
+      if not identityOk then
+       visualIdentityChanged=true
+       if identityReason~='manager_unavailable' then s.stopRequested=true;s.stopReason=identityReason end
+       local state=identityReason=='battle_manager_changed' and 'restore_unconfirmed_scene_changed'
+        or (identityReason=='local_role_binding_changed' and 'restore_unconfirmed_identity_changed' or 'hide_unconfirmed')
+       visualState(s,state,not s.visualApplied)
+       visualLog(s,'error',identityReason)
+      end
+     end
+    end
+    if not s.paused and (s.skipBattleRequested or (not visualIdentityChanged and not s.stopRequested)) then visualObserve(s) end
+    visualMapSnapshot(s)
+   if rawget(_G,key)~=s or not bound(s) then s.stopRequested=true;s.stopReason='role_changed' end
+   if not leaseAlive() then s.stopRequested=true;s.stopReason='lease_expired' end
+   if rawget(_G,playerState) or rawget(_G,skipState) then s.stopRequested=true;s.stopReason='assistant_conflict' end
+   if s.stopRequested then cleanup(s,s.stopReason);return end
+   if s.paused then
+    local restored=visualRestore(s,'pause')
+    if restored then status(s,'paused') else status(s,'paused',{reason='visual_restore_unconfirmed',visibilityRestoreConfirmed=false}) end
+    return
+   end
+    if not s.skipBattleRequested then
+     status(s,s.visualState=='hidden' and 'running' or 'waiting_battle',{reason=s.visualState or 'waiting_battle'});return
+    end
+   local m=ClassIns['BattlefieldView.Ins'];local ui=m and m.m_BattleUI
+   local warOk,inWar=pcall(JudgeIsInWar)
+   if not warOk or not inWar or not m or val(m.m_IsClose)==true then
+    s.target=nil;requestRestore(s)
+    status(s,'waiting_battle',{reason=not warOk and 'war_check_failed' or (not inWar and 'not_in_war') or (not m and 'no_manager') or 'view_closed'})
+    return
+   end
+   assert(validLocalRole(m,s),'local_role_binding_changed')
+   if not s.manager then
+    s.manager=m
+    local f=assert(io.open(cfg.bindingPath,'w'));assert(f:write('runId=',cfg.runId,'\nplayer=',tostring(s.role):gsub('[\r\n=]',' '),'\nmanager=',tostring(m):gsub('[\r\n=]',' '),'\n'));assert(f:close())
+   elseif s.manager~=m then s.stopRequested=true;s.stopReason='battle_manager_changed';roundLog('abort reason=battle_manager_changed');cleanup(s,s.stopReason);return end
+   if ui and val(ui.m_AutoStatus)==true and s.restoreSent then s.autoConfirmed=true end
+   local round=tonumber(val(m.m_CurRoundNum));local battle=val(m.m_BattleId)
+   if not round or round<=0 or not tonumber(battle) or tonumber(battle)<=0 then status(s,'waiting_battle');return end
+   -- 每回合第一次看到时记录当时的自动战斗状态与客户端已提交回合号，用来判定谁先抢到指令。
+  logRound(s,tostring(battle)..':'..tostring(round),'seen','auto='..tostring(ui and val(ui.m_AutoStatus))..' cmd='..tostring(val(m.m_CmdRound))..' busy='..tostring(s.target~=nil))
+  local t=s.target
+   if t then
+    if m~=t.manager or not eq(battle,t.battle) or not eq(round,t.round) then
+     s.target=nil;requestRestore(s);status(s,'waiting_battle');return
+    end
+    if val(m.m_CmdRound)==t.round or t.gotCommands then t.gotCommands=true end
+    if not t.actionSent then
+     if val(m.m_CmdRound)==t.round then s.target=nil;requestRestore(s);return end
+     -- 等 3473 回执最多 0.15 秒：正常回执立刻发指令，回执慢也不能干等——
+     -- 那一来一回正是客户端自动战斗抢先提交的窗口，抢输后只能事后快进(实测12-24秒/回合)。
+     if not t.offAck and s.elapsed-(t.offSentAt or 0)<0.15 then status(s,'running');return end
+     for _,a in ipairs(t.actors) do assert(actorValid(m,t,a),'actor_binding_changed') end
+     for _,a in ipairs(t.actors) do
+      if a.calls==0 and a.actType~=1 and knownNonPositiveHp(a.target) then
+       local replacement,replacementPos=findEnemy(m,t.playerPos)
+       if not replacement then
+        s.offPending=true
+        local restored=requestRestore(s)
+        s.target=nil
+        status(s,restored and 'waiting_battle' or 'stopping',{reason='no_action_target',restoreConfirmed=restored});return
+       end
+       a.target=replacement;a.targetPosition=replacementPos;a.targetId=val(replacement.m_RoleId)
+       logTargetChoice(m,t.playerPos,t.battle,t.round,a,'retargeted')
+      end
+     end
+     t.actionSent=true
+     for _,a in ipairs(t.actors) do
+      local now=s.elapsed;local retry=a.calls>0
+      local due=a.rejectedAt and a.rejectedAt+0.05 or a.lastSent+0.2
+      if a.calls==0 or now+0.000001>=due then
+       if retry then a.calls=a.calls+1 else a.calls=1 end
+       a.lastSent=now;a.rejectedAt=nil;s.actions=s.actions+1
+       send(s,3470,t.round,0,a.roleId,a.targetId,a.actType,a.skillId)
+       logTargetChoice(m,t.playerPos,t.battle,t.round,a,'send_returned')
+      end
+     end
+     status(s,'running');return
+    end
+    if not t.gotCommands then
+     for _,a in ipairs(t.actors) do
+      if not a.ack then
+       local due=a.rejectedAt and a.rejectedAt+0.05 or a.lastSent+0.2
+       if s.elapsed+0.000001>=due then
+        if a.calls>=MAX_ACTION_SENDS then
+         s.stopRequested=true;s.stopReason='action_retry_limit';roundLog('abort reason=action_retry_limit round='..tostring(t.round))
+         status(s,'error',{reason=s.stopReason})
+         cleanup(s,s.stopReason);return
+        end
+        assert(actorValid(m,t,a),'retry_actor_binding_changed')
+        a.calls=a.calls+1;a.lastSent=s.elapsed;a.rejectedAt=nil;s.actions=s.actions+1
+        send(s,3470,t.round,0,a.roleId,a.targetId,a.actType,a.skillId)
+        logTargetChoice(m,t.playerPos,t.battle,t.round,a,'send_returned')
+       end
+      end
+     end
+     status(s,'running');return
+    end
+    for _,a in ipairs(t.actors) do if not a.ack then status(s,'running');return end end
+    if not requestRestore(s) then status(s,'stopping',{reason='restore_auto'});return end
+    local ready,why=finishAnimation(s,t,m,t.battle,t.round)
+    if not ready then
+     if why~='animation_not_ready' then
+      roundLog('abort reason='..tostring(why)..' round='..tostring(round))
+      s.offPending=false;s.target=nil;s.stopRequested=true;s.stopReason=why
+      status(s,'stopping',{reason=why,restoreConfirmed=false});cleanup(s,why);return
+     end
+     logRound(s,tostring(battle)..':'..tostring(round),'blocked','reason=animation_not_ready finish='..tostring(val(m.m_AnalyzeFinish))..' pause='..tostring(val(m.m_PauseAnalyze))..' idx='..tostring(val(m.m_CurCmdPlayIndex)))
+     status(s,'running');return
+    end
+    t.allowPlayover=true
+    if not t.playoverSent then send(s,3472,'',s.role,t.round) end
+    logRound(s,tostring(battle)..':'..tostring(round),'skipped','playover='..tostring(t.playoverSent)..' calls='..tostring(s.actions)..' '..diagCmds(m))
+    s.target=nil;s.roundMark=tostring(battle)..':'..tostring(round);status(s,'running');return
+   end
+   local mark=tostring(battle)..":"..tostring(round)
+   if mark==s.roundMark then status(s,'running');return end
+   if eq(val(m.m_CmdRound),round) then
+    -- 客户端抢先提交了本回合指令：动作抢不到，但可以本机快进动画并补发 playover，
+    -- 否则这一回合会按正常速度演完（实测出现过 19 秒的回合）。
+    local cmdsA=m.m_RoundCmdList
+    local countA=type(cmdsA)=='table' and type(table.nums)=='function' and table.nums(cmdsA) or 0
+    local idxA=tonumber(val(m.m_CurCmdPlayIndex))
+    local fastA=false
+    if type(m.fastAnalyzeSurplusCMD)=='function' and val(m.m_PauseAnalyze)==false
+        and countA>0 and idxA and idxA>=1 and idxA<=countA and val(m.m_AnalyzeFinish)==false then
+     fastA=pcall(m.fastAnalyzeSurplusCMD,m)
+    end
+    if fastA and val(m.m_AnalyzeFinish)==true
+        and eq(val(m.m_BattleId),battle) and eq(val(m.m_CurRoundNum),round) then
+     if not s.playoverKeys[mark] then sendFallbackPlayover(s,round,mark) end
+     logRound(s,mark,'skipped','reason=already_committed_fast_forward count='..tostring(countA)..' idx='..tostring(idxA)..' finish='..tostring(val(m.m_AnalyzeFinish)))
+     s.roundMark=mark;status(s,'running');return
+    end
+    logRound(s,mark,'not_skipped','reason=command_already_committed cmd='..tostring(val(m.m_CmdRound))..' cur='..tostring(round)..' auto='..tostring(ui and val(ui.m_AutoStatus)))
+    status(s,'running');return
+   end
+   if not ui or val(ui.m_AutoStatus)~=true then logRound(s,mark,'blocked','reason=original_auto_not_true cmd='..tostring(val(m.m_CmdRound))..' cur='..tostring(round)..' auto='..tostring(ui and val(ui.m_AutoStatus))..' finish='..tostring(val(m.m_AnalyzeFinish))..' pause='..tostring(val(m.m_PauseAnalyze)));status(s,'waiting_config',{reason='original_auto_not_true'});return end
+   local playerPos,player=localPlayerInstance(m,s)
+   if not player then logRound(s,mark,'not_started','reason=player_instance_missing '..diagLocal(m,s));status(s,'waiting_role');return end
+   local playerCfg,playerErr=skillConfig(ui,s.role)
+   if not playerCfg then logRound(s,mark,'blocked','reason='..tostring(playerErr));s.characterSkillId='unknown';status(s,'waiting_config',{reason=playerErr});return end
+   local actors={}
+   local function addActor(obj,pos,id,skill)
+    local target,targetPos
+     if skill.actType==1 then target=obj;targetPos=pos
+    else target,targetPos=findEnemy(m,playerPos) end
+    if not target then return false end
+    actors[#actors+1]={object=obj,position=pos,roleId=id,actType=skill.actType,skillId=skill.skillId,target=target,targetPosition=targetPos,targetId=val(target.m_RoleId),calls=0,lastSent=0,ack=false}
+    logTargetChoice(m,playerPos,battle,round,actors[#actors],'selected')
+    return true
+   end
+   if not addActor(player,playerPos,s.role,playerCfg) then
+    -- 敌人已全部倒下：不发动作，只在本机快进剩余动画，并补发一次 3472 让服务端确认本轮播完；校验不通过就维持原等待。
+    local cmds=m.m_RoundCmdList
+    local count=type(cmds)=='table' and type(table.nums)=='function' and table.nums(cmds) or 0
+    local idx=tonumber(val(m.m_CurCmdPlayIndex))
+    local analyzeFinish=val(m.m_AnalyzeFinish)
+    local pauseAnalyze=val(m.m_PauseAnalyze)
+    local fastable=(type(m.fastAnalyzeSurplusCMD)=='function' and pauseAnalyze==false and count>0
+        and idx and idx>=1 and idx<=count and analyzeFinish==false)
+    local detail=' count='..tostring(count)..' idx='..tostring(idx)..' finish='..tostring(analyzeFinish)
+        ..' pause='..tostring(pauseAnalyze)..' fastable='..tostring(fastable)
+    if analyzeFinish==true and count>0 and idx==count then
+     -- 回合已经播完：没有可快进的内容，标记本回合已处理，避免每 tick 重试。
+     logRound(s,mark,'skipped','reason=round_already_finished skill='..tostring(playerCfg.skillId)..detail)
+     s.roundMark=mark;status(s,'running');return
+     elseif analyzeFinish==true then
+      -- 完成标记还挂着但索引停在回合开头：等 1 秒仍如此，就直接补一条 playover 推进，避免整场卡住。
+      local now=s.elapsed
+      if s.staleRound~=mark then s.staleRound=mark;s.staleAt=now end
+      logRound(s,mark,'not_skipped','reason=analyze_finish_flag_stale count='..tostring(count)..' idx='..tostring(idx))
+      if now-(s.staleAt or now)>=0.4 then
+       local playoverKey=mark
+       -- 已在"敌人全倒、无可出手目标"的分支里：最后一回合客户端不会再提交指令，
+       -- m_CmdRound 会停在上一回合，所以不能再拿它当前置条件，否则最后一回合必卡。
+       if not s.playoverKeys[playoverKey] then
+        s.playoverKeys[playoverKey]=true
+        local fastOk=false
+        if type(m.fastAnalyzeSurplusCMD)=='function' and val(m.m_PauseAnalyze)==false
+            and count>0 and idx and idx>=1 and idx<=count then
+         fastOk=pcall(m.fastAnalyzeSurplusCMD,m)
+        end
+        -- 实测：finish=true 时 fastAnalyzeSurplusCMD/verifyRoundData 都不会推进 idx（idxAfter 仍为 1），
+        -- 而且盲发 3472 会把服务端回合一路推快（67694 场 27 回合 / 11 秒）。所以只做本机尝试，不发包。
+        logRound(s,mark,'waiting','reason=stale_finish_flag count='..tostring(count)..' idx='..tostring(idx)..' cmd='..tostring(val(m.m_CmdRound))..' fast='..tostring(fastOk)..' finish='..tostring(val(m.m_AnalyzeFinish))..' idxAfter='..tostring(val(m.m_CurCmdPlayIndex)))
+       else
+        logRound(s,mark,'blocked','reason=stale_without_playover cmd='..tostring(val(m.m_CmdRound))..' cur='..tostring(round))
+       end
+       s.roundMark=mark;status(s,'running');return
+      end
+      status(s,'running');return
+     end
+    if fastable then
+     local ok,err=pcall(m.fastAnalyzeSurplusCMD,m)
+     if ok and val(m.m_AnalyzeFinish)==true
+         and eq(val(m.m_BattleId),battle) and eq(val(m.m_CurRoundNum),round) then
+      logRound(s,mark,'skipped','reason=no_player_action_target_fast_forward skill='..tostring(playerCfg.skillId)..detail)
+      s.roundMark=mark;status(s,'running');send(s,3472,'',s.role,round);return
+     end
+     if not ok then roundLog('fast_forward_failed round='..mark..' error='..tostring(err)..detail) end
+    end
+    logRound(s,mark,'blocked','reason=no_player_action_target skill='..tostring(playerCfg.skillId)..detail)
+    status(s,'waiting_battle');return
+   end
+   local petPos=val(m.m_PetPos);local pet=petPos and m.m_RoleIns[petPos]
+   if pet and pet.m_Battlefield==m and type(pet.getIsAlive)=='function' and pet:getIsAlive() then
+    local petId=val(pet.m_RoleId)
+    if tonumber(petId) and tonumber(petId)>0 and not eq(petId,s.role) then
+     local petCfg,petErr=skillConfig(ui,petId)
+      if not petCfg then
+       -- 读不懂宝宝设置（吃药/未知技能等）时不要整回合停摆：退回普攻，保证回合继续并可跳过。
+       logRound(s,mark,'pet_fallback','reason='..tostring(petErr)..' pet='..tostring(petId)..' action=normal_attack')
+       petCfg={actType=0,skillId=0}
+      end
+     if not addActor(pet,petPos,petId,petCfg) then logRound(s,mark,'blocked','reason=no_pet_action_target pet='..tostring(petId));status(s,'waiting_battle');return end
+     s.petId=petId;s.petSkillId=petCfg.skillId
+    end
+   else s.petId='none';s.petSkillId='none' end
+   s.characterSkillId=playerCfg.skillId
+   s.target={manager=m,battle=battle,round=round,playerPos=playerPos,offSent=true,offAck=false,actors=actors,startedAt=s.elapsed,offSentAt=s.elapsed}
+   s.offPending=false;s.restoreSent=false;s.restoreAttempts=0;s.restoreAt=0;s.autoConfirmed=false
+   logRound(s,mark,'started','playerSkill='..tostring(playerCfg.skillId)..' petSkill='..tostring(s.petSkillId)..' '..diagRoles(m)..' '..diagCmds(m)..' auto='..tostring(val(ui.m_AutoStatus)))
+   send(s,3473,0)
+   s.offPending=true
+   status(s,'running')
+  end)
+  if not tickOk then
+   s.lastError=tostring(tickErr)
+   status(s,'error',{reason=s.lastError})
+   s.stopRequested=true;s.stopReason='lua_error'
+   cleanup(s,s.stopReason)
+  end
+ end,0.01)
+ status(s,'waiting_battle')
+end)
+if not ok then
+ if s.timer then pcall(scheduler.unscheduleGlobal,s.timer) end
+ local hooksRemoved=true
+ for id,fn in pairs(s.originals) do
+  if ProtoFunc[id]==s.hooks[id] then ProtoFunc[id]=fn end
+  if ProtoFunc[id]~=fn then hooksRemoved=false end
+ end
+ if s.sendOriginal then
+   local readOk,current=pcall(function() return s.sendConnection and s.sendConnection.send end)
+   if readOk and current==s.sendHook then pcall(function() s.sendConnection.send=s.sendOriginal end) end
+   local verifyOk,restored=pcall(function() return s.sendConnection and s.sendConnection.send==s.sendOriginal end)
+   if not verifyOk or not restored then hooksRemoved=false end
+ end
+ if rawget(_G,key)==s then rawset(_G,key,nil) end
+ local bindingCleared=rawget(_G,key)==nil
+ writeStatus('error',{reason=tostring(e),hooksRemoved=hooksRemoved,bindingCleared=bindingCleared})
+end
+return 0

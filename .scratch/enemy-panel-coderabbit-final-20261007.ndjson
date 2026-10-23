@@ -1,0 +1,7 @@
+{"type":"review_context","reviewType":"uncommitted","currentBranch":"master","baseBranch":"master","workingDirectory":"F:/项目目录/封包监听工具/WinsockPacketEditor/tools/enemy-status-panel"}
+{"type":"status","phase":"connecting","status":"connecting_to_review_service"}
+{"type":"status","phase":"setup","status":"setting_up"}
+{"type":"status","phase":"analyzing","status":"summarizing"}
+{"type":"status","phase":"analyzing","status":"reviewing"}
+{"type":"heartbeat","status":"reviewing"}
+{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["tools/enemy-status-panel/README.md","tools/enemy-status-panel/battle_reader.py","tools/enemy-status-panel/main.py","tools/enemy-status-panel/start-panel.ps1","tools/enemy-status-panel/test_battle_reader.py","tools/enemy-status-panel/打开战斗面板.cmd"],"outcome":"completed_with_warnings","message":"Review completed with unverified findings"}

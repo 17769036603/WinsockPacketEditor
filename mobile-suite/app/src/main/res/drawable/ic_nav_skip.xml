@@ -1,0 +1,6 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 战斗跳过：播放三角 -->
+    <path android:pathData="M8.4 4.8L19.4 12 8.4 19.2z" android:fillColor="#FFFFFFFF" />
+</vector>

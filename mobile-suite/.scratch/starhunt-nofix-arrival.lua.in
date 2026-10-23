@@ -1,0 +1,824 @@
+local cfg=__CONFIG__
+local key=cfg.stateKey
+local SCAN_INTERVAL_SECONDS=0.25
+local LEASE_STALE_GRACE=3
+local CHALLENGE_REBIND_GRACE=3
+local function clean(v)
+ if v==nil then return 'unknown' end
+ return tostring(v):gsub('[\r\n=]',' ')
+end
+local function readFile(path)
+ local ok,f=pcall(io.open,path,'r')
+ if not ok or not f then return nil end
+ local readOk,value=pcall(f.read,f,'*a')
+ pcall(f.close,f)
+ if not readOk then return nil end
+ return value
+end
+local function parseInteger(value,minimum,maximum)
+ if type(value)~='string' or not value:match('^[0-9]+$') then return nil end
+ local n=tonumber(value)
+ if not n or n<minimum or (maximum and n>maximum) or n%1~=0 or n>9007199254740991 then return nil end
+ return n
+end
+local function parseLevels(value,allowEmpty)
+ if type(value)~='string' then return nil end
+ if value=='' then return allowEmpty and {} or nil end
+ local levels={}
+ local previous=0
+ for token in (value..','):gmatch('(.-),') do
+  if not token:match('^[1-9][0-9]*$') then return nil end
+  local level=parseInteger(token,1,999)
+  if not level or level<=previous then return nil end
+  levels[#levels+1]=level
+  previous=level
+ end
+ return levels
+end
+local function selectedLevelsCsv(levels)
+ local values={}
+ for index,level in ipairs(levels or {}) do values[index]=tostring(level) end
+ return table.concat(values,',')
+end
+local function parseCommand(contents)
+ if type(contents)~='string' then return nil end
+ local values={}
+ local fieldCount=0
+ contents=contents:gsub('\r\n','\n')
+ for line in (contents..'\n'):gmatch('(.-)\n') do
+  if line~='' then
+   local k,v=line:match('^([a-z]+)=([^\r\n]*)$')
+   if not k or values[k]~=nil then return nil end
+   if k~='sequence' and k~='mode' and k~='level' and k~='levels' and k~='map' then return nil end
+   values[k]=v
+   fieldCount=fieldCount+1
+  end
+ end
+ if fieldCount~=4 or (values.level~=nil and values.levels~=nil) then return nil end
+ local sequence=parseInteger(values.sequence,1)
+ local map=parseInteger(values.map,0,2147483647)
+ local mode=values.mode
+ if not sequence or not map or (mode~='scan' and mode~='run' and mode~='teleport') then return nil end
+ local levels
+ if values.levels~=nil then
+  levels=parseLevels(values.levels,mode=='scan' or mode=='teleport')
+ else
+  local legacyLevel=parseInteger(values.level,0,999)
+  if not legacyLevel then return nil end
+  if mode=='scan' and legacyLevel==0 then levels={}
+  elseif mode=='scan' then levels={legacyLevel}
+  elseif mode=='run' and legacyLevel>0 then levels={legacyLevel}
+  else return nil end
+ end
+ if not levels or (mode=='run' and (#levels==0 or map<1)) or (mode=='teleport' and (map<1 or #levels~=0)) then return nil end
+ return {sequence=sequence,mode=mode,levels=levels,level=levels[1] or 0,map=map}
+end
+local function sameCommand(a,b)
+ if not a or not b or a.sequence~=b.sequence or a.mode~=b.mode or a.map~=b.map then return false end
+ if #(a.levels or {})~=#(b.levels or {}) then return false end
+ for index,level in ipairs(a.levels or {}) do if level~=(b.levels or {})[index] then return false end end
+ return true
+end
+local function writeBinding(s,cleared)
+ local ok,f=pcall(io.open,cfg.bindingPath,'w')
+ if not ok or not f then s.bindingCleared=false;return false end
+ local text=''
+ if not cleared then
+  text='runId='..clean(cfg.runId)..'\nplayer='..clean(s.role)..'\nmanager='..clean(s.manager)..'\n'
+ end
+ local writeOk=pcall(f.write,f,text)
+ pcall(f.close,f)
+ s.bindingCleared=writeOk and cleared or false
+ return writeOk
+end
+local function buildMapCatalog()
+ local source=rawget(_G,'data_MapInfo')
+ if type(source)~='table' then return '' end
+ local ids={}
+ for id in pairs(source) do if type(id)=='number' and id>0 then ids[#ids+1]=id end end
+ table.sort(ids)
+ local parts={}
+ for _,id in ipairs(ids) do
+  local entry=source[id]
+  local name=entry and entry.name
+  if type(name)=='string' and name~='' then parts[#parts+1]=tostring(id)..':'..name:gsub('[,\n]',' ') end
+ end
+ return table.concat(parts,',')
+end
+local function writeStatus(s,state,reason)
+ s.status=state
+ if (s.mapCatalog==nil or s.mapCatalog=='') and type(rawget(_G,'data_MapInfo'))=='table' then s.mapCatalog=buildMapCatalog() end
+ if reason~=nil then s.reason=reason else s.reason=s.reason or '' end
+ local target=s.target
+ local fields={
+  {'status',s.status},
+  {'mapCatalog',s.mapCatalog or ''},
+  {'map',s.map},
+  {'mapName',s.mapName},
+  {'role',s.role},
+  {'levels',s.levels},
+  {'levelNames',s.levelNames},
+  {'selectedLevels',s.selectedLevels},
+  {'selectedLevel',s.level},
+  {'targetId',target and target.id or 'unknown'},
+  {'targetName',target and target.name or 'unknown'},
+  {'targetX',target and target.x or 'unknown'},
+  {'targetY',target and target.y or 'unknown'},
+  {'calls',s.calls},
+  {'teleports',s.teleports},
+  {'challenges',s.challenges},
+  {'skipped',s.skipped},
+  {'reason',s.reason},
+  {'updatedAt',os.time()},
+  {'hooksRemoved',s.hooksRemoved},
+  {'bindingCleared',s.bindingCleared},
+  {'acceptedSequence',s.acceptedSequence},
+ }
+ local ok,f=pcall(io.open,cfg.resultPath,'w')
+ if not ok or not f then return false end
+ local writeOk=pcall(function()
+  for _,pair in ipairs(fields) do f:write(pair[1],'=',clean(pair[2]),'\n') end
+ end)
+ pcall(f.close,f)
+ return writeOk
+end
+local function removeObserver(s)
+ if not s.useHook then s.hooksRemoved=true;return true end
+ if netconn and netconn.useFunc==s.useHook then
+  netconn.useFunc=s.useOriginal
+  s.hooksRemoved=netconn.useFunc==s.useOriginal
+ else
+  s.hooksRemoved=false
+ end
+ if s.hooksRemoved then s.useHook=nil;s.useOriginal=nil end
+ return s.hooksRemoved
+end
+local function isStopRequested()
+ return readFile(cfg.stopPath)~=nil
+end
+local function leaseAlive()
+ if isStopRequested() then return false,'stop_requested' end
+ local now=os.time()
+ local allFresh=true
+ local bothStale=true
+ for _,path in ipairs({cfg.leasePath,cfg.workerPath}) do
+  local value=readFile(path)
+  local stamp=value and tonumber(value:match('%d+'))
+  local fresh=stamp and now>=stamp and now-stamp<=5
+  if fresh then bothStale=false else allFresh=false end
+ end
+ if allFresh then return true,nil,false end
+ return false,'lease_expired',bothStale
+end
+local function copyCommand(command)
+ local levels={}
+ for index,level in ipairs(command.levels or {}) do levels[index]=level end
+ return {sequence=command.sequence,mode=command.mode,levels=levels,level=command.level,map=command.map}
+end
+local function anleiActionActive()
+ return rawget(_G,'__codex_anlei_v1')~=nil
+end
+local function writeSkippedOnce(s,id,reason)
+ local keyId=tostring(id)
+ if not s.skippedTargets[keyId] then s.skipped=s.skipped+1;s.skippedTargets[keyId]=true end
+ s.cooldowns[keyId]=s.elapsed+5
+ s.reason=reason
+end
+local function clearAction(s)
+ s.phase=nil
+ s.phaseDeadline=nil
+ s.teleportResponse=nil
+ s.ownBattleResponse=false
+ s.endBattleSeen=false
+ s.challengeTargetMissingSince=nil
+ s.target=nil
+end
+local function resetRound(s)
+ s.roundAttempted={}
+ s.roundWaitUntil=nil
+end
+local pauseRun
+local finish
+local function applySelection(s,levels)
+ s.selectedLevelSet={}
+ for _,level in ipairs(levels or {}) do s.selectedLevelSet[level]=true end
+ s.selectedLevels=selectedLevelsCsv(levels)
+ s.level=(levels and levels[1]) or 0
+end
+local function acceptCommand(s,command)
+ s.acceptedSequence=command.sequence
+ s.acceptedCommand=copyCommand(command)
+ s.unknown=false
+ s.paused=false
+ s.reason=''
+ clearAction(s)
+ s.challengeSentRole=nil
+ s.lateBattleResponseAt=nil
+ if command.mode=='scan' then
+  s.mode='scan'
+  applySelection(s,command.levels)
+  s.lockedMap=nil
+  s.lockedRole=nil
+  removeObserver(s)
+  writeBinding(s,true)
+  return true
+ end
+ if command.mode=='teleport' then
+  s.mode='teleport'
+  s.teleportTarget=tonumber(command.map)
+  s.mapJumpSent=false
+  s.mapJumpDeadline=nil
+  s.lockedMap=nil
+  s.lockedRole=nil
+  removeObserver(s)
+  writeBinding(s,true)
+  return true
+ end
+ s.mode='run'
+ applySelection(s,command.levels)
+ s.lockedMap=command.map
+ s.lockedRole=nil
+ s.cursor=0
+ s.cooldowns={}
+ s.skippedTargets={}
+ resetRound(s)
+ if anleiActionActive() then
+  pauseRun(s,'暗雷模块正在运行，请手动停止后重新开始')
+  return true
+ end
+ if not s.hooksRemoved then removeObserver(s) end
+ if not s.hooksRemoved or not s.useHook then
+  if not netconn or type(netconn.useFunc)~='function' then
+   s.unknown=true;s.reason='inbound_observer_unavailable';return false
+  end
+  s.useOriginal=netconn.useFunc
+  s.useHook=function(self,id,data,...)
+   if rawget(_G,key)==s and not s.finished then
+    pcall(function()
+     local changed=false
+     if id==65505 and type(data)=='table' and s.phase=='teleport_wait' and s.target then
+      local matches=tonumber(data.mapId)==s.target.map and tonumber(data.posX)==s.target.x and tonumber(data.posY)==s.target.y
+      if matches then s.teleportResponse={map=data.mapId,x=data.posX,y=data.posY};changed=true end
+     elseif id==3584 and type(data)=='table' and s.challengeSentRole and s.role and tostring(data.roleId)==tostring(s.role) then
+      s.ownBattleResponse=true
+      s.lateBattleResponseAt=s.elapsed
+      changed=true
+     elseif id==3581 then
+      s.endBattleSeen=true;changed=true
+     elseif id==8247 and type(data)=='table' and s.phase=='challenge_wait' and s.target and tostring(data.npcId)==tostring(s.target.id) then
+      local buttons=data.buttons or data.btns
+      local count,guard,other=0,false,false
+      local function classify(action)
+       if action=='guard' then guard=true elseif action~='离开' then other=true end
+      end
+      if type(buttons)=='string' then
+       local malformed=false
+       for group in (buttons..'|'):gmatch('(.-)|') do
+        count=count+1
+        local label,action=group:match('^([^/]+)/([^/]+)$')
+        if not label or not action then malformed=true else classify(action) end
+       end
+       if malformed then other=true end
+      elseif type(buttons)=='table' then
+       for _,button in pairs(buttons) do
+        count=count+1
+        if type(button)=='table' then
+         local action=button.id or button.key or button.action
+         if type(action)=='string' then classify(action) else other=true end
+        else other=true end
+       end
+      else other=true end
+      local onlyWatch=guard and not other
+      if onlyWatch and count>0 then
+       writeSkippedOnce(s,s.target.id,'目标提供观战入口')
+       s.phase=nil;s.phaseDeadline=nil;s.target=nil
+       changed=true
+      end
+     end
+     if changed then writeStatus(s,s.status or 'reading',s.reason) end
+    end)
+   end
+   return s.useOriginal(self,id,data,...)
+  end
+  netconn.useFunc=s.useHook
+  s.hooksRemoved=false
+ end
+ writeBinding(s,false)
+ return true
+end
+local function refreshCommand(s)
+ local raw=readFile(cfg.commandPath)
+ local command=parseCommand(raw)
+ if not command then
+  if s.mode=='run' then s.unknown=true;s.reason='command_unavailable_or_invalid' end
+  return false,'command_unavailable_or_invalid'
+ end
+ if command.sequence<s.acceptedSequence then
+  if s.mode=='run' then s.unknown=true;s.reason='command_sequence_regressed' end
+  return false,'command_sequence_regressed'
+ end
+ if command.sequence==s.acceptedSequence then
+  if s.acceptedCommand and not sameCommand(command,s.acceptedCommand) then
+   if s.mode=='run' then s.unknown=true;s.reason='command_sequence_reused' end
+   return false,'command_sequence_reused'
+  end
+  return true,'unchanged'
+ end
+ acceptCommand(s,command)
+ return true,'updated'
+end
+local function getContext()
+ local ok,context=pcall(function()
+  local p=LocalPlayerMgr:getInstance()
+  if not p then return nil,'waiting_role' end
+  local role=p:getPlayerId()
+  if not tonumber(role) or tonumber(role)<=0 then return nil,'waiting_role' end
+  local manager=ClassIns and ClassIns['MapMgr.Ins']
+  if not manager then return nil,'waiting_map' end
+  local view=manager.m_MapView
+  if not view then return nil,'waiting_map' end
+  local map=tonumber(manager.m_CurMapId)
+  local viewMap=tonumber(view.m_MapId)
+  if not map or not viewMap or map~=viewMap then return nil,'waiting_map' end
+  local player=view.m_LocalRole
+  if not player or tonumber(player.m_PlayerId)~=tonumber(role) or player.m_IsLocalPlayer~=true then return nil,'waiting_role' end
+  local mapName='unknown'
+  local info=view.m_MapInfo
+  if info and info.data_MapInfo and type(info.data_MapInfo.name)=='string' then mapName=info.data_MapInfo.name
+  elseif info and type(info.name)=='string' then mapName=info.name
+  elseif data_MapInfo and data_MapInfo[map] and type(data_MapInfo[map].name)=='string' then mapName=data_MapInfo[map].name end
+  return {playerManager=p,role=role,manager=manager,view=view,map=map,mapName=mapName,loading=manager.m_IsMapLoading==true,x=tonumber(player.m_Gx),y=tonumber(player.m_Gy)}
+ end)
+ if not ok then return nil,'waiting_map' end
+ return context
+end
+local function putCandidate(byId,info,sceneNpc,currentMap)
+ if type(info)~='table' then return end
+ local ok,candidate=pcall(function()
+  local title=info.title
+  if type(title)~='string' then return nil end
+  local digits=title:match('^地煞(%d+)星$')
+  local level=digits and tonumber(digits)
+  if not level then return nil end
+  local roleId=info.roleId
+  local mapId=info.mapId
+  local posX=info.posX
+  local posY=info.posY
+  local name=info.name
+  local id=tonumber(roleId)
+  local map=tonumber(mapId)
+  local x=tonumber(posX)
+  local y=tonumber(posY)
+  if not level or not id or id<=0 or map~=currentMap or not x or not y or type(name)~='string' then return nil end
+  return {id=id,level=level,map=map,x=x,y=y,name=name,title=title,scene=sceneNpc}
+ end)
+ if not ok or not candidate then return end
+ local keyId=tostring(candidate.id)
+ local prior=byId[keyId]
+ if not prior or sceneNpc then byId[keyId]=candidate end
+end
+local function readProperty(object,key)
+ local ok,value=pcall(function() return object[key] end)
+ if ok then return value end
+ return nil
+end
+local function scanTargets(context,selectedLevelSet)
+ local byId={}
+ local ok=pcall(function()
+  for _,source in pairs({readProperty(context.manager,'m_DynamicNPC'),readProperty(context.manager,'m_CurMapFarNpc')}) do
+   if type(source)=='table' then
+    for _,entry in pairs(source) do
+     local entryType=type(entry)
+     if entryType=='table' or entryType=='userdata' then
+      local info=readProperty(entry,'m_NpcInfo')
+      putCandidate(byId,info or entry,nil,context.map)
+     end
+    end
+   end
+  end
+  local sceneNpcs=readProperty(context.view,'m_NPC')
+  if type(sceneNpcs)=='table' then
+   for _,npc in pairs(sceneNpcs) do
+    local npcType=type(npc)
+    if npcType=='table' or npcType=='userdata' then
+     putCandidate(byId,readProperty(npc,'m_NpcInfo'),npc,context.map)
+    end
+   end
+  end
+ end)
+ if not ok then return nil end
+ local levels={}
+ local levelNames={}
+ for _,candidate in pairs(byId) do
+  levels[candidate.level]=(levels[candidate.level] or 0)+1
+  if not levelNames[candidate.level] then levelNames[candidate.level]=candidate.name end
+ end
+ local levelKeys={}
+ for level in pairs(levels) do levelKeys[#levelKeys+1]=level end
+ table.sort(levelKeys)
+ local levelParts,nameParts={},{}
+ for _,level in ipairs(levelKeys) do
+  levelParts[#levelParts+1]=tostring(level)..':'..tostring(levels[level])
+  nameParts[#nameParts+1]=tostring(level)..':'..clean(levelNames[level])
+ end
+ local candidates={}
+ for _,candidate in pairs(byId) do if selectedLevelSet and selectedLevelSet[candidate.level] then candidates[#candidates+1]=candidate end end
+ table.sort(candidates,function(a,b) return a.id<b.id end)
+ return byId,candidates,table.concat(levelParts,','),table.concat(nameParts,'|')
+end
+local function sceneFight(candidate)
+ local npc=candidate and candidate.scene
+ if not npc then return nil end
+ local accessOk,getIsFight=pcall(function() return npc.getIsFight end)
+ if not accessOk then return 'unknown' end
+ if type(getIsFight)~='function' then return nil end
+ local ok,fighting=pcall(getIsFight,npc)
+ if not ok then return 'unknown' end
+ return fighting==true
+end
+local function observeMap(s,context)
+ if context then
+  s.map=context.map;s.mapName=context.mapName;s.role=context.role;s.manager=tostring(context.manager)
+ end
+ local byId,candidates,levels,levelNames
+ if context then byId,candidates,levels,levelNames=scanTargets(context,s.selectedLevelSet) end
+ if byId then
+  s.targetsById=byId;s.candidates=candidates;s.levels=levels;s.levelNames=levelNames
+ else
+  s.targetsById={};s.candidates={};s.levels='';s.levelNames=''
+ end
+end
+local function enterUnknown(s,reason)
+ s.unknown=true;s.reason=reason;s.phase='unknown';s.phaseDeadline=nil
+end
+pauseRun=function(s,reason)
+ s.paused=true;s.reason=reason
+ clearAction(s)
+ removeObserver(s)
+ writeBinding(s,true)
+end
+local function markFight(s,candidate)
+ writeSkippedOnce(s,candidate.id,'客户端显示战斗中')
+end
+local function chooseTarget(s)
+ local candidates=s.candidates or {}
+ local total=#candidates
+ if total==0 then return nil end
+ local now=s.elapsed
+ for offset=1,total do
+  local index=((s.cursor+offset-1)%total)+1
+  local candidate=candidates[index]
+  local keyId=tostring(candidate.id)
+  local cooldown=s.cooldowns[keyId] or 0
+  if not (s.roundAttempted and s.roundAttempted[keyId]) and now>=cooldown then
+   s.roundAttempted=s.roundAttempted or {}
+   s.roundAttempted[keyId]=true
+   local fighting=sceneFight(candidate)
+   if fighting==true then
+    markFight(s,candidate)
+   elseif fighting=='unknown' then
+    writeSkippedOnce(s,candidate.id,'客户端忙碌状态无法确认')
+   else
+    s.cursor=index
+    return candidate
+   end
+  end
+ end
+ return nil
+end
+local function freshCandidate(s,id)
+ local numericId=tonumber(id)
+ if not numericId then return nil end
+ local candidate=s.targetsById and s.targetsById[tostring(numericId)]
+ if not candidate or not (s.selectedLevelSet and s.selectedLevelSet[candidate.level]) or candidate.map~=s.lockedMap then return nil end
+ return candidate
+end
+local function currentPositionMatches(context,target)
+ return context and target and context.map==target.map and context.x==target.x and context.y==target.y
+end
+local function validateBeforeSend(s,stage)
+ if s.finished or rawget(_G,key)~=s then return nil end
+ if isStopRequested() then s.reason='worker_stop_requested';writeStatus(s,'stopping',s.reason);return nil end
+ local alive,why=leaseAlive()
+ if not alive then s.reason=why;writeStatus(s,'stopping',why);return nil end
+ local commandOk,commandState=refreshCommand(s)
+ if not commandOk or commandState=='updated' then return nil end
+ if s.mode~='run' or s.paused or s.unknown then return nil end
+ if anleiActionActive() then
+  pauseRun(s,'暗雷模块正在运行，请手动停止后重新开始')
+  return nil
+ end
+ if s.hooksRemoved or not s.useHook or not netconn or netconn.useFunc~=s.useHook then
+  enterUnknown(s,'inbound_observer_ownership_lost');return nil
+ end
+ local context,contextState=getContext()
+ if not context then writeStatus(s,contextState or 'waiting_role',contextState);return nil end
+ observeMap(s,context)
+ if context.loading then writeStatus(s,'waiting_map','map_loading');return nil end
+ if not s.lockedRole then
+  if context.map~=s.lockedMap then pauseRun(s,'start_map_changed');return nil end
+  s.lockedRole=context.role;s.role=context.role;s.manager=tostring(context.manager)
+  if not writeBinding(s,false) then enterUnknown(s,'binding_write_failed');return nil end
+ end
+ if tostring(context.role)~=tostring(s.lockedRole) then pauseRun(s,'role_changed');return nil end
+ if context.map~=s.lockedMap then pauseRun(s,'map_changed');return nil end
+ local warOk,inWar=pcall(JudgeIsInWar)
+ if not warOk then writeStatus(s,'waiting_role','battle_state_unavailable');return nil end
+ if inWar then enterUnknown(s,'battle_state_changed_before_send');return nil end
+ if not netconn or netconn.m_ConnectState~=1 then writeStatus(s,'waiting_role','network_not_connected');return nil end
+ if stage=='challenge' and not currentPositionMatches(context,s.target) then
+  enterUnknown(s,'challenge_position_changed_after_confirmation')
+  writeStatus(s,'unknown',s.reason)
+  return nil
+ end
+ local target=freshCandidate(s,s.target and s.target.id)
+ if not target then
+  if stage=='challenge' and s.phase=='challenge_ready' then
+   s.challengeTargetMissingSince=s.challengeTargetMissingSince or s.elapsed
+   if s.elapsed-s.challengeTargetMissingSince>=CHALLENGE_REBIND_GRACE then
+    enterUnknown(s,'challenge_target_rebinding_timeout')
+    writeStatus(s,'unknown',s.reason)
+   else
+    writeStatus(s,'waiting_targets','challenge_target_rebinding')
+   end
+   return nil
+  end
+  clearAction(s);writeStatus(s,'waiting_targets','target_instance_missing');return nil
+ end
+ s.challengeTargetMissingSince=nil
+ if stage=='challenge' then
+  if target.x~=s.target.x or target.y~=s.target.y then
+   enterUnknown(s,'challenge_target_position_changed_after_confirmation')
+   writeStatus(s,'unknown',s.reason)
+   return nil
+  end
+  s.target=target
+ end
+ local fighting=sceneFight(target)
+ if fighting==true then
+  markFight(s,target);clearAction(s);writeStatus(s,'waiting_targets',s.reason);return nil
+ elseif fighting=='unknown' then
+  writeSkippedOnce(s,target.id,'客户端忙碌状态无法确认')
+  clearAction(s);writeStatus(s,'waiting_targets',s.reason);return nil
+ end
+ return target,context
+end
+local function sendTeleport(s)
+ local target,context=validateBeforeSend(s,'teleport')
+ if not target then return false end
+ if not tonumber(C2S_JumpMap) or tonumber(C2S_JumpMap)~=22568 then enterUnknown(s,'teleport_protocol_unconfirmed');return false end
+ if target.x%1~=0 or target.y%1~=0 then enterUnknown(s,'target_position_not_integer');return false end
+ local latest=freshCandidate(s,target.id)
+ if not latest then clearAction(s);return false end
+ target=latest;s.target=target
+ s.calls=s.calls+1;s.teleports=s.teleports+1;s.phase='teleport_wait';s.phaseDeadline=s.elapsed+8;s.teleportResponse=nil
+ local ok,err=pcall(netconn.send,netconn,C2S_JumpMap,context.map,target.x,target.y,0)
+ if not ok then enterUnknown(s,'teleport_send_failed:'..clean(err));return false end
+ writeStatus(s,'teleport_wait','awaiting_position_confirmation')
+ return true
+end
+local function sendChallenge(s)
+ local target=validateBeforeSend(s,'challenge')
+ if not target then return false end
+ if not tonumber(C2S_TouchNPCBtn) or tonumber(C2S_TouchNPCBtn)~=12344 then enterUnknown(s,'challenge_protocol_unconfirmed');return false end
+ s.calls=s.calls+1;s.challenges=s.challenges+1;s.phase='challenge_wait';s.phaseDeadline=s.elapsed+12;s.ownBattleResponse=false
+ s.challengeSentRole=s.lockedRole
+ local ok,err=pcall(netconn.send,netconn,C2S_TouchNPCBtn,target.id,'threats_star','')
+ if not ok then enterUnknown(s,'challenge_send_failed:'..clean(err));return false end
+ writeStatus(s,'challenge_wait','awaiting_own_battle_confirmation')
+ return true
+end
+-- 直接传送：只发一次地图跳转，确认到达或超时后结束，不扫描也不挑战。
+local function mapStartPositionAny(map)
+ local source=rawget(_G,'data_MapInfo')
+ local entry=source and source[map]
+ local position=entry and entry.startPos
+ if type(position)~='table' then
+  local globalEntry=rawget(_G,'data_map_'..tostring(map))
+  position=globalEntry and globalEntry.startPos
+ end
+ local x=position and (position.x or position[1] or position.posX)
+ local y=position and (position.y or position[2] or position.posY)
+ x=tonumber(x);y=tonumber(y)
+ if x and y and x>0 and y>0 and x%1==0 and y%1==0 and x<=100000 and y<=100000 then return x,y end
+ return nil
+end
+local function teleportStep(s,context,contextState)
+ if s.finished or rawget(_G,key)~=s or s.paused or s.unknown then return end
+ if isStopRequested() then writeStatus(s,'stopping','worker_stop_requested');return end
+ local alive,why=leaseAlive()
+ if not alive then writeStatus(s,'stopping',why);return end
+ if anleiActionActive() then finish(s,'other_movement_active');return end
+ if not context then writeStatus(s,contextState or 'waiting_role',contextState);return end
+ if context.loading then writeStatus(s,'waiting_map','map_loading');return end
+ if not s.lockedRole then
+  s.lockedRole=context.role;s.role=context.role;s.manager=tostring(context.manager)
+  if not writeBinding(s,false) then finish(s,'binding_write_failed');return end
+ elseif tostring(context.role)~=tostring(s.lockedRole) then finish(s,'role_changed');return end
+
+ local warOk,inWar=pcall(JudgeIsInWar)
+ if not warOk or inWar then writeStatus(s,'waiting_role','battle_state_unavailable_or_active');return end
+ if not netconn or netconn.m_ConnectState~=1 then writeStatus(s,'waiting_role','network_not_connected');return end
+ local permissionOk,teamRestricted=pcall(function()
+  local value=readProperty(context.manager,'canNotOperationTeam')
+  if type(value)=='function' then return value(context.manager) end
+  return value
+ end)
+ if not permissionOk or type(teamRestricted)~='boolean' or teamRestricted then
+  writeStatus(s,'waiting_role','team_operation_restricted_or_unknown');return
+ end
+ if not context then writeStatus(s,contextState or 'waiting_role',contextState);return end
+ if context.loading then writeStatus(s,'waiting_map','map_loading');return end
+ if tonumber(context.map)==tonumber(s.teleportTarget) then finish(s,'teleported');return end
+ if s.mapJumpSent then
+  if s.elapsed>=(s.mapJumpDeadline or math.huge) then
+   writeStatus(s,'unknown','teleport_timeout')
+   finish(s,'teleport_timeout')
+  else
+   writeStatus(s,'teleport_wait','awaiting_map_confirmation')
+  end
+  return
+ end
+ local x,y=mapStartPositionAny(s.teleportTarget)
+ if not x or not y then
+  writeStatus(s,'unknown','map_start_position_unavailable')
+  finish(s,'map_start_position_unavailable')
+  return
+ end
+ if not tonumber(C2S_JumpMap) or tonumber(C2S_JumpMap)~=22568 then
+  enterUnknown(s,'teleport_protocol_unconfirmed')
+  writeStatus(s,'unknown',s.reason)
+  return
+ end
+ s.mapJumpSent=true;s.mapJumpDeadline=s.elapsed+10
+ s.calls=s.calls+1;s.teleports=(s.teleports or 0)+1
+ local ok=pcall(netconn.send,netconn,C2S_JumpMap,s.teleportTarget,x,y,0)
+ if not ok then
+  writeStatus(s,'unknown','teleport_send_failed')
+  finish(s,'teleport_send_failed')
+  return
+ end
+ writeStatus(s,'teleport_wait','jump_sent')
+end
+local function tick(s,dt)
+ if rawget(_G,key)~=s or s.finished then return end
+ s.elapsed=s.elapsed+(type(dt)=='number' and math.max(0,dt) or SCAN_INTERVAL_SECONDS)
+ local alive,leaseReason,bothStale=leaseAlive()
+ if alive then
+  s.leaseStaleSince=nil
+ elseif leaseReason=='lease_expired' and bothStale then
+  s.leaseStaleSince=s.leaseStaleSince or s.elapsed
+  if s.elapsed-s.leaseStaleSince>=LEASE_STALE_GRACE then
+   refreshCommand(s)
+   finish(s,'lease_expired')
+   return
+  end
+ else
+  s.leaseStaleSince=nil
+ end
+ local commandOk,commandState=refreshCommand(s)
+ if not commandOk then
+  local state=s.mode=='run' and 'unknown' or 'reading'
+  writeStatus(s,state,s.reason~='' and s.reason or commandState)
+  return
+ end
+ local context,contextState=getContext()
+ observeMap(s,context)
+ if s.mode=='teleport' then teleportStep(s,context,contextState);return end
+  if s.mode=='scan' then writeStatus(s,'reading','');return end
+  if s.paused then writeStatus(s,'paused',s.reason);return end
+ local warOk,inWar=pcall(JudgeIsInWar)
+ if not warOk then writeStatus(s,'waiting_role','battle_state_unavailable');return end
+ if s.phase=='battle' then
+  if s.endBattleSeen and not inWar and context and not context.loading then
+   if tostring(context.role)~=tostring(s.lockedRole) then pauseRun(s,'role_changed_after_battle')
+   elseif context.map~=s.lockedMap then pauseRun(s,'map_changed_after_battle')
+   else clearAction(s);s.unknown=false;s.paused=false;s.reason='';writeBinding(s,false);writeStatus(s,'reading','battle_ended') end
+  else writeStatus(s,'battle','waiting_for_battle_end') end
+  return
+ end
+ if inWar then
+  if s.ownBattleResponse and context and tostring(context.role)==tostring(s.lockedRole) then
+   s.phase='battle';s.phaseDeadline=nil;writeStatus(s,'battle','own_start_battle_confirmed')
+  else enterUnknown(s,'battle_without_matching_confirmation');writeStatus(s,'unknown',s.reason) end
+  return
+ end
+ if s.ownBattleResponse and s.lateBattleResponseAt then
+  if s.elapsed-s.lateBattleResponseAt>=CHALLENGE_REBIND_GRACE then
+   enterUnknown(s,'battle_confirmation_unresolved');writeStatus(s,'unknown',s.reason)
+  else writeStatus(s,'challenge_wait','own_battle_response_pending') end
+  return
+ end
+ if s.unknown then writeStatus(s,'unknown',s.reason);return end
+ if s.mode=='run' and not s.paused and anleiActionActive() then
+  pauseRun(s,'暗雷模块正在运行，请手动停止后重新开始')
+  writeStatus(s,'paused',s.reason)
+  return
+ end
+ if not context then writeStatus(s,contextState or 'waiting_role',contextState);return end
+ if context.loading then writeStatus(s,'waiting_map','map_loading');return end
+ if not s.lockedRole then
+  if context.map~=s.lockedMap then pauseRun(s,'start_map_changed');writeStatus(s,'paused',s.reason);return end
+  s.lockedRole=context.role;s.role=context.role;s.manager=tostring(context.manager)
+  if not writeBinding(s,false) then enterUnknown(s,'binding_write_failed');writeStatus(s,'unknown',s.reason);return end
+ end
+ if tostring(context.role)~=tostring(s.lockedRole) then pauseRun(s,'role_changed');writeStatus(s,'paused',s.reason);return end
+ if context.map~=s.lockedMap then pauseRun(s,'map_changed');writeStatus(s,'paused',s.reason);return end
+ if s.phase=='teleport_wait' then
+  if s.teleportResponse and currentPositionMatches(context,s.target) then
+   s.phase='challenge_ready';s.phaseDeadline=nil;writeStatus(s,'teleport_wait','position_confirmed')
+  elseif s.elapsed>=(s.phaseDeadline or math.huge) then enterUnknown(s,'teleport_confirmation_timeout');writeStatus(s,'unknown',s.reason)
+  else writeStatus(s,'teleport_wait',s.teleportResponse and 'position_update_pending' or 'awaiting_position_confirmation') end
+  return
+ end
+ if s.phase=='challenge_ready' then sendChallenge(s);return end
+ if s.phase=='challenge_wait' then
+  if s.elapsed>=(s.phaseDeadline or math.huge) then
+   clearAction(s);s.reason='challenge_unconfirmed_rotate';writeStatus(s,'waiting_targets',s.reason)
+  else writeStatus(s,'challenge_wait','awaiting_own_battle_confirmation') end
+  return
+ end
+ if not s.candidates or #s.candidates==0 then writeStatus(s,'waiting_targets','no_targets_for_selected_level');return end
+ if s.roundWaitUntil and s.elapsed<s.roundWaitUntil then writeStatus(s,'waiting_targets','round_cooldown');return end
+ if s.roundWaitUntil and s.elapsed>=s.roundWaitUntil then resetRound(s);s.cursor=0 end
+ local target=chooseTarget(s)
+ if not target then
+  s.roundWaitUntil=s.elapsed+5
+  writeStatus(s,'waiting_targets',s.reason~='' and s.reason or 'round_cooldown')
+  return
+ end
+ s.target=target
+ sendTeleport(s)
+end
+finish=function(s,reason)
+ if s.finished then return end
+ s.finished=true
+ if s.timer then pcall(scheduler.unscheduleGlobal,s.timer);s.timer=nil end
+ removeObserver(s)
+ clearAction(s)
+ writeBinding(s,true)
+ writeStatus(s,'stopped',reason or '')
+ if rawget(_G,key)==s then rawset(_G,key,nil) end
+end
+local function freshState()
+ local initial=tonumber(cfg.baselineSequence) or 0
+ local baseline=parseCommand(readFile(cfg.commandPath))
+ local s={
+  runId=cfg.runId,elapsed=0,acceptedSequence=initial,acceptedCommand=nil,
+  mode='scan',level=0,selectedLevels='',selectedLevelSet={},lockedMap=nil,lockedRole=nil,role='unknown',manager='unknown',
+  map='unknown',mapName='unknown',levels='',levelNames='',targetsById={},candidates={},
+  target=nil,phase=nil,phaseDeadline=nil,teleportResponse=nil,ownBattleResponse=false,
+  endBattleSeen=false,calls=0,teleports=0,challenges=0,skipped=0,
+  cooldowns={},skippedTargets={},cursor=0,unknown=false,paused=false,reason='',
+  hooksRemoved=true,bindingCleared=true,finished=false,
+ }
+ if baseline and baseline.sequence==initial then s.acceptedCommand=copyCommand(baseline) end
+ return s
+end
+local function resultWithoutState(status,reason)
+ local command=parseCommand(readFile(cfg.commandPath))
+ local s=freshState()
+ if command and command.sequence>(tonumber(cfg.baselineSequence) or 0) then s.acceptedSequence=command.sequence end
+ s.reason=reason or ''
+ writeStatus(s,status,s.reason)
+end
+if cfg.mode=='stop' then
+ local s=rawget(_G,key)
+ if s and s.runId==cfg.runId then
+  local accepted,why=refreshCommand(s)
+  if accepted then finish(s,'worker_stop')
+  else finish(s,'worker_stop_command_unconfirmed:'..clean(why)) end
+ elseif s then resultWithoutState('stopping','foreign_lua_state')
+ else resultWithoutState('stopped','nothing_owned') end
+ return 0
+end
+local existing=rawget(_G,key)
+if existing then
+ if existing.runId==cfg.runId then return 0 end
+ writeStatus(existing,'stopping','prior_run_cleanup_required')
+ return 0
+end
+local s=freshState()
+rawset(_G,key,s)
+if not writeBinding(s,true) then enterUnknown(s,'binding_clear_failed') end
+local commandOk,commandState=refreshCommand(s)
+-- 新 worker 可能直接以一次性传送命令作为基线启动（先停扫描再传送）。
+-- refreshCommand 视基线为已接受，不会调用 acceptCommand，会话会停在默认 scan；
+-- 这里显式应用基线传送模式，避免“直接传送”只写入命令却从不跳图。
+if commandState=='unchanged' and s.acceptedCommand and s.acceptedCommand.mode=='teleport' then
+ acceptCommand(s,s.acceptedCommand)
+end
+if commandState=='updated' and s.mode=='run' then
+ -- A post-baseline command is an explicit operator action and may start this session.
+end
+local context=getContext()
+observeMap(s,context)
+local function scheduled(dt)
+ local ok,err=pcall(tick,s,dt)
+ if not ok and not s.finished then enterUnknown(s,'state_machine_error:'..clean(err));writeStatus(s,'unknown',s.reason) end
+end
+s.timer=scheduler.scheduleGlobal(scheduled,SCAN_INTERVAL_SECONDS)
+if s.unknown then writeStatus(s,'unknown',s.reason)
+elseif s.mode=='run' and not s.hooksRemoved then writeStatus(s,'waiting_role','awaiting_role_and_map')
+else writeStatus(s,'reading',commandOk and '' or commandState) end
+return 0

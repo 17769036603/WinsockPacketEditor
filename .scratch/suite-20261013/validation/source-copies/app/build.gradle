@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.xnas.wpe.suite'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.xnas.wpe.suite'
+        minSdk 23
+        targetSdk 35
+        versionCode 3
+        versionName '2026.10.13.1'
+        ndk {
+            abiFilters 'x86_64'
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDir(layout.buildDirectory.dir('generated/jniLibs'))
+        }
+    }
+}
+
+def buildSuiteNative = tasks.register('buildSuiteNative', Exec) {
+    workingDir rootProject.projectDir
+    commandLine 'powershell.exe', '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+            '-File', new File(rootProject.projectDir, 'build-native.ps1').absolutePath
+}
+
+tasks.named('preBuild').configure {
+    dependsOn buildSuiteNative
+}

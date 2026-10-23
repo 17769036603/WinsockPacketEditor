@@ -1,0 +1,13 @@
+{
+  "KeyExisted": true,
+  "Values": {
+    "LogFilePath": {
+      "Existed": false,
+      "Value": null
+    },
+    "LogVerbosityLevel": {
+      "Existed": false,
+      "Value": null
+    }
+  }
+}

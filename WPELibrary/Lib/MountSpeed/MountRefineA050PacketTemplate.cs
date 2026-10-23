@@ -16,6 +16,9 @@ namespace WPELibrary.Lib.MountSpeed
         public const int RideInstanceIdOffset = 20;
         public const int RideInstanceIdLength = 19;
 
+        private static readonly byte[] OperationPrefix =
+            { 0x00, 0x06, 0x03, 0x00, 0x00, 0x00, 0x00 };
+
         private readonly byte[] _fixtureBytes;
 
         private MountRefineA050PacketTemplate(byte[] fixtureBytes, string evidenceId)
@@ -78,46 +81,8 @@ namespace WPELibrary.Lib.MountSpeed
                 return false;
             }
 
-            if (capturedPacket.Length != FrameLength)
+            if (!TryValidateFrame(capturedPacket, out error))
             {
-                error = "mount_refine_a050_length_invalid";
-                return false;
-            }
-
-            if (capturedPacket[0] != 0x4D || capturedPacket[1] != 0x5A)
-            {
-                error = "mount_refine_a050_header_invalid";
-                return false;
-            }
-
-            int bodyLength = (capturedPacket[8] << 8) | capturedPacket[9];
-            if (bodyLength != FrameLength - 10)
-            {
-                error = "mount_refine_a050_body_length_invalid";
-                return false;
-            }
-
-            ushort protocolId = (ushort)((capturedPacket[10] << 8) | capturedPacket[11]);
-            if (protocolId != ProtocolId)
-            {
-                error = "mount_refine_a050_protocol_invalid";
-                return false;
-            }
-
-            byte[] expectedOperationPrefix = { 0x00, 0x06, 0x03, 0x00, 0x00, 0x00, 0x00 };
-            for (int index = 0; index < expectedOperationPrefix.Length; index++)
-            {
-                if (capturedPacket[12 + index] != expectedOperationPrefix[index])
-                {
-                    error = "mount_refine_a050_operation_prefix_invalid";
-                    return false;
-                }
-            }
-
-            if (capturedPacket[19] != RideInstanceIdLength ||
-                !IsAsciiDigits(capturedPacket, RideInstanceIdOffset, RideInstanceIdLength))
-            {
-                error = "mount_refine_a050_ride_instance_id_invalid";
                 return false;
             }
 
@@ -187,9 +152,11 @@ namespace WPELibrary.Lib.MountSpeed
 
         /// <summary>
         /// A050 是当前客户端使用的固定 39 字节请求帧。
-        /// 发送副本必须保持捕获到的全部字节不变，不根据只读快照改写
-        /// 尾部 19 字节；这与手动发送选中封包的行为一致。
-        /// 不修改模板原始字节，也不触发网络操作。
+        /// 发送副本以捕获模板为基础，只把偏移 20-38 的 19 字节重写为
+        /// 请求携带的当前坐骑实例 ID（服务端会重新下发实例 ID，包内旧 ID 会过期），
+        /// 其余字节与模板逐字节一致。改写后重新做一次完整结构校验；
+        /// 请求缺失或实例 ID 非法时拒绝发送，绝不回退到模板里的旧 ID。
+        /// 不修改模板自身保存的字节，也不触发网络操作。
         /// </summary>
         public bool TryBuild(
             MountRefineSendRequest request,
@@ -210,7 +177,95 @@ namespace WPELibrary.Lib.MountSpeed
                 return false;
             }
 
+            if (!IsValidRideInstanceId(request.ActiveRideInstanceId))
+            {
+                error = "mount_refine_a050_active_ride_instance_id_invalid";
+                return false;
+            }
+
             packet = (byte[])_fixtureBytes.Clone();
+            byte[] encodedRideInstanceId = Encoding.ASCII.GetBytes(request.ActiveRideInstanceId);
+            for (int index = 0; index < RideInstanceIdLength; index++)
+            {
+                packet[RideInstanceIdOffset + index] = encodedRideInstanceId[index];
+            }
+
+            // 改写后必须重新完成一次完整结构校验；任何一项不通过都拒绝发送。
+            if (!TryValidateFrame(packet, out error))
+            {
+                packet = null;
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// 完整 A050 结构校验：帧长 39、4D5A、body 0x1D、协议 0xA050、
+        /// 固定操作前缀、偏移 19=0x13 且尾部 19 字节为 ASCII 数字。
+        /// </summary>
+        private static bool TryValidateFrame(byte[] frame, out string error)
+        {
+            error = string.Empty;
+            if (frame == null || frame.Length != FrameLength)
+            {
+                error = "mount_refine_a050_length_invalid";
+                return false;
+            }
+
+            if (frame[0] != 0x4D || frame[1] != 0x5A)
+            {
+                error = "mount_refine_a050_header_invalid";
+                return false;
+            }
+
+            int bodyLength = (frame[8] << 8) | frame[9];
+            if (bodyLength != FrameLength - 10)
+            {
+                error = "mount_refine_a050_body_length_invalid";
+                return false;
+            }
+
+            ushort protocolId = (ushort)((frame[10] << 8) | frame[11]);
+            if (protocolId != ProtocolId)
+            {
+                error = "mount_refine_a050_protocol_invalid";
+                return false;
+            }
+
+            for (int index = 0; index < OperationPrefix.Length; index++)
+            {
+                if (frame[12 + index] != OperationPrefix[index])
+                {
+                    error = "mount_refine_a050_operation_prefix_invalid";
+                    return false;
+                }
+            }
+
+            if (frame[19] != RideInstanceIdLength ||
+                !IsAsciiDigits(frame, RideInstanceIdOffset, RideInstanceIdLength))
+            {
+                error = "mount_refine_a050_ride_instance_id_invalid";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool IsValidRideInstanceId(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) || value.Length != RideInstanceIdLength)
+            {
+                return false;
+            }
+
+            foreach (char character in value)
+            {
+                if (character < '0' || character > '9')
+                {
+                    return false;
+                }
+            }
             return true;
         }
 

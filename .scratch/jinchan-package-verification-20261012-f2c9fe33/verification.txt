@@ -1,0 +1,67 @@
+**********************
+PowerShell transcript start
+Start time: 20261012150557
+Username: 小黑\Administrator
+RunAs User: 小黑\Administrator
+Configuration Name: 
+Machine: 小黑 (Microsoft Windows NT 10.0.26300.0)
+Host Application: C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell\pwsh.dll -Command try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}
+$ErrorActionPreference='Stop'
+$root=(Resolve-Path '.').Path
+$apk=Join-Path $root 'mobile-jinchan\app\build\outputs\apk\debug\app-debug.apk'
+$sdk='C:\Users\Administrator\AppData\Local\Android\Sdk'
+$bt=Join-Path $sdk 'build-tools\35.0.0'
+$jdk='C:\Users\Administrator\.codex\tools\temurin17-portable\jdk-17.0.20+8'
+$rust=Join-Path $root 'mobile-jinchan\worker-rust\target\x86_64-linux-android\release\jinchan_worker'
+$js=Join-Path $root 'mobile-jinchan\app\src\main\assets\jinchan_agent.js'
+$scratch=Join-Path $root ('.scratch\jinchan-package-verification-20261012-'+[guid]::NewGuid().ToString('N').Substring(0,8))
+New-Item -ItemType Directory -Path $scratch | Out-Null
+$log=Join-Path $scratch 'verification.txt'
+Start-Transcript -LiteralPath $log | Out-Null
+try {
+  if (!(Test-Path $apk)) { throw "APK missing: $apk" }
+  $env:JAVA_HOME=$jdk; $env:PATH=(Join-Path $jdk 'bin')+';'+$env:PATH
+  $badging=& (Join-Path $bt 'aapt.exe') dump badging $apk 2>&1
+  $badging | Select-String "package:|application-label:|native-code:"
+  if ($LASTEXITCODE -ne 0 -or ($badging -join "`n") -notmatch "package: name='com\.xnas\.wpe\.jinchan' versionCode='2' versionName='0\.2\.0'" -or ($badging -join "`n") -notmatch "application-label:'金蟾装备助手'" -or ($badging -join "`n") -notmatch "native-code: 'x86_64'") { throw 'Badging assertion failed (package/version/label/ABI)' }
+  'PASS aapt package/version/Chinese label/ABI assertions'
+  $tree=& (Join-Path $bt 'aapt.exe') dump xmltree $apk AndroidManifest.xml 2>&1
+  if ($LASTEXITCODE -ne 0) { throw 'aapt xmltree failed' }
+  $manifestText=$tree -join "`n"
+  $checks=@('android.permission.FOREGROUND_SERVICE','android.permission.FOREGROUND_SERVICE_SPECIAL_USE','com.xnas.wpe.jinchan.ConnectionService','foregroundServiceType','specialUse','PROPERTY_SPECIAL_USE_FGS_SUBTYPE','Maintain a persistent game worker')
+  foreach($c in $checks){ if($manifestText -notmatch [regex]::Escape($c)){ throw "Manifest missing expected entry: $c" }; "PASS manifest contains $c" }
+  $verify=& (Join-Path $bt 'apksigner.bat') verify --verbose $apk 2>&1
+  $verify | Where-Object { $_ -match '^Verified|^Verified using|^Number of signers' }
+  if ($LASTEXITCODE -ne 0 -or ($verify -join "`n") -notmatch 'Verified using v') { throw 'APK signature verification failed' }
+  'PASS apksigner verification'
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $zip=[IO.Compression.ZipFile]::OpenRead($apk)
+  try {
+    foreach($pair in @(@('assets/jinchan_agent.js',$js),@('lib/x86_64/libjinchan_worker.so',$rust))){
+      $entry=$zip.GetEntry($pair[0]); if($null -eq $entry){ throw "APK entry missing: $($pair[0])" }
+      $stream=$entry.Open(); $sha=[Security.Cryptography.SHA256]::Create(); try { $apkHash=[Convert]::ToHexString($sha.ComputeHash($stream)) } finally { $stream.Dispose(); $sha.Dispose() }
+      $srcHash=(Get-FileHash -LiteralPath $pair[1] -Algorithm SHA256).Hash
+      "HASH $($pair[0]) apk=$apkHash source=$srcHash"
+      if($apkHash -ne $srcHash){ throw "APK/source hash mismatch: $($pair[0])" }
+      "PASS exact APK/source bytes: $($pair[0])"
+    }
+  } finally { $zip.Dispose() }
+  "APK_SHA256 $((Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash)"
+  'RESULT PASS'
+} catch { "RESULT FAIL: $($_.Exception.Message)"; throw } finally { Stop-Transcript | Out-Null; "LOG $log" }
+Process ID: 52764
+PSVersion: 7.6.5
+PSEdition: Core
+GitCommitId: 7.6.5
+OS: Microsoft Windows 10.0.26300
+Platform: Win32NT
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0
+PSRemotingProtocolVersion: 2.4
+SerializationVersion: 1.1.0.1
+WSManStackVersion: 3.0
+**********************
+RESULT FAIL: Badging assertion failed (package/version/label/ABI)
+**********************
+PowerShell transcript end
+End time: 20261012150557
+**********************

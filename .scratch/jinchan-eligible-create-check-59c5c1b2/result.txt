@@ -1,0 +1,8 @@
+PASS empty inventory uid zero is creatable => true
+PASS existing nonzero uid is creatable => true
+PASS nonnumeric uid rejected => false
+PASS nonnumeric role rejected => false
+PASS all-zero preview token rejected => false
+PASS missing base candidates rejected => false
+PASS missing refine candidates rejected => false
+RESULT PASS checks=7

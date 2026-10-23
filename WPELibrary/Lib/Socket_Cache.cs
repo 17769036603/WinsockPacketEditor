@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -12715,8 +12715,16 @@ List<int> listSendSendList = new List<int>();
                                 if (hasMountSpeedInstruction &&
                                     !parameters.ContainsKey("MountStatusAndroidSnapshotReader"))
                                 {
+                                    // 坐骑炼化路径不把环境变量当作唯一包名来源：环境变量仍是显式覆盖，
+                                    // 两个已知客户端包名始终参与候选，变量缺失或写错时也能找到正在运行的游戏。
                                     parameters["MountStatusAndroidSnapshotReader"] =
-                                        new MountStatusAndroidSnapshotReader();
+                                        new MountStatusAndroidSnapshotReader(
+                                            null,
+                                            null,
+                                            null,
+                                            null,
+                                            null,
+                                            new[] { "com.gdoo.dhxy", "com.gdoo.xxxy2026" });
                                 }
                                 if (HasShimenTaskInstruction(instruction))
                                 {

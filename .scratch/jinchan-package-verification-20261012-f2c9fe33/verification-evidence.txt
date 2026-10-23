@@ -1,0 +1,23 @@
+PASS manifest value: FOREGROUND_SERVICE
+PASS manifest value: FOREGROUND_SERVICE_SPECIAL_USE
+PASS manifest value: com.xnas.wpe.jinchan.ConnectionService
+PASS manifest value: android:foregroundServiceType(0x01010599)=(type 0x11)0x40000000
+PASS manifest value: android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE
+PASS manifest value: Maintain a persistent game worker for user initiated Jinchan operations
+PASS manifest value: 金蟾装备助手
+PASS apksigner signature verification
+Verified using v1 scheme (JAR signing): true
+Verified using v2 scheme (APK Signature Scheme v2): true
+Verified using v3 scheme (APK Signature Scheme v3): false
+Verified using v3.1 scheme (APK Signature Scheme v3.1): false
+Verified using v4 scheme (APK Signature Scheme v4): false
+Number of signers: 1
+HASH assets/jinchan_agent.js APK=897CC7CFDB3FEF6553F88431048F38C2C30246569484228A4E86121A96A80941 SOURCE=897CC7CFDB3FEF6553F88431048F38C2C30246569484228A4E86121A96A80941
+PASS exact APK/source bytes: assets/jinchan_agent.js
+HASH lib/x86_64/libjinchan_worker.so APK=F1542DBB1AA94CEE9B95E188937C1EFEB11703FA1B345105E4DC499460101788 SOURCE=F1542DBB1AA94CEE9B95E188937C1EFEB11703FA1B345105E4DC499460101788
+PASS exact APK/source bytes: lib/x86_64/libjinchan_worker.so
+APK_SHA256 9B51F1FFE5138A05E1474E2B9DFF98617900F9A5E1606CFC84863E76241EEECF
+RESULT PASS
+PASS aapt badging: package=com.xnas.wpe.jinchan versionCode=2 versionName=0.2.0 native-code=x86_64
+NOTE aapt badging reports empty application label on this APK; decoded AndroidManifest.xml contains 金蟾装备助手, so label was asserted from manifest.
+NOTE aapt cannot read APK under Chinese project path (Illegal byte sequence); metadata tools used an ASCII temp copy.

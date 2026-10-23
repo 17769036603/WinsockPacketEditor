@@ -1,0 +1,10 @@
+[package]
+name = "mount_hold_worker"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mount_hold_worker"
+path = "src/main.rs"
+
+[dependencies]

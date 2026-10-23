@@ -1,0 +1,4310 @@
+{
+  "identity": {
+    "pid": 26088,
+    "startTicks": 14984948,
+    "exe": "/system/bin/app_process64"
+  },
+  "battle": 2387,
+  "round": 2,
+  "managerFields": [
+    "GetFIDWithSID",
+    "ListenMessage",
+    "RemoveAllMessageListener",
+    "RemoveMessageListener",
+    "__isExist",
+    "addBatchBtnListener",
+    "addBtnGroup",
+    "addBtnListener",
+    "addBtnLongListener",
+    "addChild",
+    "addNode",
+    "addNodeEventListener",
+    "class",
+    "getContentSize",
+    "getNode",
+    "getNodeByAll",
+    "getParent",
+    "getPosition",
+    "getScale",
+    "getUINode",
+    "isEnabled",
+    "isVisible",
+    "m_ActionList",
+    "m_AllPosInfo",
+    "m_AnalyzeFinish",
+    "m_AniNode",
+    "m_AniNode_Bottom",
+    "m_BattleBg",
+    "m_BattleId",
+    "m_BattleStatus",
+    "m_BattleType",
+    "m_BattleUI",
+    "m_CanOrder",
+    "m_ChildPos",
+    "m_ClickOutSideToClose",
+    "m_CmdAniTimeCount",
+    "m_CmdRound",
+    "m_CurCmdIndex",
+    "m_CurCmdPlayIndex",
+    "m_CurRoundNum",
+    "m_DieRoleIns",
+    "m_EffectRoleIns",
+    "m_FightType",
+    "m_HideFrontView",
+    "m_LastHpMpNumberAniTime",
+    "m_LastSkillNameAniTime",
+    "m_LearnSkills",
+    "m_PauseAnalyze",
+    "m_PetList",
+    "m_PetNeiDanSkillList",
+    "m_PetPos",
+    "m_PetSkillList",
+    "m_PlayerId",
+    "m_PlayerPos",
+    "m_PlayerSkillExp",
+    "m_RoleIdPosDict",
+    "m_RoleIns",
+    "m_RoleNode",
+    "m_RoundCmdList",
+    "m_SkillCDDict",
+    "m_SpareRoleIns",
+    "m_TouchLeftNode",
+    "m_TouchMiddleNode",
+    "m_TouchRightNode",
+    "m_UINode",
+    "m_WatchUI",
+    "msgevent_msgid_hanlder_table",
+    "removeFromParent",
+    "removeFromParentAndCleanup",
+    "runAction",
+    "scheduleUpdate",
+    "setContentSize",
+    "setEnabled",
+    "setGroupAllNotSelected",
+    "setGroupBtnSelected",
+    "setOpacity",
+    "setPosition",
+    "setScale",
+    "setTouchEnabled",
+    "setVisible",
+    "stopAction",
+    "stopAllActions",
+    "unscheduleUpdate"
+  ],
+  "roles": [
+    {
+      "pos": 4,
+      "local": false,
+      "alive": true,
+      "fields": {
+        "getDirection": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec460",
+          "tag": "0xfffffff7"
+        },
+        "m_PlayerId": {
+          "kind": "i32",
+          "value": 20032,
+          "raw": "0xfff9000000004e40"
+        },
+        "initData": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e2e0",
+          "tag": "0xfffffff7"
+        },
+        "_canUseChildDress3D": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eae0",
+          "tag": "0xfffffff7"
+        },
+        "m_Type": {
+          "kind": "f64",
+          "value": 1.0,
+          "raw": "0x3ff0000000000000"
+        },
+        "ctor": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e2b0",
+          "tag": "0xfffffff7"
+        },
+        "class": {
+          "kind": "tagged",
+          "raw": "0xfffa741eafb5e098",
+          "tag": "0xfffffff4"
+        },
+        "__create": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e068",
+          "tag": "0xfffffff7"
+        },
+        "__cname": {
+          "kind": "tagged",
+          "raw": "0xfffdf41eafb5daa8",
+          "tag": "0xfffffffb"
+        },
+        "__ctype": {
+          "kind": "i32",
+          "value": 1,
+          "raw": "0xfff9000000000001"
+        },
+        "m_IsLocalPlayer": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_WingId": {
+          "kind": "nil",
+          "value": null,
+          "raw": "0xffffffffffffffff"
+        },
+        "m_EffectList": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea22e5bf8",
+          "tag": "0xfffffff4"
+        },
+        "m_EffectAni": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea22e5bb0",
+          "tag": "0xfffffff4"
+        },
+        "m_CurrSoundState": {
+          "kind": "tagged",
+          "raw": "0xfffdf41fbe607150",
+          "tag": "0xfffffffb"
+        },
+        "m_CurrRoleState": {
+          "kind": "tagged",
+          "raw": "0xfffdf41fbe607150",
+          "tag": "0xfffffffb"
+        },
+        "m_IsStealth": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_StarLevel": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_TalkBubbleObj": {
+          "kind": "nil",
+          "value": null,
+          "raw": "0xffffffffffffffff"
+        },
+        "m_Name": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea6e9cad0",
+          "tag": "0xfffffff3"
+        },
+        "m_MaxMp": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Mp": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "setDirty": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5f418",
+          "tag": "0xfffffff7"
+        },
+        "m_MaxHp": {
+          "kind": "i32",
+          "value": 23818,
+          "raw": "0xfff9000000005d0a"
+        },
+        "m_Hp": {
+          "kind": "i32",
+          "value": 23818,
+          "raw": "0xfff9000000005d0a"
+        },
+        "m_RoleOpacity": {
+          "kind": "i32",
+          "value": 255,
+          "raw": "0xfff90000000000ff"
+        },
+        "m_DiscolourBack": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Dye2Back": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Dye1Back": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Discolour": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Dye2": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_ShapeAni": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea5624028",
+          "tag": "0xfffffff3"
+        },
+        "m_Dye1": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Rei": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_IndexPic": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea22e5b28",
+          "tag": "0xfffffff3"
+        },
+        "m_WeaponSkinId": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_WeaponId": {
+          "kind": "nil",
+          "value": null,
+          "raw": "0xffffffffffffffff"
+        },
+        "m_currAccHut2": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_currAccHut": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_currAcc": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "addTalkMsg": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb646b0",
+          "tag": "0xfffffff7"
+        },
+        "m_ShapeBack": {
+          "kind": "i32",
+          "value": 5052,
+          "raw": "0xfff90000000013bc"
+        },
+        "m_Direction": {
+          "kind": "i32",
+          "value": 3,
+          "raw": "0xfff9000000000003"
+        },
+        "m_IsLocalChild": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_IsLocalPet": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_Battlefield": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea1f45348",
+          "tag": "0xfffffff4"
+        },
+        "setSkillAttack": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64220",
+          "tag": "0xfffffff7"
+        },
+        "m_StarNode": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea1ce8700",
+          "tag": "0xfffffff3"
+        },
+        "setHideHpMpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ed20",
+          "tag": "0xfffffff7"
+        },
+        "updatePetStarIconsVisible": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e628",
+          "tag": "0xfffffff7"
+        },
+        "m_StarIcons": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea1ce8980",
+          "tag": "0xfffffff4"
+        },
+        "m_MpBar": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea5623440",
+          "tag": "0xfffffff3"
+        },
+        "m_HpBar": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea6e9cf18",
+          "tag": "0xfffffff3"
+        },
+        "m_ShapeId": {
+          "kind": "i32",
+          "value": 5052,
+          "raw": "0xfff90000000013bc"
+        },
+        "m_CmdArrow": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea6e9e4c8",
+          "tag": "0xfffffff3"
+        },
+        "m_SelectHoldArrow": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea6e9e298",
+          "tag": "0xfffffff3"
+        },
+        "m_SelectOnArrow": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea6e9e068",
+          "tag": "0xfffffff3"
+        },
+        "m_SelectArrow": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea6e9de38",
+          "tag": "0xfffffff3"
+        },
+        "_createRoleAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eab0",
+          "tag": "0xfffffff7"
+        },
+        "_canUse3DFashion": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eb10",
+          "tag": "0xfffffff7"
+        },
+        "_applyWeaponSkin": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eba0",
+          "tag": "0xfffffff7"
+        },
+        "_applyFashionDress": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eb70",
+          "tag": "0xfffffff7"
+        },
+        "setStand": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64190",
+          "tag": "0xfffffff7"
+        },
+        "m_RoleName": {
+          "kind": "tagged",
+          "raw": "0xfffdf41faea5e750",
+          "tag": "0xfffffffb"
+        },
+        "setDead": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb642b0",
+          "tag": "0xfffffff7"
+        },
+        "setShowHpMpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ecf0",
+          "tag": "0xfffffff7"
+        },
+        "touchRole": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb66088",
+          "tag": "0xfffffff7"
+        },
+        "initRoleAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e778",
+          "tag": "0xfffffff7"
+        },
+        "m_IsDirty": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_DressId": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Use3DFashion": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "initHpMpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e748",
+          "tag": "0xfffffff7"
+        },
+        "setIsAlive": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5f3b8",
+          "tag": "0xfffffff7"
+        },
+        "getName": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e718",
+          "tag": "0xfffffff7"
+        },
+        "initName": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e6e8",
+          "tag": "0xfffffff7"
+        },
+        "delAllStatus": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb644d0",
+          "tag": "0xfffffff7"
+        },
+        "initArrow": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e658",
+          "tag": "0xfffffff7"
+        },
+        "setHideHpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ed80",
+          "tag": "0xfffffff7"
+        },
+        "setShowHpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ed50",
+          "tag": "0xfffffff7"
+        },
+        "showSelectCircle": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb660e8",
+          "tag": "0xfffffff7"
+        },
+        "refreshPetStarIcons": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e470",
+          "tag": "0xfffffff7"
+        },
+        "refreshNeiDan": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e440",
+          "tag": "0xfffffff7"
+        },
+        "setCmdTempPos": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5f3e8",
+          "tag": "0xfffffff7"
+        },
+        "setMp": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ecc0",
+          "tag": "0xfffffff7"
+        },
+        "m_NeiDanIndex": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "setHpFast": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ec90",
+          "tag": "0xfffffff7"
+        },
+        "setRoleHpMpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ec30",
+          "tag": "0xfffffff7"
+        },
+        "setHp": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ec60",
+          "tag": "0xfffffff7"
+        },
+        "setRoleName": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ec00",
+          "tag": "0xfffffff7"
+        },
+        "ShowRoleIndexPic": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e6b8",
+          "tag": "0xfffffff7"
+        },
+        "setRoleShape": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ebd0",
+          "tag": "0xfffffff7"
+        },
+        "_syncFashionRoleAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eb40",
+          "tag": "0xfffffff7"
+        },
+        "ShowTalkMsg": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e688",
+          "tag": "0xfffffff7"
+        },
+        "SetTempEffectShow": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e410",
+          "tag": "0xfffffff7"
+        },
+        "m_WeaponGemNum": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_IsAlive": {
+          "kind": "boolean",
+          "value": true,
+          "raw": "0xfffeffffffffffff"
+        },
+        "m_CmdTempPos": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea22e5c40",
+          "tag": "0xfffffff4"
+        },
+        "getInitDirection": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec430",
+          "tag": "0xfffffff7"
+        },
+        "m_InitDirection": {
+          "kind": "i32",
+          "value": 3,
+          "raw": "0xfff9000000000003"
+        },
+        "playActSound": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64530",
+          "tag": "0xfffffff7"
+        },
+        "playCurrRoleStateAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64160",
+          "tag": "0xfffffff7"
+        },
+        "new": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e0e0",
+          "tag": "0xfffffff7"
+        },
+        "setNormalAttack": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb641f0",
+          "tag": "0xfffffff7"
+        },
+        "getIsFrozen": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec3d0",
+          "tag": "0xfffffff7"
+        },
+        "getIsSleep": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec3a0",
+          "tag": "0xfffffff7"
+        },
+        "cancelStealth": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64430",
+          "tag": "0xfffffff7"
+        },
+        "setBeatBack": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb643a0",
+          "tag": "0xfffffff7"
+        },
+        "recoverInitDirection": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb645f0",
+          "tag": "0xfffffff7"
+        },
+        "setRun": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64280",
+          "tag": "0xfffffff7"
+        },
+        "m_Pos": {
+          "kind": "i32",
+          "value": 4,
+          "raw": "0xfff9000000000004"
+        },
+        "getReverseDirection": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec490",
+          "tag": "0xfffffff7"
+        },
+        "m_HitBackAct": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea1ba58d8",
+          "tag": "0xfffffff3"
+        },
+        "getRoleShapeId": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec5e0",
+          "tag": "0xfffffff7"
+        },
+        "setRideHorse": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64680",
+          "tag": "0xfffffff7"
+        },
+        "setStealth": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64400",
+          "tag": "0xfffffff7"
+        },
+        "setMiss": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb643d0",
+          "tag": "0xfffffff7"
+        },
+        "m_RoleId": {
+          "kind": "i32",
+          "value": 200010051,
+          "raw": "0xfff900000bebe943"
+        },
+        "cancelRoleDragonHenshin": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64650",
+          "tag": "0xfffffff7"
+        },
+        "m_Lv": {
+          "kind": "i32",
+          "value": 55,
+          "raw": "0xfff9000000000037"
+        },
+        "OnMessage": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5f448",
+          "tag": "0xfffffff7"
+        },
+        "msgevent_msgid_hanlder_table": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea5624b48",
+          "tag": "0xfffffff4"
+        },
+        "setRoleDragonHenshin": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64620",
+          "tag": "0xfffffff7"
+        },
+        "recoverDirToNormalStand": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb645c0",
+          "tag": "0xfffffff7"
+        },
+        "setSameFaceDir": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64590",
+          "tag": "0xfffffff7"
+        },
+        "setFaceToDir": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64560",
+          "tag": "0xfffffff7"
+        },
+        "RemoveMessageListener": {
+          "kind": "tagged",
+          "raw": "0xfffbf41ea5624c00",
+          "tag": "0xfffffff7"
+        },
+        "ListenMessage": {
+          "kind": "tagged",
+          "raw": "0xfffbf41ea5624b90",
+          "tag": "0xfffffff7"
+        },
+        "delStatus": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64500",
+          "tag": "0xfffffff7"
+        },
+        "setRelive": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64370",
+          "tag": "0xfffffff7"
+        },
+        "GetFIDWithSID": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1982e08",
+          "tag": "0xfffffff7"
+        },
+        "setSpace": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64340",
+          "tag": "0xfffffff7"
+        },
+        "setDefend": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64310",
+          "tag": "0xfffffff7"
+        },
+        "setHurt": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb642e0",
+          "tag": "0xfffffff7"
+        },
+        "setUseDrug": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64250",
+          "tag": "0xfffffff7"
+        },
+        "setAttack": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb641c0",
+          "tag": "0xfffffff7"
+        },
+        "NeiDanList": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea854f1c0",
+          "tag": "0xfffffff4"
+        },
+        "getRoleType": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec580",
+          "tag": "0xfffffff7"
+        },
+        "getIsAlive": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec4c0",
+          "tag": "0xfffffff7"
+        },
+        "m_TimeAni": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea7727820",
+          "tag": "0xfffffff3"
+        },
+        "hideCmdAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb661a8",
+          "tag": "0xfffffff7"
+        },
+        "showCmdAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb66178",
+          "tag": "0xfffffff7"
+        },
+        "RemoveAllMessageListener": {
+          "kind": "tagged",
+          "raw": "0xfffbf41ea5624c38",
+          "tag": "0xfffffff7"
+        },
+        "hideCutTimeAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb66148",
+          "tag": "0xfffffff7"
+        },
+        "showCutTimeAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb66118",
+          "tag": "0xfffffff7"
+        },
+        "getRoleId": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec610",
+          "tag": "0xfffffff7"
+        },
+        "checkNeedChangeState": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec670",
+          "tag": "0xfffffff7"
+        },
+        "getRolePos": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec640",
+          "tag": "0xfffffff7"
+        },
+        "addStatus": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64460",
+          "tag": "0xfffffff7"
+        },
+        "getRoleTypeId": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec5b0",
+          "tag": "0xfffffff7"
+        },
+        "getShowData": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec550",
+          "tag": "0xfffffff7"
+        },
+        "getWarPos": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec520",
+          "tag": "0xfffffff7"
+        },
+        "getCmdTempPos": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec4f0",
+          "tag": "0xfffffff7"
+        },
+        "setSelected": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb660b8",
+          "tag": "0xfffffff7"
+        },
+        "getIsStealth": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec400",
+          "tag": "0xfffffff7"
+        },
+        "m_TypeId": {
+          "kind": "i32",
+          "value": 10000,
+          "raw": "0xfff9000000002710"
+        }
+      },
+      "nested": {
+        "class": {
+          "_createRoleAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eab0",
+            "tag": "0xfffffff7"
+          },
+          "getDirection": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec460",
+            "tag": "0xfffffff7"
+          },
+          "_canUse3DFashion": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eb10",
+            "tag": "0xfffffff7"
+          },
+          "_applyWeaponSkin": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eba0",
+            "tag": "0xfffffff7"
+          },
+          "_applyFashionDress": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eb70",
+            "tag": "0xfffffff7"
+          },
+          "setStand": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64190",
+            "tag": "0xfffffff7"
+          },
+          "setDead": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb642b0",
+            "tag": "0xfffffff7"
+          },
+          "setShowHpMpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ecf0",
+            "tag": "0xfffffff7"
+          },
+          "touchRole": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb66088",
+            "tag": "0xfffffff7"
+          },
+          "initRoleAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e778",
+            "tag": "0xfffffff7"
+          },
+          "initData": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e2e0",
+            "tag": "0xfffffff7"
+          },
+          "initHpMpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e748",
+            "tag": "0xfffffff7"
+          },
+          "getName": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e718",
+            "tag": "0xfffffff7"
+          },
+          "setIsAlive": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5f3b8",
+            "tag": "0xfffffff7"
+          },
+          "initName": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e6e8",
+            "tag": "0xfffffff7"
+          },
+          "delAllStatus": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb644d0",
+            "tag": "0xfffffff7"
+          },
+          "initArrow": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e658",
+            "tag": "0xfffffff7"
+          },
+          "setHideHpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ed80",
+            "tag": "0xfffffff7"
+          },
+          "setShowHpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ed50",
+            "tag": "0xfffffff7"
+          },
+          "_canUseChildDress3D": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eae0",
+            "tag": "0xfffffff7"
+          },
+          "showSelectCircle": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb660e8",
+            "tag": "0xfffffff7"
+          },
+          "refreshPetStarIcons": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e470",
+            "tag": "0xfffffff7"
+          },
+          "refreshNeiDan": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e440",
+            "tag": "0xfffffff7"
+          },
+          "setCmdTempPos": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5f3e8",
+            "tag": "0xfffffff7"
+          },
+          "setMp": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ecc0",
+            "tag": "0xfffffff7"
+          },
+          "setHpFast": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ec90",
+            "tag": "0xfffffff7"
+          },
+          "setRoleHpMpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ec30",
+            "tag": "0xfffffff7"
+          },
+          "setHp": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ec60",
+            "tag": "0xfffffff7"
+          },
+          "setRoleName": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ec00",
+            "tag": "0xfffffff7"
+          },
+          "ShowRoleIndexPic": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e6b8",
+            "tag": "0xfffffff7"
+          },
+          "setRoleShape": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ebd0",
+            "tag": "0xfffffff7"
+          },
+          "ShowTalkMsg": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e688",
+            "tag": "0xfffffff7"
+          },
+          "_syncFashionRoleAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eb40",
+            "tag": "0xfffffff7"
+          },
+          "SetTempEffectShow": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e410",
+            "tag": "0xfffffff7"
+          },
+          "ctor": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e2b0",
+            "tag": "0xfffffff7"
+          },
+          "__create": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e068",
+            "tag": "0xfffffff7"
+          },
+          "getInitDirection": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec430",
+            "tag": "0xfffffff7"
+          },
+          "__cname": {
+            "kind": "tagged",
+            "raw": "0xfffdf41eafb5daa8",
+            "tag": "0xfffffffb"
+          },
+          "__ctype": {
+            "kind": "i32",
+            "value": 1,
+            "raw": "0xfff9000000000001"
+          },
+          "playActSound": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64530",
+            "tag": "0xfffffff7"
+          },
+          "playCurrRoleStateAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64160",
+            "tag": "0xfffffff7"
+          },
+          "setNormalAttack": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb641f0",
+            "tag": "0xfffffff7"
+          },
+          "new": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e0e0",
+            "tag": "0xfffffff7"
+          },
+          "getIsFrozen": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec3d0",
+            "tag": "0xfffffff7"
+          },
+          "getIsSleep": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec3a0",
+            "tag": "0xfffffff7"
+          },
+          "cancelStealth": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64430",
+            "tag": "0xfffffff7"
+          },
+          "setBeatBack": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb643a0",
+            "tag": "0xfffffff7"
+          },
+          "recoverInitDirection": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb645f0",
+            "tag": "0xfffffff7"
+          },
+          "setRun": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64280",
+            "tag": "0xfffffff7"
+          },
+          "getReverseDirection": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec490",
+            "tag": "0xfffffff7"
+          },
+          "getRoleShapeId": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec5e0",
+            "tag": "0xfffffff7"
+          },
+          "setRideHorse": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64680",
+            "tag": "0xfffffff7"
+          },
+          "setStealth": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64400",
+            "tag": "0xfffffff7"
+          },
+          "setMiss": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb643d0",
+            "tag": "0xfffffff7"
+          },
+          "cancelRoleDragonHenshin": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64650",
+            "tag": "0xfffffff7"
+          },
+          "setDirty": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5f418",
+            "tag": "0xfffffff7"
+          },
+          "OnMessage": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5f448",
+            "tag": "0xfffffff7"
+          },
+          "setRoleDragonHenshin": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64620",
+            "tag": "0xfffffff7"
+          },
+          "recoverDirToNormalStand": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb645c0",
+            "tag": "0xfffffff7"
+          },
+          "setSameFaceDir": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64590",
+            "tag": "0xfffffff7"
+          },
+          "setFaceToDir": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64560",
+            "tag": "0xfffffff7"
+          },
+          "delStatus": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64500",
+            "tag": "0xfffffff7"
+          },
+          "setRelive": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64370",
+            "tag": "0xfffffff7"
+          },
+          "setSpace": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64340",
+            "tag": "0xfffffff7"
+          },
+          "setDefend": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64310",
+            "tag": "0xfffffff7"
+          },
+          "setHurt": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb642e0",
+            "tag": "0xfffffff7"
+          },
+          "setUseDrug": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64250",
+            "tag": "0xfffffff7"
+          },
+          "setAttack": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb641c0",
+            "tag": "0xfffffff7"
+          },
+          "addTalkMsg": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb646b0",
+            "tag": "0xfffffff7"
+          },
+          "setSkillAttack": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64220",
+            "tag": "0xfffffff7"
+          },
+          "setHideHpMpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ed20",
+            "tag": "0xfffffff7"
+          },
+          "updatePetStarIconsVisible": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e628",
+            "tag": "0xfffffff7"
+          },
+          "getRoleType": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec580",
+            "tag": "0xfffffff7"
+          },
+          "hideCmdAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb661a8",
+            "tag": "0xfffffff7"
+          },
+          "showCmdAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb66178",
+            "tag": "0xfffffff7"
+          },
+          "hideCutTimeAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb66148",
+            "tag": "0xfffffff7"
+          },
+          "showCutTimeAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb66118",
+            "tag": "0xfffffff7"
+          },
+          "getRoleId": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec610",
+            "tag": "0xfffffff7"
+          },
+          "getIsAlive": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec4c0",
+            "tag": "0xfffffff7"
+          },
+          "checkNeedChangeState": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec670",
+            "tag": "0xfffffff7"
+          },
+          "getRolePos": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec640",
+            "tag": "0xfffffff7"
+          },
+          "addStatus": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64460",
+            "tag": "0xfffffff7"
+          },
+          "getRoleTypeId": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec5b0",
+            "tag": "0xfffffff7"
+          },
+          "getShowData": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec550",
+            "tag": "0xfffffff7"
+          },
+          "getWarPos": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec520",
+            "tag": "0xfffffff7"
+          },
+          "getCmdTempPos": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec4f0",
+            "tag": "0xfffffff7"
+          },
+          "setSelected": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb660b8",
+            "tag": "0xfffffff7"
+          },
+          "getIsStealth": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec400",
+            "tag": "0xfffffff7"
+          }
+        }
+      }
+    },
+    {
+      "pos": 2,
+      "local": false,
+      "alive": true,
+      "fields": {
+        "getDirection": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec460",
+          "tag": "0xfffffff7"
+        },
+        "m_PlayerId": {
+          "kind": "i32",
+          "value": 20032,
+          "raw": "0xfff9000000004e40"
+        },
+        "initData": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e2e0",
+          "tag": "0xfffffff7"
+        },
+        "_canUseChildDress3D": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eae0",
+          "tag": "0xfffffff7"
+        },
+        "m_Type": {
+          "kind": "f64",
+          "value": 1.0,
+          "raw": "0x3ff0000000000000"
+        },
+        "ctor": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e2b0",
+          "tag": "0xfffffff7"
+        },
+        "class": {
+          "kind": "tagged",
+          "raw": "0xfffa741eafb5e098",
+          "tag": "0xfffffff4"
+        },
+        "__create": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e068",
+          "tag": "0xfffffff7"
+        },
+        "__cname": {
+          "kind": "tagged",
+          "raw": "0xfffdf41eafb5daa8",
+          "tag": "0xfffffffb"
+        },
+        "__ctype": {
+          "kind": "i32",
+          "value": 1,
+          "raw": "0xfff9000000000001"
+        },
+        "m_IsLocalPlayer": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_WingId": {
+          "kind": "nil",
+          "value": null,
+          "raw": "0xffffffffffffffff"
+        },
+        "m_EffectList": {
+          "kind": "tagged",
+          "raw": "0xfffa741e7cf14be8",
+          "tag": "0xfffffff4"
+        },
+        "m_EffectAni": {
+          "kind": "tagged",
+          "raw": "0xfffa741e7cf14ba0",
+          "tag": "0xfffffff4"
+        },
+        "m_CurrSoundState": {
+          "kind": "tagged",
+          "raw": "0xfffdf41fbe607150",
+          "tag": "0xfffffffb"
+        },
+        "m_CurrRoleState": {
+          "kind": "tagged",
+          "raw": "0xfffdf41fbe607150",
+          "tag": "0xfffffffb"
+        },
+        "m_IsStealth": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_StarLevel": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_TalkBubbleObj": {
+          "kind": "nil",
+          "value": null,
+          "raw": "0xffffffffffffffff"
+        },
+        "m_Name": {
+          "kind": "tagged",
+          "raw": "0xfff9f41eb0021258",
+          "tag": "0xfffffff3"
+        },
+        "m_MaxMp": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Mp": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "setDirty": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5f418",
+          "tag": "0xfffffff7"
+        },
+        "m_MaxHp": {
+          "kind": "i32",
+          "value": 38643,
+          "raw": "0xfff90000000096f3"
+        },
+        "m_Hp": {
+          "kind": "i32",
+          "value": 38643,
+          "raw": "0xfff90000000096f3"
+        },
+        "m_RoleOpacity": {
+          "kind": "i32",
+          "value": 255,
+          "raw": "0xfff90000000000ff"
+        },
+        "m_DiscolourBack": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Dye2Back": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Dye1Back": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Discolour": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Dye2": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_ShapeAni": {
+          "kind": "tagged",
+          "raw": "0xfff9f41eb0021f90",
+          "tag": "0xfffffff3"
+        },
+        "m_Dye1": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Rei": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_IndexPic": {
+          "kind": "tagged",
+          "raw": "0xfff9f41e7cf157a0",
+          "tag": "0xfffffff3"
+        },
+        "m_WeaponSkinId": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_WeaponId": {
+          "kind": "nil",
+          "value": null,
+          "raw": "0xffffffffffffffff"
+        },
+        "m_currAccHut2": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_currAccHut": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_currAcc": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "addTalkMsg": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb646b0",
+          "tag": "0xfffffff7"
+        },
+        "m_ShapeBack": {
+          "kind": "i32",
+          "value": 5054,
+          "raw": "0xfff90000000013be"
+        },
+        "m_Direction": {
+          "kind": "i32",
+          "value": 3,
+          "raw": "0xfff9000000000003"
+        },
+        "m_IsLocalChild": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_IsLocalPet": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_Battlefield": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea1f45348",
+          "tag": "0xfffffff4"
+        },
+        "setSkillAttack": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64220",
+          "tag": "0xfffffff7"
+        },
+        "m_StarNode": {
+          "kind": "tagged",
+          "raw": "0xfff9f41eb1102610",
+          "tag": "0xfffffff3"
+        },
+        "setHideHpMpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ed20",
+          "tag": "0xfffffff7"
+        },
+        "updatePetStarIconsVisible": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e628",
+          "tag": "0xfffffff7"
+        },
+        "m_StarIcons": {
+          "kind": "tagged",
+          "raw": "0xfffa741eb11026d0",
+          "tag": "0xfffffff4"
+        },
+        "m_MpBar": {
+          "kind": "tagged",
+          "raw": "0xfff9f41eb0022e08",
+          "tag": "0xfffffff3"
+        },
+        "m_HpBar": {
+          "kind": "tagged",
+          "raw": "0xfff9f41eb00216a0",
+          "tag": "0xfffffff3"
+        },
+        "m_ShapeId": {
+          "kind": "i32",
+          "value": 5054,
+          "raw": "0xfff90000000013be"
+        },
+        "m_CmdArrow": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea7b06da0",
+          "tag": "0xfffffff3"
+        },
+        "m_SelectHoldArrow": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea7b06b70",
+          "tag": "0xfffffff3"
+        },
+        "m_SelectOnArrow": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea7b06940",
+          "tag": "0xfffffff3"
+        },
+        "m_SelectArrow": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea7b07320",
+          "tag": "0xfffffff3"
+        },
+        "_createRoleAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eab0",
+          "tag": "0xfffffff7"
+        },
+        "_canUse3DFashion": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eb10",
+          "tag": "0xfffffff7"
+        },
+        "_applyWeaponSkin": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eba0",
+          "tag": "0xfffffff7"
+        },
+        "_applyFashionDress": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eb70",
+          "tag": "0xfffffff7"
+        },
+        "setStand": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64190",
+          "tag": "0xfffffff7"
+        },
+        "m_RoleName": {
+          "kind": "tagged",
+          "raw": "0xfffdf41faea5ddc0",
+          "tag": "0xfffffffb"
+        },
+        "setDead": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb642b0",
+          "tag": "0xfffffff7"
+        },
+        "setShowHpMpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ecf0",
+          "tag": "0xfffffff7"
+        },
+        "touchRole": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb66088",
+          "tag": "0xfffffff7"
+        },
+        "initRoleAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e778",
+          "tag": "0xfffffff7"
+        },
+        "m_IsDirty": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_DressId": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Use3DFashion": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "initHpMpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e748",
+          "tag": "0xfffffff7"
+        },
+        "setIsAlive": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5f3b8",
+          "tag": "0xfffffff7"
+        },
+        "getName": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e718",
+          "tag": "0xfffffff7"
+        },
+        "initName": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e6e8",
+          "tag": "0xfffffff7"
+        },
+        "delAllStatus": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb644d0",
+          "tag": "0xfffffff7"
+        },
+        "initArrow": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e658",
+          "tag": "0xfffffff7"
+        },
+        "setHideHpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ed80",
+          "tag": "0xfffffff7"
+        },
+        "setShowHpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ed50",
+          "tag": "0xfffffff7"
+        },
+        "showSelectCircle": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb660e8",
+          "tag": "0xfffffff7"
+        },
+        "refreshPetStarIcons": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e470",
+          "tag": "0xfffffff7"
+        },
+        "refreshNeiDan": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e440",
+          "tag": "0xfffffff7"
+        },
+        "setCmdTempPos": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5f3e8",
+          "tag": "0xfffffff7"
+        },
+        "setMp": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ecc0",
+          "tag": "0xfffffff7"
+        },
+        "m_NeiDanIndex": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "setHpFast": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ec90",
+          "tag": "0xfffffff7"
+        },
+        "setRoleHpMpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ec30",
+          "tag": "0xfffffff7"
+        },
+        "setHp": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ec60",
+          "tag": "0xfffffff7"
+        },
+        "setRoleName": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ec00",
+          "tag": "0xfffffff7"
+        },
+        "ShowRoleIndexPic": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e6b8",
+          "tag": "0xfffffff7"
+        },
+        "setRoleShape": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ebd0",
+          "tag": "0xfffffff7"
+        },
+        "_syncFashionRoleAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eb40",
+          "tag": "0xfffffff7"
+        },
+        "ShowTalkMsg": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e688",
+          "tag": "0xfffffff7"
+        },
+        "SetTempEffectShow": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e410",
+          "tag": "0xfffffff7"
+        },
+        "m_WeaponGemNum": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_IsAlive": {
+          "kind": "boolean",
+          "value": true,
+          "raw": "0xfffeffffffffffff"
+        },
+        "m_CmdTempPos": {
+          "kind": "tagged",
+          "raw": "0xfffa741e7cf14c30",
+          "tag": "0xfffffff4"
+        },
+        "getInitDirection": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec430",
+          "tag": "0xfffffff7"
+        },
+        "m_InitDirection": {
+          "kind": "i32",
+          "value": 3,
+          "raw": "0xfff9000000000003"
+        },
+        "playActSound": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64530",
+          "tag": "0xfffffff7"
+        },
+        "playCurrRoleStateAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64160",
+          "tag": "0xfffffff7"
+        },
+        "new": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e0e0",
+          "tag": "0xfffffff7"
+        },
+        "setNormalAttack": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb641f0",
+          "tag": "0xfffffff7"
+        },
+        "getIsFrozen": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec3d0",
+          "tag": "0xfffffff7"
+        },
+        "getIsSleep": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec3a0",
+          "tag": "0xfffffff7"
+        },
+        "cancelStealth": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64430",
+          "tag": "0xfffffff7"
+        },
+        "setBeatBack": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb643a0",
+          "tag": "0xfffffff7"
+        },
+        "recoverInitDirection": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb645f0",
+          "tag": "0xfffffff7"
+        },
+        "setRun": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64280",
+          "tag": "0xfffffff7"
+        },
+        "m_Pos": {
+          "kind": "i32",
+          "value": 2,
+          "raw": "0xfff9000000000002"
+        },
+        "getReverseDirection": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec490",
+          "tag": "0xfffffff7"
+        },
+        "m_HitBackAct": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea541aec8",
+          "tag": "0xfffffff3"
+        },
+        "getRoleShapeId": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec5e0",
+          "tag": "0xfffffff7"
+        },
+        "setRideHorse": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64680",
+          "tag": "0xfffffff7"
+        },
+        "setStealth": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64400",
+          "tag": "0xfffffff7"
+        },
+        "setMiss": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb643d0",
+          "tag": "0xfffffff7"
+        },
+        "m_RoleId": {
+          "kind": "i32",
+          "value": 200010060,
+          "raw": "0xfff900000bebe94c"
+        },
+        "cancelRoleDragonHenshin": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64650",
+          "tag": "0xfffffff7"
+        },
+        "m_Lv": {
+          "kind": "i32",
+          "value": 55,
+          "raw": "0xfff9000000000037"
+        },
+        "OnMessage": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5f448",
+          "tag": "0xfffffff7"
+        },
+        "msgevent_msgid_hanlder_table": {
+          "kind": "tagged",
+          "raw": "0xfffa741eb00219e0",
+          "tag": "0xfffffff4"
+        },
+        "setRoleDragonHenshin": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64620",
+          "tag": "0xfffffff7"
+        },
+        "recoverDirToNormalStand": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb645c0",
+          "tag": "0xfffffff7"
+        },
+        "setSameFaceDir": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64590",
+          "tag": "0xfffffff7"
+        },
+        "setFaceToDir": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64560",
+          "tag": "0xfffffff7"
+        },
+        "RemoveMessageListener": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb0021a98",
+          "tag": "0xfffffff7"
+        },
+        "ListenMessage": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb0021a28",
+          "tag": "0xfffffff7"
+        },
+        "delStatus": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64500",
+          "tag": "0xfffffff7"
+        },
+        "setRelive": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64370",
+          "tag": "0xfffffff7"
+        },
+        "GetFIDWithSID": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1c332c0",
+          "tag": "0xfffffff7"
+        },
+        "setSpace": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64340",
+          "tag": "0xfffffff7"
+        },
+        "setDefend": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64310",
+          "tag": "0xfffffff7"
+        },
+        "setHurt": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb642e0",
+          "tag": "0xfffffff7"
+        },
+        "setUseDrug": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64250",
+          "tag": "0xfffffff7"
+        },
+        "setAttack": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb641c0",
+          "tag": "0xfffffff7"
+        },
+        "NeiDanList": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea5a3d8c8",
+          "tag": "0xfffffff4"
+        },
+        "getRoleType": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec580",
+          "tag": "0xfffffff7"
+        },
+        "getIsAlive": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec4c0",
+          "tag": "0xfffffff7"
+        },
+        "m_TimeAni": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea7727718",
+          "tag": "0xfffffff3"
+        },
+        "hideCmdAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb661a8",
+          "tag": "0xfffffff7"
+        },
+        "showCmdAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb66178",
+          "tag": "0xfffffff7"
+        },
+        "RemoveAllMessageListener": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb0021ad0",
+          "tag": "0xfffffff7"
+        },
+        "hideCutTimeAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb66148",
+          "tag": "0xfffffff7"
+        },
+        "showCutTimeAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb66118",
+          "tag": "0xfffffff7"
+        },
+        "getRoleId": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec610",
+          "tag": "0xfffffff7"
+        },
+        "checkNeedChangeState": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec670",
+          "tag": "0xfffffff7"
+        },
+        "getRolePos": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec640",
+          "tag": "0xfffffff7"
+        },
+        "addStatus": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64460",
+          "tag": "0xfffffff7"
+        },
+        "getRoleTypeId": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec5b0",
+          "tag": "0xfffffff7"
+        },
+        "getShowData": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec550",
+          "tag": "0xfffffff7"
+        },
+        "getWarPos": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec520",
+          "tag": "0xfffffff7"
+        },
+        "getCmdTempPos": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec4f0",
+          "tag": "0xfffffff7"
+        },
+        "setSelected": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb660b8",
+          "tag": "0xfffffff7"
+        },
+        "getIsStealth": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec400",
+          "tag": "0xfffffff7"
+        },
+        "m_TypeId": {
+          "kind": "i32",
+          "value": 10003,
+          "raw": "0xfff9000000002713"
+        }
+      },
+      "nested": {
+        "class": {
+          "_createRoleAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eab0",
+            "tag": "0xfffffff7"
+          },
+          "getDirection": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec460",
+            "tag": "0xfffffff7"
+          },
+          "_canUse3DFashion": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eb10",
+            "tag": "0xfffffff7"
+          },
+          "_applyWeaponSkin": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eba0",
+            "tag": "0xfffffff7"
+          },
+          "_applyFashionDress": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eb70",
+            "tag": "0xfffffff7"
+          },
+          "setStand": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64190",
+            "tag": "0xfffffff7"
+          },
+          "setDead": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb642b0",
+            "tag": "0xfffffff7"
+          },
+          "setShowHpMpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ecf0",
+            "tag": "0xfffffff7"
+          },
+          "touchRole": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb66088",
+            "tag": "0xfffffff7"
+          },
+          "initRoleAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e778",
+            "tag": "0xfffffff7"
+          },
+          "initData": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e2e0",
+            "tag": "0xfffffff7"
+          },
+          "initHpMpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e748",
+            "tag": "0xfffffff7"
+          },
+          "getName": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e718",
+            "tag": "0xfffffff7"
+          },
+          "setIsAlive": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5f3b8",
+            "tag": "0xfffffff7"
+          },
+          "initName": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e6e8",
+            "tag": "0xfffffff7"
+          },
+          "delAllStatus": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb644d0",
+            "tag": "0xfffffff7"
+          },
+          "initArrow": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e658",
+            "tag": "0xfffffff7"
+          },
+          "setHideHpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ed80",
+            "tag": "0xfffffff7"
+          },
+          "setShowHpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ed50",
+            "tag": "0xfffffff7"
+          },
+          "_canUseChildDress3D": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eae0",
+            "tag": "0xfffffff7"
+          },
+          "showSelectCircle": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb660e8",
+            "tag": "0xfffffff7"
+          },
+          "refreshPetStarIcons": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e470",
+            "tag": "0xfffffff7"
+          },
+          "refreshNeiDan": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e440",
+            "tag": "0xfffffff7"
+          },
+          "setCmdTempPos": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5f3e8",
+            "tag": "0xfffffff7"
+          },
+          "setMp": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ecc0",
+            "tag": "0xfffffff7"
+          },
+          "setHpFast": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ec90",
+            "tag": "0xfffffff7"
+          },
+          "setRoleHpMpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ec30",
+            "tag": "0xfffffff7"
+          },
+          "setHp": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ec60",
+            "tag": "0xfffffff7"
+          },
+          "setRoleName": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ec00",
+            "tag": "0xfffffff7"
+          },
+          "ShowRoleIndexPic": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e6b8",
+            "tag": "0xfffffff7"
+          },
+          "setRoleShape": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ebd0",
+            "tag": "0xfffffff7"
+          },
+          "ShowTalkMsg": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e688",
+            "tag": "0xfffffff7"
+          },
+          "_syncFashionRoleAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eb40",
+            "tag": "0xfffffff7"
+          },
+          "SetTempEffectShow": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e410",
+            "tag": "0xfffffff7"
+          },
+          "ctor": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e2b0",
+            "tag": "0xfffffff7"
+          },
+          "__create": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e068",
+            "tag": "0xfffffff7"
+          },
+          "getInitDirection": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec430",
+            "tag": "0xfffffff7"
+          },
+          "__cname": {
+            "kind": "tagged",
+            "raw": "0xfffdf41eafb5daa8",
+            "tag": "0xfffffffb"
+          },
+          "__ctype": {
+            "kind": "i32",
+            "value": 1,
+            "raw": "0xfff9000000000001"
+          },
+          "playActSound": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64530",
+            "tag": "0xfffffff7"
+          },
+          "playCurrRoleStateAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64160",
+            "tag": "0xfffffff7"
+          },
+          "setNormalAttack": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb641f0",
+            "tag": "0xfffffff7"
+          },
+          "new": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e0e0",
+            "tag": "0xfffffff7"
+          },
+          "getIsFrozen": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec3d0",
+            "tag": "0xfffffff7"
+          },
+          "getIsSleep": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec3a0",
+            "tag": "0xfffffff7"
+          },
+          "cancelStealth": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64430",
+            "tag": "0xfffffff7"
+          },
+          "setBeatBack": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb643a0",
+            "tag": "0xfffffff7"
+          },
+          "recoverInitDirection": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb645f0",
+            "tag": "0xfffffff7"
+          },
+          "setRun": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64280",
+            "tag": "0xfffffff7"
+          },
+          "getReverseDirection": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec490",
+            "tag": "0xfffffff7"
+          },
+          "getRoleShapeId": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec5e0",
+            "tag": "0xfffffff7"
+          },
+          "setRideHorse": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64680",
+            "tag": "0xfffffff7"
+          },
+          "setStealth": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64400",
+            "tag": "0xfffffff7"
+          },
+          "setMiss": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb643d0",
+            "tag": "0xfffffff7"
+          },
+          "cancelRoleDragonHenshin": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64650",
+            "tag": "0xfffffff7"
+          },
+          "setDirty": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5f418",
+            "tag": "0xfffffff7"
+          },
+          "OnMessage": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5f448",
+            "tag": "0xfffffff7"
+          },
+          "setRoleDragonHenshin": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64620",
+            "tag": "0xfffffff7"
+          },
+          "recoverDirToNormalStand": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb645c0",
+            "tag": "0xfffffff7"
+          },
+          "setSameFaceDir": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64590",
+            "tag": "0xfffffff7"
+          },
+          "setFaceToDir": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64560",
+            "tag": "0xfffffff7"
+          },
+          "delStatus": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64500",
+            "tag": "0xfffffff7"
+          },
+          "setRelive": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64370",
+            "tag": "0xfffffff7"
+          },
+          "setSpace": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64340",
+            "tag": "0xfffffff7"
+          },
+          "setDefend": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64310",
+            "tag": "0xfffffff7"
+          },
+          "setHurt": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb642e0",
+            "tag": "0xfffffff7"
+          },
+          "setUseDrug": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64250",
+            "tag": "0xfffffff7"
+          },
+          "setAttack": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb641c0",
+            "tag": "0xfffffff7"
+          },
+          "addTalkMsg": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb646b0",
+            "tag": "0xfffffff7"
+          },
+          "setSkillAttack": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64220",
+            "tag": "0xfffffff7"
+          },
+          "setHideHpMpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ed20",
+            "tag": "0xfffffff7"
+          },
+          "updatePetStarIconsVisible": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e628",
+            "tag": "0xfffffff7"
+          },
+          "getRoleType": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec580",
+            "tag": "0xfffffff7"
+          },
+          "hideCmdAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb661a8",
+            "tag": "0xfffffff7"
+          },
+          "showCmdAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb66178",
+            "tag": "0xfffffff7"
+          },
+          "hideCutTimeAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb66148",
+            "tag": "0xfffffff7"
+          },
+          "showCutTimeAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb66118",
+            "tag": "0xfffffff7"
+          },
+          "getRoleId": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec610",
+            "tag": "0xfffffff7"
+          },
+          "getIsAlive": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec4c0",
+            "tag": "0xfffffff7"
+          },
+          "checkNeedChangeState": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec670",
+            "tag": "0xfffffff7"
+          },
+          "getRolePos": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec640",
+            "tag": "0xfffffff7"
+          },
+          "addStatus": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64460",
+            "tag": "0xfffffff7"
+          },
+          "getRoleTypeId": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec5b0",
+            "tag": "0xfffffff7"
+          },
+          "getShowData": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec550",
+            "tag": "0xfffffff7"
+          },
+          "getWarPos": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec520",
+            "tag": "0xfffffff7"
+          },
+          "getCmdTempPos": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec4f0",
+            "tag": "0xfffffff7"
+          },
+          "setSelected": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb660b8",
+            "tag": "0xfffffff7"
+          },
+          "getIsStealth": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec400",
+            "tag": "0xfffffff7"
+          }
+        }
+      }
+    },
+    {
+      "pos": 1,
+      "local": false,
+      "alive": true,
+      "fields": {
+        "getDirection": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec460",
+          "tag": "0xfffffff7"
+        },
+        "m_PlayerId": {
+          "kind": "i32",
+          "value": 20032,
+          "raw": "0xfff9000000004e40"
+        },
+        "initData": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e2e0",
+          "tag": "0xfffffff7"
+        },
+        "_canUseChildDress3D": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eae0",
+          "tag": "0xfffffff7"
+        },
+        "m_Type": {
+          "kind": "f64",
+          "value": 1.0,
+          "raw": "0x3ff0000000000000"
+        },
+        "ctor": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e2b0",
+          "tag": "0xfffffff7"
+        },
+        "class": {
+          "kind": "tagged",
+          "raw": "0xfffa741eafb5e098",
+          "tag": "0xfffffff4"
+        },
+        "__create": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e068",
+          "tag": "0xfffffff7"
+        },
+        "__cname": {
+          "kind": "tagged",
+          "raw": "0xfffdf41eafb5daa8",
+          "tag": "0xfffffffb"
+        },
+        "__ctype": {
+          "kind": "i32",
+          "value": 1,
+          "raw": "0xfff9000000000001"
+        },
+        "m_IsLocalPlayer": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_WingId": {
+          "kind": "nil",
+          "value": null,
+          "raw": "0xffffffffffffffff"
+        },
+        "m_EffectList": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea22e6890",
+          "tag": "0xfffffff4"
+        },
+        "m_EffectAni": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea22e6848",
+          "tag": "0xfffffff4"
+        },
+        "m_CurrSoundState": {
+          "kind": "tagged",
+          "raw": "0xfffdf41fbe607150",
+          "tag": "0xfffffffb"
+        },
+        "m_CurrRoleState": {
+          "kind": "tagged",
+          "raw": "0xfffdf41fbe607150",
+          "tag": "0xfffffffb"
+        },
+        "m_IsStealth": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_StarLevel": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_TalkBubbleObj": {
+          "kind": "nil",
+          "value": null,
+          "raw": "0xffffffffffffffff"
+        },
+        "m_Name": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea4f921a0",
+          "tag": "0xfffffff3"
+        },
+        "m_MaxMp": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Mp": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "setDirty": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5f418",
+          "tag": "0xfffffff7"
+        },
+        "m_MaxHp": {
+          "kind": "i32",
+          "value": 12818,
+          "raw": "0xfff9000000003212"
+        },
+        "m_Hp": {
+          "kind": "i32",
+          "value": 11782,
+          "raw": "0xfff9000000002e06"
+        },
+        "m_RoleOpacity": {
+          "kind": "i32",
+          "value": 255,
+          "raw": "0xfff90000000000ff"
+        },
+        "m_DiscolourBack": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Dye2Back": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Dye1Back": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Discolour": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Dye2": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_ShapeAni": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea7b08ef0",
+          "tag": "0xfffffff3"
+        },
+        "m_Dye1": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Rei": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_IndexPic": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea22e6788",
+          "tag": "0xfffffff3"
+        },
+        "m_WeaponSkinId": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_WeaponId": {
+          "kind": "nil",
+          "value": null,
+          "raw": "0xffffffffffffffff"
+        },
+        "m_currAccHut2": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_currAccHut": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_currAcc": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "addTalkMsg": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb646b0",
+          "tag": "0xfffffff7"
+        },
+        "m_ShapeBack": {
+          "kind": "i32",
+          "value": 6028,
+          "raw": "0xfff900000000178c"
+        },
+        "m_Direction": {
+          "kind": "i32",
+          "value": 3,
+          "raw": "0xfff9000000000003"
+        },
+        "m_IsLocalChild": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_IsLocalPet": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_Battlefield": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea1f45348",
+          "tag": "0xfffffff4"
+        },
+        "setSkillAttack": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64220",
+          "tag": "0xfffffff7"
+        },
+        "m_StarNode": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea6ea0ff0",
+          "tag": "0xfffffff3"
+        },
+        "setHideHpMpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ed20",
+          "tag": "0xfffffff7"
+        },
+        "updatePetStarIconsVisible": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e628",
+          "tag": "0xfffffff7"
+        },
+        "m_StarIcons": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea6ea1268",
+          "tag": "0xfffffff4"
+        },
+        "m_MpBar": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea7b08000",
+          "tag": "0xfffffff3"
+        },
+        "m_HpBar": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea7b068b8",
+          "tag": "0xfffffff3"
+        },
+        "m_ShapeId": {
+          "kind": "i32",
+          "value": 6028,
+          "raw": "0xfff900000000178c"
+        },
+        "m_CmdArrow": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea4f91be0",
+          "tag": "0xfffffff3"
+        },
+        "m_SelectHoldArrow": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea4f8ff28",
+          "tag": "0xfffffff3"
+        },
+        "m_SelectOnArrow": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea4f931e0",
+          "tag": "0xfffffff3"
+        },
+        "m_SelectArrow": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea4f92fb0",
+          "tag": "0xfffffff3"
+        },
+        "_createRoleAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eab0",
+          "tag": "0xfffffff7"
+        },
+        "_canUse3DFashion": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eb10",
+          "tag": "0xfffffff7"
+        },
+        "_applyWeaponSkin": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eba0",
+          "tag": "0xfffffff7"
+        },
+        "_applyFashionDress": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eb70",
+          "tag": "0xfffffff7"
+        },
+        "setStand": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64190",
+          "tag": "0xfffffff7"
+        },
+        "m_RoleName": {
+          "kind": "tagged",
+          "raw": "0xfffdf41faed29958",
+          "tag": "0xfffffffb"
+        },
+        "setDead": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb642b0",
+          "tag": "0xfffffff7"
+        },
+        "setShowHpMpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ecf0",
+          "tag": "0xfffffff7"
+        },
+        "touchRole": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb66088",
+          "tag": "0xfffffff7"
+        },
+        "initRoleAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e778",
+          "tag": "0xfffffff7"
+        },
+        "m_IsDirty": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "m_DressId": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_Use3DFashion": {
+          "kind": "boolean",
+          "value": false,
+          "raw": "0xffff7fffffffffff"
+        },
+        "initHpMpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e748",
+          "tag": "0xfffffff7"
+        },
+        "setIsAlive": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5f3b8",
+          "tag": "0xfffffff7"
+        },
+        "getName": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e718",
+          "tag": "0xfffffff7"
+        },
+        "initName": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e6e8",
+          "tag": "0xfffffff7"
+        },
+        "delAllStatus": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb644d0",
+          "tag": "0xfffffff7"
+        },
+        "initArrow": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e658",
+          "tag": "0xfffffff7"
+        },
+        "setHideHpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ed80",
+          "tag": "0xfffffff7"
+        },
+        "setShowHpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ed50",
+          "tag": "0xfffffff7"
+        },
+        "showSelectCircle": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb660e8",
+          "tag": "0xfffffff7"
+        },
+        "refreshPetStarIcons": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e470",
+          "tag": "0xfffffff7"
+        },
+        "refreshNeiDan": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e440",
+          "tag": "0xfffffff7"
+        },
+        "setCmdTempPos": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5f3e8",
+          "tag": "0xfffffff7"
+        },
+        "setMp": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ecc0",
+          "tag": "0xfffffff7"
+        },
+        "m_NeiDanIndex": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "setHpFast": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ec90",
+          "tag": "0xfffffff7"
+        },
+        "setRoleHpMpBar": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ec30",
+          "tag": "0xfffffff7"
+        },
+        "setHp": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ec60",
+          "tag": "0xfffffff7"
+        },
+        "setRoleName": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ec00",
+          "tag": "0xfffffff7"
+        },
+        "ShowRoleIndexPic": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e6b8",
+          "tag": "0xfffffff7"
+        },
+        "setRoleShape": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5ebd0",
+          "tag": "0xfffffff7"
+        },
+        "_syncFashionRoleAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5eb40",
+          "tag": "0xfffffff7"
+        },
+        "ShowTalkMsg": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e688",
+          "tag": "0xfffffff7"
+        },
+        "SetTempEffectShow": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e410",
+          "tag": "0xfffffff7"
+        },
+        "m_WeaponGemNum": {
+          "kind": "i32",
+          "value": 0,
+          "raw": "0xfff9000000000000"
+        },
+        "m_IsAlive": {
+          "kind": "boolean",
+          "value": true,
+          "raw": "0xfffeffffffffffff"
+        },
+        "m_CmdTempPos": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea22e68d8",
+          "tag": "0xfffffff4"
+        },
+        "getInitDirection": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec430",
+          "tag": "0xfffffff7"
+        },
+        "m_InitDirection": {
+          "kind": "i32",
+          "value": 3,
+          "raw": "0xfff9000000000003"
+        },
+        "playActSound": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64530",
+          "tag": "0xfffffff7"
+        },
+        "playCurrRoleStateAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64160",
+          "tag": "0xfffffff7"
+        },
+        "new": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5e0e0",
+          "tag": "0xfffffff7"
+        },
+        "setNormalAttack": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb641f0",
+          "tag": "0xfffffff7"
+        },
+        "getIsFrozen": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec3d0",
+          "tag": "0xfffffff7"
+        },
+        "getIsSleep": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec3a0",
+          "tag": "0xfffffff7"
+        },
+        "cancelStealth": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64430",
+          "tag": "0xfffffff7"
+        },
+        "setBeatBack": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb643a0",
+          "tag": "0xfffffff7"
+        },
+        "recoverInitDirection": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb645f0",
+          "tag": "0xfffffff7"
+        },
+        "setRun": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64280",
+          "tag": "0xfffffff7"
+        },
+        "m_Pos": {
+          "kind": "i32",
+          "value": 1,
+          "raw": "0xfff9000000000001"
+        },
+        "getReverseDirection": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec490",
+          "tag": "0xfffffff7"
+        },
+        "m_HitBackAct": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea6756278",
+          "tag": "0xfffffff3"
+        },
+        "getRoleShapeId": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec5e0",
+          "tag": "0xfffffff7"
+        },
+        "setRideHorse": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64680",
+          "tag": "0xfffffff7"
+        },
+        "setStealth": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64400",
+          "tag": "0xfffffff7"
+        },
+        "setMiss": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb643d0",
+          "tag": "0xfffffff7"
+        },
+        "m_RoleId": {
+          "kind": "i32",
+          "value": 200010054,
+          "raw": "0xfff900000bebe946"
+        },
+        "cancelRoleDragonHenshin": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64650",
+          "tag": "0xfffffff7"
+        },
+        "m_Lv": {
+          "kind": "i32",
+          "value": 55,
+          "raw": "0xfff9000000000037"
+        },
+        "OnMessage": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb5f448",
+          "tag": "0xfffffff7"
+        },
+        "msgevent_msgid_hanlder_table": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea7b09a28",
+          "tag": "0xfffffff4"
+        },
+        "setRoleDragonHenshin": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64620",
+          "tag": "0xfffffff7"
+        },
+        "recoverDirToNormalStand": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb645c0",
+          "tag": "0xfffffff7"
+        },
+        "setSameFaceDir": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64590",
+          "tag": "0xfffffff7"
+        },
+        "setFaceToDir": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64560",
+          "tag": "0xfffffff7"
+        },
+        "RemoveMessageListener": {
+          "kind": "tagged",
+          "raw": "0xfffbf41ea7b09ae0",
+          "tag": "0xfffffff7"
+        },
+        "ListenMessage": {
+          "kind": "tagged",
+          "raw": "0xfffbf41ea7b09a70",
+          "tag": "0xfffffff7"
+        },
+        "delStatus": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64500",
+          "tag": "0xfffffff7"
+        },
+        "setRelive": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64370",
+          "tag": "0xfffffff7"
+        },
+        "GetFIDWithSID": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb18c7490",
+          "tag": "0xfffffff7"
+        },
+        "setSpace": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64340",
+          "tag": "0xfffffff7"
+        },
+        "setDefend": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64310",
+          "tag": "0xfffffff7"
+        },
+        "setHurt": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb642e0",
+          "tag": "0xfffffff7"
+        },
+        "setUseDrug": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64250",
+          "tag": "0xfffffff7"
+        },
+        "setAttack": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb641c0",
+          "tag": "0xfffffff7"
+        },
+        "NeiDanList": {
+          "kind": "tagged",
+          "raw": "0xfffa741ea854e290",
+          "tag": "0xfffffff4"
+        },
+        "getRoleType": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec580",
+          "tag": "0xfffffff7"
+        },
+        "getIsAlive": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec4c0",
+          "tag": "0xfffffff7"
+        },
+        "m_TimeAni": {
+          "kind": "tagged",
+          "raw": "0xfff9f41ea616f5d8",
+          "tag": "0xfffffff3"
+        },
+        "hideCmdAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb661a8",
+          "tag": "0xfffffff7"
+        },
+        "showCmdAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb66178",
+          "tag": "0xfffffff7"
+        },
+        "RemoveAllMessageListener": {
+          "kind": "tagged",
+          "raw": "0xfffbf41ea7b09b18",
+          "tag": "0xfffffff7"
+        },
+        "hideCutTimeAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb66148",
+          "tag": "0xfffffff7"
+        },
+        "showCutTimeAni": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb66118",
+          "tag": "0xfffffff7"
+        },
+        "getRoleId": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec610",
+          "tag": "0xfffffff7"
+        },
+        "checkNeedChangeState": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec670",
+          "tag": "0xfffffff7"
+        },
+        "getRolePos": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec640",
+          "tag": "0xfffffff7"
+        },
+        "addStatus": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb64460",
+          "tag": "0xfffffff7"
+        },
+        "getRoleTypeId": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec5b0",
+          "tag": "0xfffffff7"
+        },
+        "getShowData": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec550",
+          "tag": "0xfffffff7"
+        },
+        "getWarPos": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec520",
+          "tag": "0xfffffff7"
+        },
+        "getCmdTempPos": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec4f0",
+          "tag": "0xfffffff7"
+        },
+        "setSelected": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eafb660b8",
+          "tag": "0xfffffff7"
+        },
+        "getIsStealth": {
+          "kind": "tagged",
+          "raw": "0xfffbf41eb1cec400",
+          "tag": "0xfffffff7"
+        },
+        "m_TypeId": {
+          "kind": "i32",
+          "value": 10005,
+          "raw": "0xfff9000000002715"
+        }
+      },
+      "nested": {
+        "class": {
+          "_createRoleAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eab0",
+            "tag": "0xfffffff7"
+          },
+          "getDirection": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec460",
+            "tag": "0xfffffff7"
+          },
+          "_canUse3DFashion": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eb10",
+            "tag": "0xfffffff7"
+          },
+          "_applyWeaponSkin": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eba0",
+            "tag": "0xfffffff7"
+          },
+          "_applyFashionDress": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eb70",
+            "tag": "0xfffffff7"
+          },
+          "setStand": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64190",
+            "tag": "0xfffffff7"
+          },
+          "setDead": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb642b0",
+            "tag": "0xfffffff7"
+          },
+          "setShowHpMpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ecf0",
+            "tag": "0xfffffff7"
+          },
+          "touchRole": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb66088",
+            "tag": "0xfffffff7"
+          },
+          "initRoleAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e778",
+            "tag": "0xfffffff7"
+          },
+          "initData": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e2e0",
+            "tag": "0xfffffff7"
+          },
+          "initHpMpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e748",
+            "tag": "0xfffffff7"
+          },
+          "getName": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e718",
+            "tag": "0xfffffff7"
+          },
+          "setIsAlive": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5f3b8",
+            "tag": "0xfffffff7"
+          },
+          "initName": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e6e8",
+            "tag": "0xfffffff7"
+          },
+          "delAllStatus": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb644d0",
+            "tag": "0xfffffff7"
+          },
+          "initArrow": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e658",
+            "tag": "0xfffffff7"
+          },
+          "setHideHpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ed80",
+            "tag": "0xfffffff7"
+          },
+          "setShowHpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ed50",
+            "tag": "0xfffffff7"
+          },
+          "_canUseChildDress3D": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eae0",
+            "tag": "0xfffffff7"
+          },
+          "showSelectCircle": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb660e8",
+            "tag": "0xfffffff7"
+          },
+          "refreshPetStarIcons": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e470",
+            "tag": "0xfffffff7"
+          },
+          "refreshNeiDan": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e440",
+            "tag": "0xfffffff7"
+          },
+          "setCmdTempPos": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5f3e8",
+            "tag": "0xfffffff7"
+          },
+          "setMp": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ecc0",
+            "tag": "0xfffffff7"
+          },
+          "setHpFast": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ec90",
+            "tag": "0xfffffff7"
+          },
+          "setRoleHpMpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ec30",
+            "tag": "0xfffffff7"
+          },
+          "setHp": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ec60",
+            "tag": "0xfffffff7"
+          },
+          "setRoleName": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ec00",
+            "tag": "0xfffffff7"
+          },
+          "ShowRoleIndexPic": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e6b8",
+            "tag": "0xfffffff7"
+          },
+          "setRoleShape": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ebd0",
+            "tag": "0xfffffff7"
+          },
+          "ShowTalkMsg": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e688",
+            "tag": "0xfffffff7"
+          },
+          "_syncFashionRoleAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5eb40",
+            "tag": "0xfffffff7"
+          },
+          "SetTempEffectShow": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e410",
+            "tag": "0xfffffff7"
+          },
+          "ctor": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e2b0",
+            "tag": "0xfffffff7"
+          },
+          "__create": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e068",
+            "tag": "0xfffffff7"
+          },
+          "getInitDirection": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec430",
+            "tag": "0xfffffff7"
+          },
+          "__cname": {
+            "kind": "tagged",
+            "raw": "0xfffdf41eafb5daa8",
+            "tag": "0xfffffffb"
+          },
+          "__ctype": {
+            "kind": "i32",
+            "value": 1,
+            "raw": "0xfff9000000000001"
+          },
+          "playActSound": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64530",
+            "tag": "0xfffffff7"
+          },
+          "playCurrRoleStateAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64160",
+            "tag": "0xfffffff7"
+          },
+          "setNormalAttack": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb641f0",
+            "tag": "0xfffffff7"
+          },
+          "new": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e0e0",
+            "tag": "0xfffffff7"
+          },
+          "getIsFrozen": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec3d0",
+            "tag": "0xfffffff7"
+          },
+          "getIsSleep": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec3a0",
+            "tag": "0xfffffff7"
+          },
+          "cancelStealth": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64430",
+            "tag": "0xfffffff7"
+          },
+          "setBeatBack": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb643a0",
+            "tag": "0xfffffff7"
+          },
+          "recoverInitDirection": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb645f0",
+            "tag": "0xfffffff7"
+          },
+          "setRun": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64280",
+            "tag": "0xfffffff7"
+          },
+          "getReverseDirection": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec490",
+            "tag": "0xfffffff7"
+          },
+          "getRoleShapeId": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec5e0",
+            "tag": "0xfffffff7"
+          },
+          "setRideHorse": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64680",
+            "tag": "0xfffffff7"
+          },
+          "setStealth": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64400",
+            "tag": "0xfffffff7"
+          },
+          "setMiss": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb643d0",
+            "tag": "0xfffffff7"
+          },
+          "cancelRoleDragonHenshin": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64650",
+            "tag": "0xfffffff7"
+          },
+          "setDirty": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5f418",
+            "tag": "0xfffffff7"
+          },
+          "OnMessage": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5f448",
+            "tag": "0xfffffff7"
+          },
+          "setRoleDragonHenshin": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64620",
+            "tag": "0xfffffff7"
+          },
+          "recoverDirToNormalStand": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb645c0",
+            "tag": "0xfffffff7"
+          },
+          "setSameFaceDir": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64590",
+            "tag": "0xfffffff7"
+          },
+          "setFaceToDir": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64560",
+            "tag": "0xfffffff7"
+          },
+          "delStatus": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64500",
+            "tag": "0xfffffff7"
+          },
+          "setRelive": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64370",
+            "tag": "0xfffffff7"
+          },
+          "setSpace": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64340",
+            "tag": "0xfffffff7"
+          },
+          "setDefend": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64310",
+            "tag": "0xfffffff7"
+          },
+          "setHurt": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb642e0",
+            "tag": "0xfffffff7"
+          },
+          "setUseDrug": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64250",
+            "tag": "0xfffffff7"
+          },
+          "setAttack": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb641c0",
+            "tag": "0xfffffff7"
+          },
+          "addTalkMsg": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb646b0",
+            "tag": "0xfffffff7"
+          },
+          "setSkillAttack": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64220",
+            "tag": "0xfffffff7"
+          },
+          "setHideHpMpBar": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5ed20",
+            "tag": "0xfffffff7"
+          },
+          "updatePetStarIconsVisible": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb5e628",
+            "tag": "0xfffffff7"
+          },
+          "getRoleType": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec580",
+            "tag": "0xfffffff7"
+          },
+          "hideCmdAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb661a8",
+            "tag": "0xfffffff7"
+          },
+          "showCmdAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb66178",
+            "tag": "0xfffffff7"
+          },
+          "hideCutTimeAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb66148",
+            "tag": "0xfffffff7"
+          },
+          "showCutTimeAni": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb66118",
+            "tag": "0xfffffff7"
+          },
+          "getRoleId": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec610",
+            "tag": "0xfffffff7"
+          },
+          "getIsAlive": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec4c0",
+            "tag": "0xfffffff7"
+          },
+          "checkNeedChangeState": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec670",
+            "tag": "0xfffffff7"
+          },
+          "getRolePos": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec640",
+            "tag": "0xfffffff7"
+          },
+          "addStatus": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb64460",
+            "tag": "0xfffffff7"
+          },
+          "getRoleTypeId": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec5b0",
+            "tag": "0xfffffff7"
+          },
+          "getShowData": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec550",
+            "tag": "0xfffffff7"
+          },
+          "getWarPos": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec520",
+            "tag": "0xfffffff7"
+          },
+          "getCmdTempPos": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec4f0",
+            "tag": "0xfffffff7"
+          },
+          "setSelected": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eafb660b8",
+            "tag": "0xfffffff7"
+          },
+          "getIsStealth": {
+            "kind": "tagged",
+            "raw": "0xfffbf41eb1cec400",
+            "tag": "0xfffffff7"
+          }
+        }
+      }
+    }
+  ],
+  "functions": {
+    "manager.setBattleRole": {
+      "proto": "0x741eb1b2aab8",
+      "parameters": 2,
+      "constants": [
+        "ipairs",
+        "convertRoleData",
+        "m_RoleIns",
+        "pos",
+        "initData",
+        "console",
+        "error",
+        "不存在的角色位置BattlefieldView:",
+        "statusList",
+        "table",
+        "insert",
+        {
+          "type": 11
+        },
+        "statusId",
+        "round",
+        "pairs",
+        "EFFECTTYPE_MISS",
+        "addStatus",
+        "show",
+        "m_RoleIdPosDict",
+        "id",
+        "m_PlayerId",
+        "m_PlayerPos",
+        "m_PetPos",
+        "m_ChildPos",
+        "masterId",
+        "DefineDefendPosNumberBase",
+        "m_BattleType",
+        "m_BattleUI",
+        "refreshPlayerHead",
+        "refreshPetHead",
+        "showLeaderBtn",
+        "m_CanOrder",
+        "hideLeaderBtn"
+      ],
+      "bytecode": "591500002902000036030000120501004203020458065580120a000039080100120b07004208030239090200390a030738090a090f000900580a0680120c0900390a0409390d0307120e0800420a0401580a0580360a0500390a060a270c0700390d0307420a0301340a0000290b0100390c0807150c0c00290d02004d0b0d80360f0900390f0a0f12110a0035120b003913080738130e133d130c12391308071614000e381314133d130d12420f03014f0bf37f360b0e00120d0a00420b0204480e0c8039100c0f36110f000410110058100880391002003911030738101110121210003910101012130f002914000042100401460e0303520ef27f120d0900390b1109420b0201390b1200390c1307390d03073c0d0c0b390b1307390c1400050b0c00580b0880390b03073d0b1500390b0307160b010b3d0b1600390b0307160b020b3d0b1700390b1807390c1307050b0c00580b0580390b0307360c1900010b0c00580b018016020002450603035206a97f39031a000903000058031f8039031b001205030039031c033906020039071500380607064203030139031b001205030039031d033906020039071600380607064203030129030500010302005803078039031b001205030039031e03420302012b0302003d031f0058030d8039031b001205030039032003420302012b0301003d031f005803068039031b001205030039032003420302012b0301003d031f004b000100"
+    },
+    "manager.initBattlefieldData": {
+      "proto": "0x741eb1b29e60",
+      "parameters": 2,
+      "constants": [
+        "stopAllActions",
+        "pairs",
+        "m_RoleIns",
+        "m_AniNode",
+        "removeAllChildren",
+        "m_AniNode_Bottom",
+        "convertSpareRoleIns",
+        "m_AllPosInfo",
+        "table",
+        "nums",
+        "m_SpareRoleIns",
+        "remove",
+        "BattleRole",
+        "new",
+        "m_RoleNode",
+        "addChild",
+        "y",
+        "pos",
+        "x",
+        "setLocalZOrder",
+        "m_DieRoleIns",
+        "removeFromParent",
+        "m_RoleId",
+        "getChildren",
+        "ipairs",
+        "hide",
+        "delAllStatus",
+        "m_IsDirty",
+        "m_BattleId",
+        "m_PlayerId",
+        "LocalPlayerMgr",
+        "getInstance",
+        "getPlayerId",
+        "m_PlayerPos",
+        "m_PetPos",
+        "m_ChildPos",
+        "m_LearnSkills",
+        "m_SkillCDDict",
+        "m_RoleIdPosDict",
+        "m_CurRoundNum",
+        "m_PetList",
+        "m_PlayerSkillExp",
+        "m_PetSkillList",
+        "m_PetNeiDanSkillList",
+        "m_CanOrder",
+        "m_CmdRound",
+        "m_RoundCmdList",
+        "m_CurCmdIndex",
+        "m_CmdAniTimeCount",
+        "m_CurCmdPlayIndex",
+        "m_ActionList",
+        "m_PauseAnalyze",
+        "m_AnalyzeFinish",
+        "m_BattleStatus"
+      ],
+      "bytecode": "5910000012040000390200004202020136020100390402004202020448050380120906003907000642070201460503035205fb7f3902030012040200390204022b050200420203013902050012040200390204022b050200420203011204000039020600420202013602010039040700420202044805388039070200380705070b070000580726802b0700003608080039080908390a0a00420802022909000001090800580806803608080039080b08390a0a00420802021207080058080b8036080c0039080d08420801021207080039080e00120a080039080f08120b0700390c1006140c0c0042080401120a070039081107390b1206390c100642080401120a070039081307390b1006140b0b0042080301390802003c07050858070e8039070200380705071209070039071307390a1006140a0a004207030139070200380705071209070039071107390a1206390b100642070401460503035205c67f3602010039041400420202044805048012090600390715062b0a020042070301460503035205fa7f340200003d0214003602010039040a00420202044805048012090600390715062b0a020042070301460503035205fa7f340200003d020a00360201003904020042020204480502802b0700003d071606460503035205fc7f39020e00120402003902170242020202360318001205020042030204580611802b08010036090100390b020042090204480c0480050d0700580e02802b08020058090280460c0303520cfa7f0e00080058090480120b0700390915072b0c020042090301450603035206ed7f36030100390502004203020448060880120a07003908190742080201120a070039081a07420802012b0802003d081b07460603035206f67f3d011c0036031e001205030039031f03420302021205030039032003420302023d031d002903ffff3d0321002903ffff3d0322002903ffff3d032300340300003d032400340300003d032500340300003d0326002903ffff3d032700340300003d032800340300003d032900340300003d032a00340300003d032b002b0301003d032c00290300003d032d00340300003d032e00290300003d032f00290300003d033000290300003d033100340300003d0332002b0301003d0333002b0302003d03340034030400340400003e040103340400003e040203340400003e0403033d0335004b000100"
+    },
+    "manager.convertRoleData": {
+      "proto": "0x741eb1aef8f8",
+      "parameters": 2,
+      "constants": [
+        "data_proList2Obj",
+        "pro",
+        "typeId",
+        "shapeId",
+        "playerId",
+        "masterId",
+        "objId",
+        "id",
+        "hp",
+        "currLife",
+        "maxHp",
+        "maxLife",
+        "mp",
+        "currMana",
+        "maxMp",
+        "maxMana",
+        "weaponId",
+        "name",
+        "无名氏",
+        "lv",
+        "zs",
+        "rei",
+        "dye1",
+        "a",
+        "dye2",
+        "b",
+        "color",
+        "currHut",
+        "effList",
+        "currAcc",
+        "acc",
+        "currAccHut",
+        "currAccHut2",
+        "NeiDanList",
+        "NeiDanskillIds",
+        "tonumber",
+        "star_level",
+        "starLevel",
+        "PetMgr",
+        "LocalPlayerMgr",
+        "getInstance",
+        "getPlayerId",
+        "getPetByPetId",
+        "getProperty",
+        "PROPERTY_STAR_LEVEL",
+        "GetRoleObjType",
+        "LOGICTYPE_MONSTER",
+        "LOGICTYPE_MONSTER2",
+        "gemNum",
+        "weaponGem",
+        "PlayerDataMgr",
+        "getPlayer",
+        "PROPERTY_WEAPON_ID",
+        "PROPERTY_WEAPON_GEM",
+        "hf",
+        "usingFashion",
+        "dressList",
+        "ipairs",
+        "type",
+        "table",
+        "serial",
+        "PROPERTY_DRESS",
+        "usingWeaponSkin",
+        "PROPERTY_WEAPON_SKIN"
+      ],
+      "bytecode": "590f000034020000360300003905010142030202390402013d040202390403013d040302390405013d040402390407013d040602390409030e00040058050180290464003d04080239040b030e00040058050180290464003d040a0239040d030e00040058050180290464003d040c0239040f030e00040058050180290464003d040e02390410013d041002390411030e00040058050180270412003d041102390413033d041302390415033d041402390417030e00040058050180290400003d041602390419030e00040058050180290400003d04180239041b033d041a0239041c013d041c0239041e030e00040058050180290400003d041d0239041f030e00040058050180290400003d041f02390420030e00040058050180290400003d042002390422010e00040058050480390421010e00040058050180340400003d04210236042300390624030e0006005807018039062503420402020e0004005805018029040000290500000304050058053380390506020f00050058063080390504020f00050058062d80360526000f00050058062a80360527000f00050058062780360527001207050039052805420502020d06050058060680390629050f000600580703801208050039062905420602020f00060058071980390704020507060058071680360726001209070039072807420702021209070039072a07390a0602420703020f00070058080c8039082b070f0008005809098036082300120c0700390a2b07360d2c00420a0300410800020c04080058090180290400003d04250236052d00390702024205020236062e00040506005806038036062f000505060058060980290610003d0630022a0600003d061002290601003d061602290601003d06180258062980390630010e00060058070a80390631010e00060058070780390630030e00060058070480390631030e00060058070180290600003d063002390604020f0006005807188036063200120806003906280642060202120806003906330639090402420603020f00060058070e801209060039072b06360a340042070302120a060039082b06360b3500420803020f000700580901803d0710020f000800580901803d083002390636030f00060058070580390636030806010058060280390636033d06030236062300390837030e0008005809018029080000420602020e0006005807018029060000290700000306070058072280390738010f00070058081f80360739003909380142070204580a1980360c3a00120e0b00420c0202070c3b00580c0a80360c2300390e070b0e000e00580f0180390e3c0b420c02020c060c00580d018029060000580c0680360c2300120e0b00420c02020c060c00580d018029060000290c0000010c0600580c018058070280450a0303520ae57f290700000306070058071c80390704020f0007005808198036073d000f00070058081680360732001209070039072807420702021209070039073307390a0402420703020f00070058080c8036082300120c0700390a2b07360d3d00420a03020e000a00580b0180290a0000420802020c06080058090180290600003d0637023607230039093e030e000900580a018029090000420702020e00070058080180290700003d073e0239073e02290800000307080058071d80390704020f00070058081a8036073f000f00070058081780360732001209070039072807420702021209070039073307390a0402420703020f00070058080d8036082300120c0700390a2b07360d3f00420a03020e000a00580b0180290a0000420802020e00080058090180290800003d083e024c020200"
+    },
+    "role.initData": {
+      "proto": "0x741eafb56e48",
+      "parameters": 3,
+      "constants": [
+        "CB_log_Battle",
+        "初始化战斗角色数据",
+        "m_Battlefield",
+        "BattlefieldView",
+        "getInstance",
+        "m_Pos",
+        "m_PlayerId",
+        "playerId",
+        "m_RoleId",
+        "objId",
+        "m_IsLocalPlayer",
+        "m_IsLocalPet",
+        "m_IsLocalChild",
+        "GetObjType",
+        "typeId",
+        "slot3",
+        "LocalPlayerMgr",
+        "getPlayerId",
+        "LOGICTYPE_PET",
+        "LOGICTYPE_DaNaoPET",
+        "LOGICTYPE_CHILD",
+        "m_Direction",
+        "setLocalZOrder",
+        "ChildZOrder",
+        "m_ShapeId",
+        "shapeId",
+        "m_ShapeBack",
+        "m_RoleName",
+        "name",
+        "未命名",
+        "m_TypeId",
+        "m_Type",
+        "GetRoleObjType",
+        "m_currAcc",
+        "currAcc",
+        "m_currAccHut",
+        "currAccHut",
+        "m_currAccHut2",
+        "currAccHut2",
+        "m_WeaponId",
+        "m_IndexPic",
+        "display",
+        "newSprite",
+        "images/alpha.png",
+        "addChild",
+        "SelectArrowZOrder",
+        "setPosition",
+        "cc",
+        "p",
+        "IndexPicPos",
+        "IsRoleShapeRes",
+        "slot4",
+        "weaponId",
+        "GetWeaponShapeByEquipAndGemNum",
+        "gemNum",
+        "GetPetWeaponIsExist",
+        "TypeIdIsPartner",
+        "PartnerMgr",
+        "getPartnerEquipInfoByPos",
+        "slot5",
+        "EquipLevel",
+        "GetWeaponShapeByEquipAndGemNum_huoBan",
+        "m_Rei",
+        "zs",
+        "m_Lv",
+        "lv",
+        "m_Dye1",
+        "dye1",
+        "m_Dye2",
+        "dye2",
+        "m_Discolour",
+        "color",
+        "m_Dye1Back",
+        "m_Dye2Back",
+        "m_DiscolourBack",
+        "m_WingId",
+        "m_RoleOpacity",
+        "m_Hp",
+        "hp",
+        "m_MaxHp",
+        "maxHp",
+        "m_Mp",
+        "mp",
+        "m_MaxMp",
+        "maxMp",
+        "m_StarLevel",
+        "tonumber",
+        "starLevel",
+        "star_level",
+        "m_IsDirty",
+        "m_IsStealth",
+        "m_CurrRoleState",
+        null,
+        "m_CurrSoundState",
+        "m_EffectAni",
+        "m_EffectList",
+        "m_InitDirection",
+        "getInitDirection",
+        "m_CmdTempPos",
+        {
+          "type": 11
+        },
+        "m_IsAlive",
+        "m_TalkBubbleObj",
+        "removeFromParentAndCleanup",
+        "LOGICTYPE_HERO",
+        "ipairs",
+        "effList",
+        "GetEffectType",
+        "data_getRoleShape",
+        "m_DressId",
+        "m_WeaponSkinId",
+        "m_WeaponGemNum",
+        "weaponGem",
+        "_syncFashionRoleAni",
+        "setRoleShape",
+        "setRoleName",
+        "setRoleHpMpBar",
+        "setTouchEnabled",
+        "setScale",
+        "Define_WarRoleScale",
+        "NeiDanList",
+        "m_NeiDanIndex",
+        "refreshNeiDan",
+        "refreshPetStarIcons"
+      ],
+      "bytecode": "590d0000360300002705010012060100260506051206020042030301360303001205030039030403420302023d0302003d010500390307023d030600390309023d0308002b0301003d030a002b0301003d030b002b0301003d030c0036030d0039050e024203020237030f00360310000f00030058040480360310001205030039030403420302020d04030058040680390411030f000400580503801206030039041103420402020a04000058051780390506000505040058051480390506003906080005050600580503802b0502003d050a0058050d8036050f003606120005050600580503802b0502003d050b005805068036050f003606130005050600580502802b0502003d050b0036050f00360614000505060058050f802b0502003d050c0039051500090500005805058012070000390516003608170042050301580505801207000039051600360817001408080042050301390519020e000500580601802905e9033d051800390518003d051a0039051c020e0005005806018027051d003d051b0039050e023d051e003605200039071e00420502023d051f00390522023d052100390524023d052300390526023d0525002b0500003d0527003605290039052a0527072b00420502023d052800390528000f000500580610801207000039052c003908280036092d0042050401390528001207050039052e0536082f0039083008360a31003a0a010a360b31003a0b020b42080300410501013605320039071800420502020f000500580617802b05000037053300390534020a05000058050b803905340229060000010605005805078036053500390718003908340239093602420504020e0005005806058036053500390718002a08010029090000420504023d05270058051680390521000e000500580601802905000009050200580505803905180018050305160500050e00050058060380390518001805030516050405370533003605370036073300420502020f00050058060280360533003d0527003605380039071e0039081b00420503020f000500580617802905010037053300360539001207050039050405420502021207050039053a0539081e00290901004205040237053b0036053b000f0005005806038036053b0039053c053705330036053d003907180036083300420503023d05270039053f020e00050058060180290500003d053e00390541020e00050058060180290500003d054000390543020e00050058060180290500003d054200390545020e00050058060180290500003d054400390547020e00050058060180290500003d054600390542003d054800390544003d054900390546003d054a002b0500003d054b002905ff003d054c0039054e023d054d00390550023d054f00390552023d055100390554023d05530036055600390757020e0007005808018039075802420502020e00050058060180290500003d0555002b0501003d0559002b0501003d055a0027055c003d055b0027055c003d055d00340500003d055e00340500003d055f00120700003905610012080100420503023d056000350563003d05620039054e022906000000060500580502802b050100580601802b0502003d056400390560003d051500390565000a050000580505803905650012070500390566052b080200420503012b0500003d05650039051f0036066700050506005805218036056800390769024205020458080780360a6a00120c0900420a0202090a0500580a02803d094b0058050280450803035208f77f3905180036066b0039081e00420602020405060058050e80290500003d054200290500003d054400290500003d0546002b0500003d054b00290500003d054800290500003d054900290500003d054a002d05000012070200420502023d056c002d05010012070200420502023d056d0036055600390736020e0007005808048039076f020e0007005808018029070000420502020e00050058060180290500003d056e0039050a000f00050058060c802d050200420501022906000001060500580601803d056c002d060300420601022907000001070600580701803d066d0012070000390570004205020112070000390571002b0802004205030112070000390572004205020112070000390573004205020112070000390574002b080200420503011207000039057500360876003609760042050401390577023d057700290500003d0578001207000039057900420502011207000039057a00420502014b000100"
+    },
+    "role.getShowData": {
+      "proto": "0x741eafb669d0",
+      "parameters": 1,
+      "constants": [
+        "m_Hp",
+        {
+          "type": 11
+        },
+        "hp",
+        "m_MaxHp",
+        "maxHp",
+        "m_Mp",
+        "mp",
+        "m_MaxMp",
+        "maxMp",
+        "m_TypeId",
+        "typeId",
+        "m_RoleId",
+        "objId",
+        "m_PlayerId",
+        "playerId",
+        "m_RoleName",
+        "name",
+        "m_Rei",
+        "zs",
+        "m_Lv",
+        "lv",
+        "m_Pos",
+        "pos"
+      ],
+      "bytecode": "5903000035010100390200003d020201390203003d020401390205003d020601390207003d020801390209003d020a0139020b003d020c0139020d003d020e0139020f003d021001390211003d021201390213003d021401390215003d0216014c010200"
+    }
+  },
+  "managerMethods": [
+    "Clear",
+    "GetFIDWithSID",
+    "ListenMessage",
+    "LongZuQunPo",
+    "RemoveAllMessageListener",
+    "RemoveMessageListener",
+    "SetChuShouIndex",
+    "ShowChildSkillTalk",
+    "ShowIndexPic",
+    "TranslateCmd",
+    "__cname",
+    "__ctype",
+    "__index",
+    "__isExist",
+    "addBatchBtnListener",
+    "addBattleStatus",
+    "addBtnGroup",
+    "addBtnListener",
+    "addBtnLongListener",
+    "addChild",
+    "addNode",
+    "addNodeEventListener",
+    "addPlayAnalyzeTime",
+    "addRole",
+    "analyzeAddBattleStatus",
+    "analyzeCMD",
+    "analyzeCallMonster",
+    "analyzeCallPet",
+    "analyzeDelBattleStatus",
+    "analyzeEscape",
+    "analyzeLeaveBattle",
+    "analyzeNormalAttack",
+    "analyzeRefreshStatus",
+    "analyzeReturnPet",
+    "analyzeRoleSpeak",
+    "analyzeShanXian",
+    "analyzeSkillOnTargets",
+    "analyzeStorySpeak",
+    "analyzeUseDrug",
+    "analyzeUseSkill",
+    "changePlayerAutoSkill",
+    "checkNeedChangeMainSkill",
+    "checkNeedKeepCurPos",
+    "checkSplitAttack",
+    "checkTogetherSkill",
+    "checkWaitTime",
+    "class",
+    "clickBattleRole",
+    "comboNumAni",
+    "convertRoleData",
+    "convertSpareRoleIns",
+    "convertTargetPro",
+    "createNumberAni",
+    "createNumberAni2",
+    "ctor",
+    "delBattleStatus",
+    "delRole",
+    "displayDaZhaoSkillAtPos",
+    "displayPanelEffAtPos",
+    "displaySkillAtPos",
+    "displayTempShapeAtPos",
+    "escapeOverAnalyze",
+    "exitBattlefieldView",
+    "fastAnalyzeCMD",
+    "fastAnalyzeSurplusCMD",
+    "getAllBattleRoleIns",
+    "getAllRoleByMasterPlayerId",
+    "getAttackXYAndDirection",
+    "getBattleEffAniPos",
+    "getBattlePetList",
+    "getBattlePetSkillList",
+    "getBattlePlayerSkillExp",
+    "getBattlePosByRoleId",
+    "getBattleRoleIdByPos",
+    "getBattleRoleInsByPos",
+    "getBattleRoleInsByRoleId",
+    "getBattleRoleInsByRoleIdIncludeDie",
+    "getBattleRoleSkillCD",
+    "getBattleSelfPetIns",
+    "getBattleSelfPetPos",
+    "getBattleSelfPlayerIns",
+    "getBattleSelfPlayerPos",
+    "getContentSize",
+    "getCurRoundNum",
+    "getCurXYByPos",
+    "getDaZhaoAniPos",
+    "getInstance",
+    "getNode",
+    "getNodeByAll",
+    "getOriXYByPos",
+    "getParent",
+    "getPosition",
+    "getScale",
+    "getUINode",
+    "holdOnBattleRole",
+    "initAniNodeAndEffBtn",
+    "initBattleUI",
+    "initBattlefieldData",
+    "initRole",
+    "initRolePos",
+    "initWatchUI",
+    "isEnabled",
+    "isVisible",
+    "m_ActionList",
+    "m_AllPosInfo",
+    "m_AnalyzeFinish",
+    "m_AniNode",
+    "m_AniNode_Bottom",
+    "m_BattleBg",
+    "m_BattleId",
+    "m_BattleStatus",
+    "m_BattleType",
+    "m_BattleUI",
+    "m_CanOrder",
+    "m_ChildPos",
+    "m_ClickOutSideToClose",
+    "m_CmdAniTimeCount",
+    "m_CmdRound",
+    "m_CurCmdIndex",
+    "m_CurCmdPlayIndex",
+    "m_CurRoundNum",
+    "m_DieRoleIns",
+    "m_EffectRoleIns",
+    "m_FightType",
+    "m_HideFrontView",
+    "m_LastHpMpNumberAniTime",
+    "m_LastSkillNameAniTime",
+    "m_LearnSkills",
+    "m_PauseAnalyze",
+    "m_PetList",
+    "m_PetNeiDanSkillList",
+    "m_PetPos",
+    "m_PetSkillList",
+    "m_PlayerId",
+    "m_PlayerPos",
+    "m_PlayerSkillExp",
+    "m_RoleIdPosDict",
+    "m_RoleIns",
+    "m_RoleNode",
+    "m_RoundCmdList",
+    "m_SkillCDDict",
+    "m_SpareRoleIns",
+    "m_TouchLeftNode",
+    "m_TouchMiddleNode",
+    "m_TouchRightNode",
+    "m_UINode",
+    "m_WatchUI",
+    "msgevent_msgid_hanlder_table",
+    "new",
+    "refreshOperateStatus",
+    "refreshRoleStatus",
+    "removeFromParent",
+    "removeFromParentAndCleanup",
+    "runAction",
+    "scheduleUpdate",
+    "setBattleFightedPetList",
+    "setBattlePetList",
+    "setBattlePetSkillList",
+    "setBattlePlayerSkillExp",
+    "setBattleRole",
+    "setBattleRoleClearOperateState",
+    "setBattleRoleSkillCD",
+    "setBattleRoundInfo",
+    "setBattleUIOperateComplete",
+    "setBattlefieldType",
+    "setContentSize",
+    "setCurRoundCMD",
+    "setEnabled",
+    "setGroupAllNotSelected",
+    "setGroupBtnSelected",
+    "setOpacity",
+    "setOperateIconTip",
+    "setOperateResult",
+    "setPetHP",
+    "setPetMP",
+    "setPlayerAutoInfo",
+    "setPlayerAutoSkill",
+    "setPlayerHP",
+    "setPlayerMP",
+    "setPlayerSkills",
+    "setPosition",
+    "setScale",
+    "setShowBattleUI",
+    "setTouchEnabled",
+    "setVisible",
+    "showHpChange",
+    "showMpChange",
+    "showSkillName",
+    "startReadNextCMD",
+    "stopAction",
+    "stopAllActions",
+    "super",
+    "unscheduleUpdate",
+    "verifyRoundData"
+  ]
+}

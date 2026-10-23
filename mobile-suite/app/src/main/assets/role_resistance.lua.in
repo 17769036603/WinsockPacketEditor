@@ -1,0 +1,111 @@
+local cfg=__RESISTANCE_CONFIG__
+local key='__codex_role_resistance_query_v1'
+local unpack=table.unpack or unpack
+local function pack(...) return {n=select('#',...),...} end
+local function un(v) if type(v)=='table' then return v[1] end return v end
+local function number(v) v=un(v); if type(v)~='number' and type(v)~='string' then return end; v=tonumber(v); if v and v==v and v~=math.huge and v~=-math.huge then return v end end
+local function sdkPlayerId() local v=un(LocalPlayerMgr:getInstance():getPlayerId()); return v~=nil and tostring(v) or nil end
+local function write(row)
+    local tmp=cfg.path..'.tmp'
+    local f,e=io.open(tmp,'w'); if not f then return false,e end
+    local ok,err=pcall(function() f:write(row) end); f:close()
+    if not ok then os.remove(tmp); return false,err end
+    local renamed,why=os.rename(tmp,cfg.path); if not renamed then os.remove(tmp); return false,why end
+    return true
+end
+local function restore(s)
+    if s.timer then pcall(scheduler.unscheduleGlobal,s.timer); s.timer=nil end
+    local restored=false
+    if ProtoFunc and ProtoFunc[S2C_GetRolePro]==s.hook then ProtoFunc[S2C_GetRolePro]=s.original; restored=ProtoFunc[S2C_GetRolePro]==s.original
+    elseif ProtoFunc and ProtoFunc[S2C_GetRolePro]==s.original then restored=true end
+    if rawget(_G,key)==s then rawset(_G,key,nil) end
+    return restored
+end
+local function finish(s,ok,why,rows,restored)
+    if restored==nil then restored=restore(s) end
+    local fields={}; for i,row in ipairs(rows or {}) do fields[i]=row end
+    local json='{"nonce":"'..cfg.nonce..'","pid":'..cfg.pid..',"startTicks":'..cfg.startTicks..',"battle":'..cfg.battle..',"round":'..cfg.round..',"ok":'..tostring(ok)..',"restored":'..tostring(restored)..',"error":'..(why and ('"'..tostring(why):gsub('["\\\r\n]',' ')..'"') or 'null')..',"roles":['..table.concat(fields,',')..']}'
+    local wrote=write(json)
+    if not wrote then print('resistance_query_error:result_write_failed') end
+end
+if type(cfg)~='table' or type(cfg.path)~='string' or rawget(_G,key)~=nil then return -1 end
+local good,state=pcall(function()
+    local manager=assert(ClassIns['BattlefieldView.Ins'],'battle_manager_missing')
+    assert(type(manager)=='table','battle_manager_invalid')
+    local player=un(manager.m_PlayerId); assert(sdkPlayerId()==tostring(player),'local_player_mismatch')
+    local localpos=number(manager.m_RoleIdPosDict and manager.m_RoleIdPosDict[player])
+    assert(localpos and ((localpos>=1 and localpos<=5) or (localpos>=10001 and localpos<=10005)),'local_position_invalid')
+    assert(type(ProtoFunc)=='table' and type(ProtoFunc[S2C_GetRolePro])=='function','response_handler_missing')
+    assert(type(netconn)=='table' and type(netconn.send)=='function','send_unavailable')
+    local current=number(manager.m_BattleId)
+    assert(current==cfg.battle and current>0 and current<2147483648 and current%1==0,'battle_mismatch')
+    local s={manager=manager,player=player,localpos=localpos,battle=current,original=ProtoFunc[S2C_GetRolePro],sent=false,ticks=0}
+    s.hook=function(data,...)
+        local rows={}
+        local ok,err=pcall(function()
+            assert(ClassIns['BattlefieldView.Ins']==s.manager and number(un(s.manager.m_BattleId))==s.battle
+                and un(s.manager.m_PlayerId)==s.player and sdkPlayerId()==tostring(s.player)
+                and number(s.manager.m_RoleIdPosDict and s.manager.m_RoleIdPosDict[s.player])==s.localpos,'response_battle_changed')
+            assert(type(data)=='table' and type(data.roleList)=='table','response_shape_invalid')
+            local seen={}
+            for i,role in ipairs(data.roleList) do
+                assert(i<=30 and type(role)=='table','role_shape_invalid')
+                local rid=un(role.roleId); local pos=number(s.manager.m_RoleIdPosDict and s.manager.m_RoleIdPosDict[rid])
+                local ins=pos and s.manager.m_RoleIns and s.manager.m_RoleIns[pos]
+                local ownbase=s.localpos<10000 and 1 or 10001
+                local otherbase=ownbase==1 and 10001 or 1
+                local validpos=pos and ((pos>=ownbase and pos<=ownbase+4) or (pos>=ownbase+100 and pos<=ownbase+104) or (pos>=ownbase+200 and pos<=ownbase+204)
+                    or (pos>=otherbase and pos<=otherbase+4) or (pos>=otherbase+100 and pos<=otherbase+104) or (pos>=otherbase+200 and pos<=otherbase+204))
+                assert(pos and validpos and (type(ins)=='table' or type(ins)=='userdata') and un(ins.m_RoleId)==rid
+                    and number(ins.m_Pos)==pos and ins.m_Battlefield==s.manager,'role_position_unbound')
+                assert(not seen[pos],'duplicate_role_position'); seen[pos]=true
+                assert(type(role.pro)=='table','property_list_invalid')
+                local vals={}
+                for j,pro in ipairs(role.pro) do
+                    assert(j<=600 and type(pro)=='table','property_shape_invalid')
+                    local code=number(pro.name); local value=number(pro.val)
+                    assert(code and code%1==0 and value,'property_value_invalid')
+                    if code>=200 and code<=212 then vals[tostring(code)]=string.format('%.17g',value) end
+                end
+                local child=(pos>=ownbase+200 and pos<=ownbase+204) or (pos>=otherbase+200 and pos<=otherbase+204)
+                if not child then
+                    local entries={}; for code,value in pairs(vals) do entries[#entries+1]='"'..code..'":'..value end
+                    rows[#rows+1]='{"position":'..string.format('%.0f',pos)..',"values":{'..table.concat(entries,',')..'}}'
+                end
+            end
+            assert(#rows>0,'empty_role_list')
+        end)
+        local restoreOk,restored=pcall(restore,s)
+        if not restoreOk then restored=false end
+        local forwarded=pack(pcall(s.original,data,...))
+        local finalOk=ok and forwarded[1]
+        local why=not ok and err or (not forwarded[1] and 'original_handler_error' or nil)
+        local finished=pcall(finish,s,finalOk,why,rows,restored)
+        if not finished then pcall(restore,s) end
+        if not forwarded[1] then error(forwarded[2],0) end
+        return unpack(forwarded,2,forwarded.n)
+    end
+    ProtoFunc[S2C_GetRolePro]=s.hook
+    rawset(_G,key,s)
+    local scheduled,timer=pcall(function() return scheduler.scheduleGlobal(function()
+        s.ticks=s.ticks+1
+        local ok,err=pcall(function()
+            assert(ClassIns['BattlefieldView.Ins']==s.manager and number(un(s.manager.m_BattleId))==s.battle
+                and un(s.manager.m_PlayerId)==s.player and sdkPlayerId()==tostring(s.player)
+                and number(s.manager.m_RoleIdPosDict and s.manager.m_RoleIdPosDict[s.player])==s.localpos
+                and ProtoFunc[S2C_GetRolePro]==s.hook,'battle_changed')
+            if not s.sent and JudgeIsInBattle() then
+                assert(number(un(s.manager.m_BattleId))==cfg.battle,'battle_changed_before_send')
+                s.sent=true
+                netconn:send(C2S_GetRolePro,cfg.battle)
+            end
+            if s.ticks>=50 then pcall(finish,s,false,s.sent and 'response_timeout' or 'battle_not_active',{}) end
+        end)
+        if not ok then pcall(finish,s,false,err,{}) end
+    end,0.1) end)
+    if not scheduled then pcall(restore,s); error(timer) end
+    s.timer=timer
+    return s
+end)
+if not good then return -1 end
+return 0

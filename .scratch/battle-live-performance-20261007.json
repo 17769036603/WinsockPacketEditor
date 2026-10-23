@@ -1,0 +1,120 @@
+{
+  "events": [
+    {
+      "index": 1,
+      "state": "ok",
+      "battleId": 38612,
+      "round": 173,
+      "slots": 8,
+      "fixedPositions": 10,
+      "elapsedSeconds": 1.5
+    },
+    {
+      "index": 2,
+      "state": "ok",
+      "battleId": 38612,
+      "round": 173,
+      "slots": 8,
+      "fixedPositions": 10,
+      "elapsedSeconds": 1.61
+    },
+    {
+      "index": 3,
+      "state": "ok",
+      "battleId": 38612,
+      "round": 173,
+      "slots": 8,
+      "fixedPositions": 10,
+      "elapsedSeconds": 1.531
+    },
+    {
+      "index": 4,
+      "state": "ok",
+      "battleId": 38612,
+      "round": 173,
+      "slots": 8,
+      "fixedPositions": 10,
+      "elapsedSeconds": 1.531
+    },
+    {
+      "index": 5,
+      "state": "ok",
+      "battleId": 38612,
+      "round": 174,
+      "slots": 8,
+      "fixedPositions": 10,
+      "elapsedSeconds": 1.61
+    },
+    {
+      "index": 6,
+      "state": "ok",
+      "battleId": 38612,
+      "round": 174,
+      "slots": 8,
+      "fixedPositions": 10,
+      "elapsedSeconds": 1.671
+    },
+    {
+      "index": 7,
+      "state": "ok",
+      "battleId": 38612,
+      "round": 174,
+      "slots": 8,
+      "fixedPositions": 10,
+      "elapsedSeconds": 1.547
+    },
+    {
+      "index": 8,
+      "state": "ok",
+      "battleId": 38612,
+      "round": 174,
+      "slots": 8,
+      "fixedPositions": 10,
+      "elapsedSeconds": 1.61
+    },
+    {
+      "index": 9,
+      "state": "ok",
+      "battleId": 38612,
+      "round": 174,
+      "slots": 8,
+      "fixedPositions": 10,
+      "elapsedSeconds": 1.562
+    },
+    {
+      "index": 10,
+      "state": "ok",
+      "battleId": 38612,
+      "round": 175,
+      "slots": 8,
+      "fixedPositions": 10,
+      "elapsedSeconds": 1.594
+    },
+    {
+      "index": 11,
+      "state": "ok",
+      "battleId": 38612,
+      "round": 175,
+      "slots": 8,
+      "fixedPositions": 10,
+      "elapsedSeconds": 1.547
+    },
+    {
+      "index": 12,
+      "state": "ok",
+      "battleId": 38612,
+      "round": 175,
+      "slots": 8,
+      "fixedPositions": 10,
+      "elapsedSeconds": 1.515
+    }
+  ],
+  "okFrames": 12,
+  "coldDiscoveryCalls": 0,
+  "rounds": [
+    173,
+    174,
+    175
+  ],
+  "medianReadSeconds": 1.554
+}

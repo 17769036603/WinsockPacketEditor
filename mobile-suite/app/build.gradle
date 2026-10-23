@@ -1,0 +1,86 @@
+plugins {
+    id 'com.android.application'
+}
+
+def licenseUrl = providers.gradleProperty('piaomiaoLicenseUrl').getOrElse('')
+if (licenseUrl.contains('"') || licenseUrl.contains('\\')) {
+    throw new GradleException('piaomiaoLicenseUrl must not contain quotes or backslashes')
+}
+// 朋友免激活构建：默认关闭。开启后仅兼容指定游戏包及版本，不代表可防止同版本 APK 转发。
+def licenseBypass = providers.gradleProperty('piaomiaoLicenseBypass').getOrElse('false').toBoolean()
+def bypassGamePackages = ['com.gdoo.dhxy', 'com.gdoo.xxxy2026']
+// 朋友版锁定：只允许一个目标游戏，系统设置不显示目标选择。默认空表示作者/普通构建不锁。
+def lockTarget = providers.gradleProperty('piaomiaoLockTarget').getOrElse('')
+if (!(lockTarget in ['', 'com.gdoo.dhxy', 'com.gdoo.xxxy2026'])) {
+    throw new GradleException('piaomiaoLockTarget must be empty, com.gdoo.dhxy, or com.gdoo.xxxy2026')
+}
+def piaomiaoVersionCodeText = providers.gradleProperty('piaomiaoVersionCode').getOrElse('16')
+if (!(piaomiaoVersionCodeText ==~ /[1-9][0-9]{0,8}/)) {
+    throw new GradleException('piaomiaoVersionCode must be a positive integer with at most 9 digits')
+}
+def piaomiaoVersionCode = piaomiaoVersionCodeText.toInteger()
+def piaomiaoVersionName = providers.gradleProperty('piaomiaoVersionName').getOrElse('2026.10.19.1-friends')
+if (!(piaomiaoVersionName ==~ /\d{4}\.\d{2}\.\d{2}\.\d+-friends(?:-open-v\d+)?(?:-test)?/)) {
+    throw new GradleException('piaomiaoVersionName must use YYYY.MM.DD.N-friends[-open-vN][-test]')
+}
+def piaomiaoReleaseChannel = providers.gradleProperty('piaomiaoReleaseChannel').getOrElse('stable')
+if (!(piaomiaoReleaseChannel in ['stable', 'test'])) {
+    throw new GradleException('piaomiaoReleaseChannel must be stable or test')
+}
+if ((piaomiaoReleaseChannel == 'test') != piaomiaoVersionName.endsWith('-test')) {
+    throw new GradleException('test channel version names must end in -test; stable channel names must not')
+}
+
+android {
+    namespace 'com.xnas.wpe.suite'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.xnas.wpe.suite'
+        minSdk 23
+        targetSdk 35
+        versionCode piaomiaoVersionCode
+        versionName piaomiaoVersionName
+        buildConfigField 'String', 'PIAOMIAO_LICENSE_URL', '"' + licenseUrl + '"'
+        buildConfigField 'boolean', 'PIAOMIAO_LICENSE_BYPASS', licenseBypass ? 'true' : 'false'
+        buildConfigField 'String', 'PIAOMIAO_LOCKED_TARGET', '"' + lockTarget + '"'
+        buildConfigField 'String', 'PIAOMIAO_BYPASS_GAME_PACKAGES', '"' + bypassGamePackages.join(',') + '"'
+        buildConfigField 'int', 'PIAOMIAO_BYPASS_GAME_VERSION_CODE', '1'
+        buildConfigField 'String', 'PIAOMIAO_BYPASS_GAME_VERSION_NAME', '"1.0"'
+        ndk {
+            abiFilters 'x86_64'
+        }
+    }
+
+    buildFeatures { buildConfig true }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDir(layout.buildDirectory.dir('generated/jniLibs'))
+        }
+    }
+}
+
+def buildSuiteNative = tasks.register('buildSuiteNative', Exec) {
+    workingDir rootProject.projectDir
+    def fridaMode = providers.gradleProperty('piaomiaoFridaMode').getOrElse('shared')
+    if (!(fridaMode in ['shared', 'static'])) {
+        throw new GradleException('piaomiaoFridaMode must be shared or static')
+    }
+    commandLine 'powershell.exe', '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+            '-File', new File(rootProject.projectDir, 'build-native.ps1').absolutePath,
+            '-FridaLinkMode', fridaMode
+    if (licenseBypass) {
+        args '-LicenseBypass'
+    }
+}
+
+tasks.named('preBuild').configure {
+    dependsOn buildSuiteNative
+}

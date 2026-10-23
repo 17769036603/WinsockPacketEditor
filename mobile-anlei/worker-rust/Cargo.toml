@@ -1,0 +1,11 @@
+[package]
+name = "anlei-worker"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[[bin]]
+name = "anlei_worker"
+path = "src/main.rs"
+
+[dependencies]

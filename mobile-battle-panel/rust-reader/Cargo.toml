@@ -1,0 +1,10 @@
+[package]
+name = "enemy_reader"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "enemy_reader"
+path = "src/main.rs"
+
+[dependencies]

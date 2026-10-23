@@ -1,0 +1,26 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.xnas.wpe.jinchan'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.xnas.wpe.jinchan'
+        minSdk 23
+        targetSdk 35
+        versionCode 2
+        versionName '0.2.0'
+        ndk { abiFilters 'x86_64' }
+    }
+    packaging { jniLibs { useLegacyPackaging true } }
+    sourceSets { main { jniLibs.srcDir(layout.buildDirectory.dir('generated/jniLibs')) } }
+}
+
+def buildJinchanWorker = tasks.register('buildJinchanWorker', Exec) {
+    workingDir rootProject.projectDir
+    commandLine 'powershell.exe', '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+            '-File', new File(rootProject.projectDir, 'build.ps1').absolutePath
+}
+
+tasks.named('preBuild').configure {
+    dependsOn buildJinchanWorker
+}

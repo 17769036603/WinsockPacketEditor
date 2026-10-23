@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>战斗对方十槽 · APK 界面设计预览</title>
+<style>
+:root{color-scheme:dark;--glass:rgba(18,23,29,.62);--glass-strong:rgba(14,18,23,.88);--line:rgba(225,239,244,.27);--line-bright:rgba(190,229,235,.56);--text:#f3f6f7;--muted:#abb9bf;--cyan:#a6e2e5;--green:#89d7a3;--blue:#8bcaf0;--amber:#edc27a;--danger:#ef9292}
+*{box-sizing:border-box}body{margin:0;background:#101519;color:var(--text);font:14px/1.4 "Microsoft YaHei UI","Noto Sans CJK SC",system-ui,sans-serif}.page{max-width:1320px;margin:0 auto;padding:18px}.intro{display:flex;justify-content:space-between;align-items:end;gap:16px;margin:0 0 12px}.intro h1{font-size:18px;letter-spacing:.03em;font-weight:650;margin:0}.intro p{font-size:12px;color:#9eabb0;margin:4px 0 0}.preview-tag{color:var(--cyan);border:1px solid rgba(166,226,229,.38);border-radius:999px;padding:5px 10px;font-size:11px;white-space:nowrap}.stage-wrap{position:relative;width:100%;overflow:auto;border:1px solid #354148;background:#080b0e;border-radius:12px}.stage{position:relative;width:1280px;height:720px;transform-origin:top left;overflow:hidden;background:#14191d}.game-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.dim{position:absolute;inset:0;background:linear-gradient(90deg,rgba(6,10,13,.08),rgba(4,9,12,.20) 55%,rgba(4,9,12,.30))}.screen-note{position:absolute;left:22px;top:18px;padding:7px 11px;border:1px solid rgba(255,255,255,.17);background:rgba(10,14,17,.60);backdrop-filter:blur(8px);border-radius:8px;color:#e8edef;font-size:12px;letter-spacing:.02em}
+.panel{position:absolute;left:670px;top:116px;width:570px;padding:10px 12px 9px;border:1px solid var(--line-bright);border-radius:15px;background:var(--glass);backdrop-filter:blur(20px) saturate(118%);-webkit-backdrop-filter:blur(20px) saturate(118%);box-shadow:0 16px 44px rgba(0,0,0,.30),inset 0 1px rgba(255,255,255,.12);transition:opacity .16s ease,transform .16s ease}.panel:before{content:"";position:absolute;inset:1px;border-radius:13px;pointer-events:none;border-top:1px solid rgba(255,255,255,.10)}.toolbar{height:34px;display:flex;align-items:center;gap:10px;padding:0 4px 8px;cursor:move;user-select:none;border-bottom:1px solid rgba(226,239,243,.15)}.grip{color:#8b9aa1;letter-spacing:2px;font-size:15px}.title{font-weight:650;font-size:13px;letter-spacing:.04em}.sub{color:var(--muted);font-size:11px}.grow{flex:1}.live-dot{width:7px;height:7px;border-radius:50%;background:var(--cyan);box-shadow:0 0 9px rgba(166,226,229,.55)}.toolbar-state{font-size:11px;color:var(--cyan)}.collapse{display:grid;place-items:center;width:23px;height:23px;border:1px solid rgba(255,255,255,.23);border-radius:50%;background:rgba(255,255,255,.06);color:#e7f1f2;cursor:pointer;font-size:15px;line-height:1}.formation{position:relative;height:374px;margin:5px 0 1px}.slot{position:absolute;width:244px;height:59px;padding:7px 10px 6px 12px;border:1px solid rgba(224,239,243,.27);border-radius:10px;background:linear-gradient(105deg,rgba(240,249,250,.105),rgba(198,218,223,.045));box-shadow:inset 0 1px rgba(255,255,255,.07),0 5px 12px rgba(0,0,0,.12);overflow:hidden;transition:opacity .14s ease,background .14s ease,border-color .14s ease}.slot:after{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;background:var(--cyan);opacity:.78;border-radius:2px}.slot-head{display:flex;align-items:center;gap:7px;min-width:0;font-size:11px;color:#dce7e9;line-height:15px}.slot-label{font-weight:650;white-space:nowrap}.slot-role{color:#9eafb5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.slot-data{margin-top:3px;display:flex;gap:12px;color:#e8edef;font-variant-numeric:tabular-nums;font-size:12px;letter-spacing:.015em}.slot-data b{font-weight:650}.hp{color:var(--green)}.mp{color:var(--blue)}.sp{color:var(--amber)}.slot.pet:after{background:#b4d8e3}.slot.empty{background:rgba(11,15,19,.31);border-style:dashed;border-color:rgba(207,223,227,.19)}.slot.empty:after{opacity:.2}.slot.empty .slot-role,.slot.empty .slot-data{color:#839096}.slot.dead{border-color:rgba(239,146,146,.43);background:rgba(53,29,31,.46)}.slot.dead:after{background:var(--danger)}.slot.dead .slot-role{color:#e6a5a5}.slot.dead .slot-data{color:#b5a4a4}.no-battle,.expired{position:absolute;inset:43px 0 0;display:none;align-items:center;justify-content:center;text-align:center;background:rgba(9,13,16,.68);backdrop-filter:blur(10px);border-radius:10px;color:#f1f4f4}.no-battle strong,.expired strong{display:block;font-size:16px;margin-bottom:5px}.no-battle span,.expired span{color:#b4c0c4;font-size:12px}.expired{background:rgba(12,16,20,.64)}.footer{display:flex;align-items:center;gap:8px;height:23px;border-top:1px solid rgba(226,239,243,.13);padding:4px 3px 0;color:#9eacb1;font-size:10px}.footer .spacer{flex:1}.footer .small-cyan{color:var(--cyan)}.ball{position:absolute;right:22px;top:278px;width:46px;height:46px;border:1px solid rgba(207,239,241,.62);border-radius:50%;background:rgba(18,28,33,.63);backdrop-filter:blur(13px);box-shadow:0 4px 18px rgba(0,0,0,.34),inset 0 1px rgba(255,255,255,.16);display:none;place-items:center;color:var(--cyan);font-size:19px;cursor:pointer}.ball small{position:absolute;bottom:-18px;color:#e0eaec;font-size:9px;white-space:nowrap}.stage.state-no-battle .formation .slot,.stage.state-expired .formation .slot{opacity:.16}.stage.state-no-battle .no-battle,.stage.state-expired .expired{display:flex}.control-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0 0}.control-label{color:#9eabb0;font-size:12px;margin-right:2px}.control-row button{border:1px solid #3c4a50;border-radius:7px;background:#1a2328;color:#dce6e8;padding:7px 10px;font:inherit;font-size:12px;cursor:pointer}.control-row button:hover,.control-row button.active{border-color:rgba(166,226,229,.72);color:var(--cyan);background:#202d32}.range-control{display:flex;align-items:center;gap:8px;border:1px solid #344148;border-radius:7px;background:#161e23;padding:4px 9px;color:#bec9cc;font-size:11px}.range-control input{width:96px;accent-color:#9edbdf}.hint{font-size:11px;color:#89979c;margin:10px 0 0}.compact{font-size:12px}.compact .panel{transform:scale(.78);transform-origin:top left}.compact .slot{height:55px}.compact .formation{height:355px}
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="intro"><div><h1>战斗状态 · 对方十槽</h1><p>APK 安装规划用界面稿 · 1280 × 720 横屏模拟器 · 无实际读取</p></div><span class="preview-tag">设计预览　非运行界面</span></header>
+  <div id="stageWrap" class="stage-wrap">
+    <div id="stage" class="stage">
+      <img class="game-bg" src="../battle-read-screen-20261007.png" alt="战斗画面预览背景">
+      <div class="dim"></div>
+      <div class="screen-note">设计稿 · HP / MP / SP 均为占位符</div>
+      <section id="panel" class="panel" aria-label="对方十槽状态面板">
+        <div id="toolbar" class="toolbar"><span class="grip">⠿</span><span class="title">战斗状态</span><span class="sub">对方 · 主位 5 + 宠物位 5</span><span class="grow"></span><span class="live-dot"></span><span id="stateLabel" class="toolbar-state">示意</span><button id="collapse" class="collapse" type="button" title="收起面板">−</button></div>
+        <div id="formation" class="formation"></div>
+        <div class="no-battle"><div><strong>当前未进入战斗</strong><span>进入战斗后显示对方十个固定站位</span></div></div>
+        <div class="expired"><div><strong>数据已过期</strong><span>等待新的有效样本</span></div></div>
+        <div class="footer"><span>主位 5</span><span>·</span><span>宠物位 5</span><span class="spacer"></span><span class="small-cyan">仅示意布局</span></div>
+      </section>
+      <button id="ball" class="ball" type="button" title="展开面板">⌕<small>展开</small></button>
+    </div>
+  </div>
+  <div class="control-row" aria-label="预览控制">
+    <span class="control-label">状态示意</span>
+    <button class="active" data-state="normal">正常空值</button><button data-state="empty">含空槽</button><button data-state="dead">含死亡</button><button data-state="no-battle">未进战</button><button data-state="expired">过期</button>
+    <span class="range-control">背景浓度 <input id="opacity" type="range" min="42" max="86" value="62"><span id="opacityValue">62%</span></span>
+    <button id="size" type="button">尺寸：100%</button><button id="compact" type="button">小屏预览</button>
+  </div>
+  <p class="hint">拖动面板标题栏可预览移动；圆形按钮可收起/展开。透明度、尺寸与状态切换仅用于查看设计效果，未连接 APK 或读取器。</p>
+</main>
+<script>
+const stage=document.querySelector('#stage'),formation=document.querySelector('#formation'),panel=document.querySelector('#panel');
+const mainX=[15,22,29,36,43],petX=[266,273,280,287,294],topY=11,rowGap=68;
+const slots=[];
+for(let i=0;i<10;i++){
+  const pet=i>=5,n=pet?i-5:i,card=document.createElement('article');
+  card.className='slot'+(pet?' pet':'');card.dataset.index=String(i);
+  card.style.left=(pet?petX[n]:mainX[n])+'px';card.style.top=(topY+(4-n)*rowGap+(pet?16:0))+'px';
+  card.innerHTML=`<div class="slot-head"><span class="slot-label">${pet?'宠物位':'主位'} ${String(n+1).padStart(2,'0')}</span><span class="slot-role">对方单位 · 示意</span></div><div class="slot-data"><span class="hp"><b>HP</b> —</span><span class="mp"><b>MP</b> —</span><span class="sp"><b>SP</b> —</span></div>`;
+  formation.append(card);slots.push(card);
+}
+function setState(name){stage.classList.remove('state-no-battle','state-expired');slots.forEach(s=>s.classList.remove('empty','dead'));document.querySelectorAll('[data-state]').forEach(b=>b.classList.toggle('active',b.dataset.state===name));document.querySelector('#stateLabel').textContent={normal:'示意',empty:'空槽示意',dead:'死亡示意','no-battle':'未进战','expired':'过期'}[name];if(name==='empty')slots[9].classList.add('empty');if(name==='dead')slots[2].classList.add('dead');if(name==='no-battle')stage.classList.add('state-no-battle');if(name==='expired')stage.classList.add('state-expired')}
+document.querySelectorAll('[data-state]').forEach(b=>b.addEventListener('click',()=>setState(b.dataset.state)));
+document.querySelector('#collapse').addEventListener('click',()=>{panel.style.display='none';document.querySelector('#ball').style.display='grid'});
+document.querySelector('#ball').addEventListener('click',()=>{panel.style.display='block';document.querySelector('#ball').style.display='none'});
+document.querySelector('#opacity').addEventListener('input',e=>{const v=Number(e.target.value);document.documentElement.style.setProperty('--glass',`rgba(18,23,29,${v/100})`);document.querySelector('#opacityValue').textContent=v+'%'});
+let large=true;document.querySelector('#size').addEventListener('click',e=>{large=!large;panel.style.transform=large?'scale(1)':'scale(.86)';e.currentTarget.textContent='尺寸：'+(large?'100%':'86%')});
+document.querySelector('#compact').addEventListener('click',e=>{const on=stage.classList.toggle('compact');e.currentTarget.classList.toggle('active',on);fitStage()});
+let drag=null;document.querySelector('#toolbar').addEventListener('pointerdown',e=>{if(e.target.closest('button'))return;const r=panel.getBoundingClientRect(),s=stage.getBoundingClientRect(),scale=s.width/1280;drag={x:e.clientX,y:e.clientY,left:(r.left-s.left)/scale,top:(r.top-s.top)/scale,scale};e.currentTarget.setPointerCapture(e.pointerId)});
+document.querySelector('#toolbar').addEventListener('pointermove',e=>{if(!drag)return;const s=stage.getBoundingClientRect();panel.style.left=Math.max(0,Math.min(1280-570,drag.left+(e.clientX-drag.x)/drag.scale))+'px';panel.style.top=Math.max(0,Math.min(720-440,drag.top+(e.clientY-drag.y)/drag.scale))+'px'});
+document.querySelector('#toolbar').addEventListener('pointerup',()=>drag=null);document.querySelector('#toolbar').addEventListener('pointercancel',()=>drag=null);
+function fitStage(){const wrap=document.querySelector('#stageWrap'),available=wrap.clientWidth,scale=Math.min(1,available/1280);stage.style.transform=`scale(${scale})`;wrap.style.height=(720*scale)+'px'}window.addEventListener('resize',fitStage);fitStage();
+</script>
+</body>
+</html>

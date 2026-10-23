@@ -1,0 +1,1 @@
+package com.xnas.wpe.suite; public final class TargetGame { public static String getSelectedPackage(Object ignored) { return "pkg"; } }

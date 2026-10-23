@@ -1,0 +1,8 @@
+assert(#sendCalls==0,'stop setup emitted battle traffic')
+assert(rawget(_G,'__codex_battle_loop_v1')~=nil,'stop setup did not own an observer')
+advance(0.01)
+assert(rawget(_G,'__codex_battle_loop_v1')==nil,'modeStop failed to clean hide-only owner')
+assert(fakeTimerCancelled==true,'modeStop left the observer scheduled')
+assert(ProtoFunc[3584]==originalHandlers[3584] and netconn.send==originalSend,'modeStop left hooks installed')
+assert(#sendCalls==0 and battleManager.m_BattleUI.m_AutoStatus==true,'modeStop caused sends or changed auto-battle state')
+print('PASS hide-only stop: explicit modeStop restores owned hooks without skip sends or auto-state changes')

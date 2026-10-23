@@ -1,5 +1,233 @@
 # 项目状态
 
+## 2026-10-19 自动找星 直接传送
+
+- 星服务新增 `ACTION_TELEPORT`（`EXTRA_MAPS` 为目标地图）、命令 `mode=teleport`（levels 为空，map 为目的地），Lua 只发一次 `C2S_JumpMap` 并等待到图/超时；页面「挂机设置」右侧新增「直接传送」按钮，地图表与自动BOSS 共用（`GameMapCatalog`，BOSS 导出时写入共享存储）。
+- 修掉三个真实缺陷：① 星 Lua 里新状态字段 `teleportSent/teleportDeadline` 与既有状态撞名，导致永远停在“等待确认”，已改名 `mapJumpSent/mapJumpDeadline`；② 发送前引用了星 Lua 不存在的常量 `MAP_WAIT_SECONDS`，赋值中途报错，表现为 `teleports=0` 且超时不触发，改为固定 10 秒；③ 服务收尾时读到最后一次的 stopped 状态会立刻误停 worker（`nothing_bound`），两个模块都加了 `updatedAt >= 本轮开始时间` 的校验。
+- 设备实测（emulator-5554）：东海渔村 → 地府，角色落在 112,8，状态 `stopped / teleported`；BOSS 侧同样保持可用。
+
+## 2026-10-19 自动BOSS 直接传送
+
+- 客户端 `data_MapInfo[map].startPos` 实际是 `{x,y}` 数组，旧代码只按字段名读取，导致巡回换图一直报 `map_start_position_unavailable`；已兼容数组形式。
+- 新增一次性传送：`BossHuntService.ACTION_TELEPORT` + `EXTRA_MAPS`（目标地图 ID），命令文件新增 `mode=teleport`，Lua 只发一次 `C2S_JumpMap(22568)`（地图, 出生点 x, 出生点 y, 0），确认到图或 10 秒超时后 `finish()`；传送成功后服务自动收尾停掉 worker。
+- 解析放宽：`parseMaps` 对 teleport 模式接受任意正整数地图（巡回仍限内置地图）；服务启动时加载全量地图表，避免按 ID 构造选择被判“不支持的地图”。
+- 页面在「巡回地图」右侧新增「直接传送」按钮：83 张地图单选弹窗，确认后派发传送；运行中禁用。
+- 设备实测（emulator-5554）：长安 1011 → 皇宫 1000（角色落在 25,15）→ 东海渔村 1010（落在 155,70），每次都自动回到停止状态；坐标与 `mapStarts` 导出一致。
+- 自动找星页的同类入口尚未接入。
+
+## 2026-10-19 自动BOSS 全量地图
+
+- 地图清单改为运行时导出：worker 的 Lua 从客户端 `data_MapInfo` 生成 `id:名称` 全量串写入 status 的 `mapCatalog` 字段，`BossHuntService` 读状态时解析并落盘到 `module.bosshunt.settings` 的 `map_catalog_v1`，`BossHuntMapCatalog` 启动时加载；内置 5 张仅作首次未导出时的兜底。
+- 页面由「一排地图胶囊」改为「选择地图（已选 N）」按钮 + 已选地图红色胶囊，弹窗是可滚动的全量多选列表（保存为严格升序 CSV，沿用既有选择校验与配置锁）。
+- 设备实测（emulator-5554）：首次读取导出 83 张地图并落盘（含大雁塔各层、帮派、玩家之家、比武场、封印地图等副本场景）；弹窗勾选「皇宫」后保存 `1000,1002`，取消后回到 `1002`，页面胶囊同步；地图选中样式已从青绿改为与星级一致的红色（`selectedDanger`）。
+
+## 2026-10-18 定时任务
+
+- 侧栏在「系统设置」上方新增「定时任务」入口（34dp 高、10sp 文字、时钟图标，选中高亮与设置项同款）；页面由壳直接渲染，不新增 Activity，也不改各模块页面。
+- 任务模型：按“整点 / 半点”（可同时选）周期性触发，可设提前量 0/1/2/3/5/10 分钟（默认 3 分钟，即整点任务实际在 :57、半点任务在 :27 执行）；动作为启动/停止；目标可多选，目前只开放三个挂机功能（暗雷遇敌、自动找星、自动BOSS）；最多 20 条，持久化在 `shared_prefs/schedule_tasks.xml`。去重键精确到分钟（`yyyyMMddHHmm`），同一触发分钟只执行一次。
+- 列表每行可点击进入编辑：弹窗回填原周期、提前量、动作、目标；保存走 `ScheduleStore.update()` 按 id 覆盖，避免“先删后加”在重复冲突时把原任务弄丢。
+- 执行器 `ScheduleService`（`specialUse` 前台服务，通知 6103、渠道 `schedule`）每 5 秒对一次系统时间；同一触发分钟每条任务只执行一次（`fired` 记录 `yyyyMMddHHmm` 触发键）。启动类任务先 `GameForeground.bringToFront` 再派发，派发的 Intent 与页面按钮一致（自动找星/自动BOSS 会带上各自页面保存的星级/地图），复用各模块既有的启动保护、冲突检测与清理流程。触发记录写入 `files/schedule.log`，超过 64KB 轮转为 `schedule.log.1`。
+- 不使用 AlarmManager：精确闹钟在 Android 14 需额外授权且受 Doze 打折，而助手本身需要常驻前台服务，自己计时更稳定。代价是任务只在助手进程存活时执行，页面提示已写明。
+- 设备验收（emulator-5554，23:26–00:05）：入口、列表、新增/编辑对话框渲染正常；23:29:02 与 23:57:03 各命中一次（后者记录 `202610182357 整点+半点 · 提前3分 start bosshunt dispatched`）；`ScheduleService isForeground=true foregroundId=6103`，无崩溃记录。保存/编辑实测：多选存成 `target=mounthold,battleloop`；点行编辑取消“半点”后 `cycles` 由 3 变 1、id 不变，再改回 3。修正两处：多选列表 150dp 导致对话框底部按钮出屏（收到 96dp）；定时启动自动找星/自动BOSS 原先缺 maps/levels 参数会被模块拒绝，现按页面同款参数派发（已确认 `已提交找BOSS动作`）。暂停/继续与「全部停止」不在此页开放。
+
+## 2026-10-14 旧服务端内丹战斗接入清单
+
+- 旧本地参考中浩然正气/借力打力/暗渡陈仓/红颜白发/开天辟地/遏其锋芒有战斗分发与非空实现；乘风破浪等4种附法内丹有受伤处理但普攻分发未接通，铁血丹心减伤入口返回0。当前25种物品技能中的另外15种未找到专用处理器。所有结论仅静态旧参考，当前线上生效未实测，未发送请求。证据：.scratch/neidan-hidden-20261014/旧服务端内丹接入清单.md。
+
+## 2026-10-14 泰然自若内丹抗性显示核对
+
+- 当前首发610014834的高级泰然自若410067/2110341797019582467确认在Pos2主槽，2转121级，与截图一致。技能说明通过31624.Func单独算数值；当前PetKang显示及LocalPet.calculateProperty未发现内丹技能加成合并调用，支持抗性页未显示本内丹效果。旧参考2591类无31624处理器/引用，不能等同线上未实现；没有同场伤害或服务端抗性装备前后对照，实战效果未确认。仅只读，无改装备/材料消耗。证据：.scratch/neidan-hidden-20261014/泰然自若抗性显示核对.md。
+
+## 2026-10-14 铁血丹心引用深入核对
+
+- 当前客户端2916个相关函数检查未找到31600直接附加调用；技能到物品映射从75条内丹物品生成，31600无对应物品。旧本地服务端参考在已有内丹技能的宝宝出场时，自动补入31600和3层状态，临时等级取宝宝等级/转生；不是购买物品链路。但参考NeiDanSkillUtils.excuteChangeLife直接返回0，未转入31600减伤实现，线上是否附加/生效未确认。仅只读，未发送请求或消耗材料。证据：.scratch/neidan-hidden-20261014/铁血丹心引用核对.md。
+
+## 2026-10-14 内丹隐藏入口只读核对
+
+- 当前客户端内丹物品75条，为25种技能的普通/中级/高级版本；图鉴数据源概率配置同为75条且ID集合相同。存在Sup=5预留品质值，但无对应物品/品质名称，不能认定有可获取的超级品质。结丹存在普通/高级/超级模式与20401请求，模式与品质不得混同。经验转移、摆摊、锁定、备用格激活等所查按钮仅开发中提示或日志，未发现对应按钮业务发送。另有31600铁血丹心技能定义，未被75条物品引用，获取/服务端效果未确认。7类实际C2S_NeiDan协议已记录，未发内丹请求、未消耗材料。证据：.scratch/neidan-hidden-20261014/内丹入口核对.md。
+
+## 2026-10-14 宠物商店名单外购买实测
+
+- 用户明确授权后，向NPC90010通过12356协议逐项请求购买47个名单外候选（21031、21035–21080），每项1个且仅发送一次。全部请求后提示商品已售馨，未确认任何购买成功。44项完整前后快照无扣费/到账；山妖、小范式、念在保护停止前已记录同样提示，未完成逐项物品后快照，各批末货币和宝宝列表均与批前一致。不能区分未配置出售与库存为零；错误提示原始入站协议号未捕获。临时handler全部恢复，设备临时文件清理完成。证据：.scratch/pet-shop-hidden-20261014/宠物商店购买实测.md。
+
+## 2026-10-14 当前宠物商店未展示宠物核对
+
+- 当前CPetShop构造闭包固定表与页面m_ListData逐项相同，共33条：21001–21034中缺21031。缺项对应猴精，客户端存在物品/宠物定义；21035山妖及多种高阶定义也不在本店名单。显示路径未发现等级筛选或隐藏分页。未购买、未改列表、未发业务请求，服务端是否接受名单外ID未确认。证据：.scratch/pet-shop-hidden-20261014/宠物商店未展示宠物核对.md。
+
+## 2026-10-14 宝宝基础加点同场采样与战斗刷新入口研究
+
+- 用户自行重置、加点；同一BattleId189780、角色901190、宝宝610014834，敏捷129 -> 705、面板速度1654 -> 2511，攻击4851不变。前后两次4243/4341查询都完成并恢复handler；该响应不含速度/攻击/基础四项，不能据此判断本场速度是否更新。药品与技能命令的顺序一致，也不足以判定速度变化。
+- 查到8254加点 -> 65527更新普通宝宝属性及面板，没有发现直接重建本场宝宝的客户端调用；召唤/新战斗会初始化战斗单位，但召唤界面限制已出场宝宝再次出场。未找到单独重算当前宝宝加点的战斗请求，未发送猜测请求、召回或换宝宝。服务端内部何时重算仍未确认。详见.scratch/battle-basic-points-20261014/基础加点与战斗刷新路径.md。
+
+## 2026-10-14 战斗中宝宝抗性调整实测
+
+- 用户授权实际测试后，仅对首发（2转129级、当前参战petId610014834）通过正常抗性页面确认抗混乱加1个修炼点。显示0% -> 4%，可用点27 -> 26。用户随后重登同一角色且未重置；初期暂显0%/25级，加载刷新后恢复1点/4%、27级、26/27。新进程14268/startTicks2478643只读确认m_Xiulian.KHUNLUAN=1及可用26点。没有第二次加点、没有重置或道具消耗。
+- 支持该次从战斗画面提交的修改已保存；未取得同一BattleId下的服务端战斗属性前后对照，因此本场结算是否立即采用新抗性未确认。普通属性加点8254入口已追踪，但没有实际修改。证据：.scratch/battle-attribute-inwar-20261014/战斗中抗性调整试验.md。
+
+## 2026-10-14 助手版本显示修复
+
+- 右上角版本文字改为读取自身安装包的versionName，移除写死的2026.10.13.1。新包2026.10.14.1/code5已覆盖安装到emulator-5554，实际页面和系统版本均确认显示2026.10.14.1；assembleDebug及v1/v2签名验证通过，资产/原生库与上一修复包完全一致。
+- 产物：WinsockPacketEditor/artifacts/PiaomiaoHelper-2026.10.14.1-version-display.apk；SHA256：31139de52a4e2c0aeb64f2a74a2348b9624261fb0d453d359399dd8165470ffa。CodeRabbit认证成功，但远端返回Failed to start review，审查未完成。
+- 旧循环租约过期后的清理状态另行核验；这次版本显示修复不代表循环已启动，核验输出见.scratch/suite-version-display-20261014/recovery-status.txt。
+
+## 2026-10-14 战斗循环动画处理修复候选包
+
+- 当前统一APK battleloop在行动确认与命令就绪后主动处理剩余动画，校验角色/战斗/回合和完成态，再对自然与模块播放完成通知防重。已完成动画允许清空命令表和末尾游标，不重放；保留暂停、无宠物、身份变化、停止与异常恢复。旧独立APK未改。
+- 21项离线检查通过，最终离线assembleDebug成功。产物 `artifacts/PiaomiaoHelper-2026.10.14.0-battle-loop-animation.apk`，包名com.xnas.wpe.suite、2026.10.14.0/code4、x86_64、v1/v2签名通过。SHA256 `fbacf7a97f0e7e0ea78c3485bbba1787f9b4938573741fb1e4a2646079471d71`。
+- 对照已安装APK，资产/原生库仅目标Lua与battle_loop_worker变化；原APK已只读备份。CodeRabbit远端审查两次启动失败，未完成且不以人工审查替代；计划Jev低置信度、结果HTTP429，均not_run。用户明确授权后已覆盖安装并启动新版，设备APK哈希与候选一致。只读现场采样记录同场185494的7/21/31/39回合，收尾标记推进至39回合、计数持续增长；停止后hooksRemoved/bindingCleared/restoreConfirmed均true，已重新启动供继续测试。采样非原子读取、非线级封包证据，用户已现场确认人物和宝宝在第三回合后均跳过动画；未验证替队友跳过。详见 `../.scratch/battle-loop-round3-fix-20261014/修复交付记录.md`。
+
+
+## 2026-10-12 战斗快进单图标入口
+
+- v0.3.0（versionCode 3）只保留 MainActivity 一个桌面入口，打开后显示“启动快进 / 停止快进”两个按钮；复用内部 Start/Stop NativeActivity 别名及原 Rust 请求逻辑，未修改 worker 或游戏脚本。
+- assembleDebug 通过；APK 清单确认一个 LAUNCHER、两个内部别名，包名 com.xnas.wpe.battleskip、x86_64、minSdk 23，v1/v2 签名验证通过。独立交付文件 `artifacts/battle-skip-single-icon-20261012.apk`，SHA-256 `C0ACE8E94C9E07CD4CDD7F5170E3709D1880077271591197BF62D7302BC94B76`。
+- 用户随后明确授权替换原应用，已在 emulator-5554 使用 install -r 覆盖安装，保留应用数据；设备确认 v0.3.0/versionCode 3，系统查询只返回 MainActivity 一个桌面入口，实际截图已确认启动/停止两个按钮显示。未点击按钮或验证真实游戏启动/停止效果；emulator-5556 未安装该应用，未修改。
+- CodeRabbit 实际审查 AndroidManifest.xml、MainActivity.java、README.md、build.gradle 四个文件，0 issues。
+- 已按用户要求另存分享包 `artifacts/battle-skip-share-LDPlayer5-64-20261012.apk`，与本次安装包字节一致，SHA-256 相同；单独验证包名、版本、x86_64、minSdk 23 及 v1/v2 签名。雷电 5 64 位的安装架构及 Android 版本符合声明要求，但接收方设备和游戏运行效果未实测；本地本次安装验证环境为 Android 14，不能替代雷电 5 的 Android 7 环境验收。使用需 Root 与目标游戏包 com.gdoo.dhxy。
+
+## 2026-10-12 战斗快进 APK 提前触发
+
+- 用户明确授权修改并替换 APK。独立包 `com.xnas.wpe.battleskip` v0.2.0（versionCode 2）已安装到 emulator-5554，x86_64、minSdk 23；Rust NativeActivity 启动壳与 Rust 常驻 worker 内置 Frida core、Java 桥和 Lua，不需要电脑持续控制。
+- 不再等待捕获原回合结束 callback。仅在绑定 manager 的 `startReadNextCMD` 首入口、本轮列表已准备且读取/播放索引为 0 时，先快速处理全部命令，再按已核实的原普通战斗参数完成收尾；已在播放的回合由轮询补救，保留当前索引。按战斗与回合在发送前防重，停止及异常恢复自有入口。
+- 游戏 LuaJIT 隔离模拟 15/15 通过；CodeRabbit 实际审查 3 个变更文件，0 issues；构建及 v1/v2 签名验证通过。真实战斗 128709、128713 第 1/2 回合记录 `before_first_command`、两个索引均 0、`sendCount=1`、无 error。用户确认“第一下也跳过了”。发送计数证明客户端调用次数，未单独读取服务器确认。
+- 已实测停止：daemon 退出，实例读取 hook 槽为 nil，原读取方法及 send 地址恢复；重新开启后战斗 128791 第 2～4 回合仍提前触发，当前保持开启。交付文件 `artifacts/battle-skip-rust-early-20261012.apk`，SHA-256 `BDC3C8F1F59AE08D1D27C23FE513F65B0EF6174FC4EEA599E0D3B073E5D6ACBD`。详细证据见父目录 `.scratch/战斗快进提前触发验收-20261012.md`。
+
+## 2026-10-11 当前战斗动画查找与临时测试
+
+- 后续用户明确要求先跳过本轮审查，再要求每回合执行原结束回调。已完成仅快进补充对照：战斗124686第3回合未观察到播放结束send（0次），到下一回合命令19秒，正常结束通知间隔3秒。已启动每回合“fast＋捕获原结束callback”持续模式，真实战斗124876第8、9回合各sendCount=1且成功。seen/consumed/sent按战斗＋命令回合隔离，自然已执行不补、迟到wrapper不重发；绑定变化或错误停止。独立静态核验及真实执行通过，本轮CodeRabbit按用户明确要求跳过，无离线Lua runtime。当前模式/停止入口/session见父目录 `.scratch/roundskip-active-20261011.json`，记录 `.scratch/roundfinish-everyround-20261011.jsonl`；未做APK，可见效果待反馈。19秒与3秒为不同回合单次结果，不能作为严格因果证明。
+
+- 用户授权测试正常回合结束回调：暂停自动快进后，临时透明观察 `cc.CallFunc.create` 与 `netconn.send`，按环境、manager upvalue、战斗与命令回合捕获原末尾callback。战斗124191正常第3回合通知→第4回合命令约3秒；第4回合快进后补执行原callback一次（testSendCount=1,calls=1）→第5回合命令也约3秒。未证实补回调比仅快进更快、未实现立即进入下一回合。临时包装与设备服务已恢复/清理，内存复核原create/send地址。随后恢复原每回合动画跳过，未自动补结束通知，最新停止入口和session见父目录 `.scratch/roundskip-active-20261011.json`。
+- 通知主测试CodeRabbit 1major迟到callback重复问题修复后复审0 issues；独立静态检查及真实Lua执行通过，无离线Lua runtime。补充仅快进对照被CodeRabbit免费额度rate_limit阻断（提示28分钟），未执行其脚本，不能认定原快进必定漏通知。Jev计划/结果均HTTP429/not_run。完整证据与限制见父目录 `.scratch/回合结束通知测试-20261011.md`。
+
+- 用户后续要求每回合触发并继续：临时循环绑定 PID24636/startTicks1236558、本方901190、`table: 0x7df071b77668`，按战斗号与回合去重，在未完成、未暂停且有当前命令时经原有GLThread桥执行一次 `fastAnalyzeSurplusCMD`。首轮战斗122305累计5次成功并实测停止、Lua清理完成与本次服务删除；最终循环重新开启，已记录第35/36/37回合各一次成功、完成标志false→true，当前保持运行。停止入口为父目录 `.scratch/roundskip-final-20261011.stop`，用户可要求停止；进程或绑定变化、Lua fatal、GL排队超时均停止，进程重启不自动接续。未改APK，可见动画效果仍待用户确认。
+- 当前JNI返回值不反映Lua文件执行结果，最终控制器每秒直接读取Lua结果并记录，fatal触发退出；真实记录见父目录 `.scratch/roundskip-final-20261011.jsonl`，运行元数据 `.scratch/roundskip-active-20261011.json`。JS模拟6项、Python mock5项通过（包含取消后待排队任务、清理重试及JNI为0但Lua fatal停止）；Lua去重源码断言与真实跨回合执行通过，未做完整Lua离线模拟。CodeRabbit首次2个issues已修正，最终控制器复审0 issues；JS另加自动清理排队建议因已有Python等待后顺序重试且竞态测试通过未采纳。本地审查目录保留为审计证据。
+
+- 后续用户明确授权从官方临时部署Frida服务并测试一次跳过：官方 `frida-server-17.17.0-android-x86_64.xz` 的SHA256与发布页一致；临时服务仅监听设备127.0.0.1，使用隔离临时Java bridge组件，经APK现有 `Cocos2dxHelper.runOnGLThread`、`Cocos2dxLuaJavaBridge.callLuaGlobalFunctionWithString('dofile',path)` 执行。只读查询验证 `ClassIns['BattlefieldView.Ins']` 与本方角色绑定，并确认执行线程24852为 `GLThread 42`，没有直接调用ARM64地址。
+- 在当前进程PID24636/startTicks1236558、战斗120831第1回合，查询时播放序号1/共7条；同回合实际调用前序号2，严格匹配战斗/回合/角色/对象和未完成状态后，仅一次 `pcall(manager.fastAnalyzeSurplusCMD,manager)`。结果 `called=true,ok=true,error=''`，完成标志false→true，战斗与回合不变。用户反馈“没有明显变化”，故可见动画跳过未通过验收，不能将标志变化宣称为有效加速。之后只读复核同一战斗已推进到第14回合，没有再次触发。
+- 临时服务已按启动身份核验后停止并删除，设备上的本次Lua脚本/结果与上传文件均删除；游戏进程身份不变。主机复制的3.17GB APK、临时服务二进制、隔离桥接依赖和渲染后的Lua脚本均已清理；本地临时审查Git目录因只读对象删除失败、后续执行策略拒绝清理而保留，不绕过策略。证据：父目录 `.scratch/battle-skip-once-test-20261011-active.json`、`.scratch/battle-skip-server-20261011.json`；两份一次性模板保留用于审计。
+- JS模拟5/5通过（单次调用、二次拒绝、取消、超时、异常不重试），真实Lua查询与调用解析执行通过。`coderabbit:code-review` 覆盖两个模板并完成，2个minor中成功返回值误记error已修复，允许重试的建议因一次性测试范围未采纳。Jev计划HTTP429、not_run；结果首次INPUT_SCHEMA，修正summary格式后HTTP429、not_run，依据本地验证及用户反馈交付测试结果。
+
+- 用户后续授权临时写入测试：当前进程及 `GetRoleMoveTime` 字节码、全局环境、字段节点重绑定一致后，`DefineMoveSpeed` 从2200临时改为4400，回读通过并恢复2200；用户首次“无明显变化”反馈发生在写入确认前，不作为有效否定结论。第二轮临时设为100000，写后对象链与数值复读通过，用户在明确生效窗口内确认“明显变快”。仅证明战斗走位有可见加速；全部技能/特效、跳过剩余动画与服务器战斗时长未验证。恢复证据分别为父目录 `.scratch/battle-move-speed-2x-20261011.journal.json` 和 `.scratch/battle-move-speed-100000-20261011.journal.json`，以后者最终状态为准。
+- 两轮最终均恢复2200并复读通过。100000测试后 LuaJIT 将 `GetRoleMoveTime` 首条 `FUNCF` 改为 `JFUNCF`，原始全字节码比较因此阻止首次恢复；确认只有首条JIT入口变化、其余字节码及函数/环境/字段节点一致后，以预期旧值100000保护写回原始TValue，恢复记录为 `restored`。
+- 后续当前内存 `GetAniTimeData` 上值表定位到形状6091的动画资料：`attack_1/attack_3` 均 `countFrames=13,hitTime=9`，`magic_1/magic_3` 均 `countFrames=9,hitTime=6`；该形状资料未出现直接 `speed` 字段。本次只读复核函数绑定与进程身份，证据为父目录 `.scratch/battle-animation-shape-timing-20261011.json`；未修改帧数、命中时点或动画播放速度。
+- 用户授权一次 `fastAnalyzeSurplusCMD` 调用测试，但未实际执行：主机已安装 Frida17.17.0，可通过设备连接枚举进程，`attach(24636)` 返回 `ServerNotRunningError: unable to connect to remote frida-server: closed`；当前设备ABI为x86_64，而已加载 `libcocos2dlua.so` 的ELF e_machine=183（ARM64），进程映射含 `libhoudini.so`。尚无已验证的游戏线程Lua执行入口，不能直接将Lua函数对象或ARM64入口当成x86_64原生函数调用。没有写完成标志、替换函数或调用跳过函数，待确认测试客户端Lua控制台/源码入口。
+
+- 新进程 `com.gdoo.dhxy` PID24636/startTicks1236558 的旧缓存失效，重新冷定位战场并绑定本方角色901190。当前内存 Lua 函数 `fastAnalyzeSurplusCMD` 的字节码确认：停止战场与角色动作、恢复角色原位、把尚未播放的回合命令交给 `fastAnalyzeCMD` 补齐状态，再设置 `m_AnalyzeFinish=true`；当前类中的调用方包括 `setCurRoundCMD`、`setBattleRoundInfo`。未实际调用，跳过动画的可见效果、调用时机和兼容性未验证。
+- 106个当前战场类方法的引用检查未确认统一动画倍率。24个有效连续样本（约57秒）中，`m_CmdAniTimeCount` 在同回合播放序号前进时保持不变；函数体显示它累加命令动画时长并参与上报，不是倍率。单独设置结束标志也不等于执行快速解析。
+- 当前 `GetRoleMoveTime` 引用 `DefineMoveSpeed=2200`，`GetAttackTimeInfo` 使用 `PlayAniFrames=10`；`GetSkillTimeInfo` 引用动画资料的 `speed/countFrames/hitTime`。这些是走位及动画时长线索；尚未确认统一视觉加速控制。阵型特效 `playXingZhenAni` 的 `speed` 是传给 `LoadEffAni` 的局部参数，不作为所有战斗动画倍率。
+- 全程仅读取游戏内存，没有写值、调用游戏函数、注入或发送封包。证据保存在父目录 `.scratch/battle-animation-*-20261011.json` 与 `.scratch/battle-animation-bytecode-20261011.txt`；地址仅属于该进程快照，不可直接复用于下次进程。
+
+## 2026-10-11 孩子八项属性客户端修改
+
+- 同日用户进一步要求改为100万：同一孩子八项由100000一次性写入1000000，逐项及整体终检通过；用户明确确认面板“8项都是1000000”。本次恢复记录为父目录.scratch/child-panel-originals-20261011-1000000.json（保存写前100000），最初原值记录仍保留；未验证服务器属性、实际战斗效果或重登持久性。
+
+- 用户授权将自己孩子710000119的气质、名气、耐力、道德、智力、内力、孝心、温饱一次改为100000；只修改ChildMgr.Ins.m_Childs对应对象的PropertyValueDict八项数值包装表。
+- 真实逐项写入与完整对象链复读通过，后续独立读取仍全部100000；用户明确确认面板“8项都是100000”。没有直接取得修改后的孩子面板截图，用户可见验收来源为用户确认。
+- 原值恢复记录与验收说明保存在父目录.scratch/child-panel-originals-20261011-100000-retry.json、.scratch/孩子属性修改验收-20261011.md；没有持续锁定，没有修改APK。服务器属性、战斗效果及同步/重登持久性未确认。
+
+## 2026-10-11 对方 SP 只读复核
+
+- 后续深入找到其他玩家宠物资料缓存：`ClassIns["TempPetMgr.Ins"].m_TempPetDict[tostring(petId)].basePro.sp`（小写sp，不是sp_base）。battle111769→111769的采集中，18个宠物的键、roleId、对象链与sp清页缓存后复读一致，示例值2589/2575/4162；没有任何一项匹配该样本对方ID或此前610004830，因此没有加入APK或宣称当前对方已读出。临时角色实例未出现；临时宠物缓存更新频率、目标新战斗原始属性和最终速度仍未确认。
+- GC链扩展访问约22万个对象/16.9万个table，另连续两轮约100秒采样近期对象；其结果仅作候选发现，保留并发GC、映射变化和瞬时数据漏采边界。用户确认曾回地图准备新战斗，非零残留编号不作为可见进战验收。
+- 用户新截图确认本方人物及宠物 SP 已显示，对方仍为未知。当前 `com.gdoo.dhxy` PID1894/startTicks1678 的一致性样本 battle110580/round1 有3个存活对方 NPC，身份、位置、HP/MP与战场引用均匹配，但直接 `m_Speed` 缺失；玩家/本方宠物缓存无这3个对方ID。
+- 补齐当前 `data_proList2Obj` Lua函数、角色转换/初始化与 `convertTargetPro` 两个子原型，未找到显式速度映射。另一份前后绑定一致的留存回合数据递归检查333个table（深度6、无跳过、无剩余队列），属性含HP/MP变化和targetId，未找到SP；该样本采集时已无存活对方，不作为活跃对方速度值证据。
+- 仍未取得进入战斗瞬间原始 `otherMember.pro` 完整样本；未全堆扫描、未确认PvP与最终战斗速度。本轮没有改APK或写游戏内存。具体证据与限制见父目录 `.scratch/对方速度复核-20261011.md`。
+
+## 2026-10-11 Android 战斗面板 SP 属性回退
+
+- 保留有效 `m_Speed` 优先；缺失时从当前角色 Lua 闭包环境的 `ClassIns` 实例缓存读取本方本人、宠物的 `PropertyValueDict.SP`，以及伙伴 `FiedPro` 数组 type 52 合计。每帧按进程、战斗、角色 ID 和本方人物/宠物位置族绑定，清缓存后复核属性对象链和值；未知 SP 继续显示“—”，属性速度不代表已确认的战斗最终速度。
+- 最终 Android Rust 测试17/17、Java EBP2 解析断言、Android release编译及 `assembleDebug` 通过。APK签名校验通过，包内worker与最终release字节一致。独立worker曾连续输出20个实时帧，平均约1.05秒/帧，本方本人87、宠物609、伙伴538/457/516；最后宠物错误隔离修复由17项测试复验，未重复实战采集。
+- CodeRabbit覆盖全部变更代码，2个minor issues中宠物局部错误隔离已修复并复审0 issues；终检失败丢帧的严格策略保留。Jev计划/结果均HTTP429、not_run，依据本地证据交付。
+- 新APK单独保存在父目录 `.scratch/sp-apk-20261011/战斗面板-SP实时读取-20261011.apk`，验证记录同目录 `验收记录.md`。用户确认后已覆盖安装到 `emulator-5554` 并启动，保留数据和DHXY目标选择；设备已安装APK SHA-256与交付APK一致。当前游戏PID为25033/startTicks2837653，旧PID2007缓存被拒绝复用；现场处于非战斗场景，面板显示重新定位重试，SP及跨回合、进程重启后的活跃战斗冷定位仍待验收。
+
+
+## 2026-10-08 Android 坐骑速度保持悬浮图标
+
+- `mobile-mount-speed-hold` 收起态为单个圆形图标：点按展开状态面板，按下显示 3 秒倒计时，拖动或松手会取消；长按满 3 秒通过 Rust `stop` 流程安全恢复，worker 结束后服务自动关闭。终止错误时长按只关闭错误提示，不表示恢复成功。
+- `assembleDebug` 成功，最终 APK 已覆盖安装到 `emulator-5554` 并保留应用数据。随后新版在 `holding_speed` 状态测得 Android 进程 PSS 27.5–29.7 MiB、Rust worker PSS 1.7–1.9 MiB，合计约 29.4–31.3 MiB；RSS 合计约 137–139 MiB，模拟器总内存约 5.8 GiB。
+- 测量后服务仍在运行且 `mount_hold.journal` 存在；ADB shell 不能直接调用非导出的 STOP 服务，没有强杀进程。需从新版悬浮图标长按 3 秒按 Rust 流程安全结束。游戏内实际速度持续效果未重新验收。
+- 此前设备通知曾报告 `ReadError_read_process_memory__I_O_error__os_error_5_`；该次 Root worker 已退出且没有恢复 journal，具体触发原因未确认。
+
+## 2026-10-07 Android APK 悬浮球长按倒计时与图标
+
+- 悬浮球按下后立即显示“松开取消 3”，每秒更新为 2、1；按住满 3 秒停止读取服务。松手、取消触摸或开始拖动时会取消倒计时并恢复提示。
+- 将原“战”字替换为随读取状态变色的自绘监控屏图标。`assembleDebug` 构建成功；APK 已重新生成，本轮未安装到模拟器，未做设备交互验收。
+
+## 2026-10-07 Android APK 悬浮球与长按关闭
+
+- 收起态改为 88dp 圆形悬浮球，点按展开面板，长按 3 秒停止读取服务并关闭悬浮层；球面提示长按操作。拖动超过触摸阈值会取消长按关闭，位置仍沿用原有持久化设置；未增加面板关闭按钮。
+- `mobile-battle-panel/gradlew.bat assembleDebug` 成功。APK 已重新生成；本轮未安装到模拟器，未做设备操作验收。
+
+## 2026-10-07 Android APK 面板状态与收起态优化
+
+- 空槽与死亡槽采用不同的行底色和文字颜色，继续隐藏“死亡”文字；读取错误与数据过期时仍清空旧数值，并以状态提示区分非实时状态。
+- 收起态改为可拖动、可点击展开的紧凑状态条，显示当前状态/回合。连续同一进程和战斗中的存活槽 HP、MP、SP 变化时，对应数字短暂高亮；现有数字补间保留。
+- `mobile-battle-panel/gradlew.bat assembleDebug` 成功。APK 已生成于 `mobile-battle-panel/app/build/outputs/apk/debug/app-debug.apk`；本轮未安装到模拟器，未做设备界面验收。
+- CodeRabbit 因 CLI 未认证且登录等待超时未能审查；计划与结果阶段的 Jev 判断均因 `NETWORK_ACCESS_DENIED` 返回 `not_run`。
+
+## 2026-10-07 Android APK 人物与宠物列展示调整
+
+- APK 横屏保持对方在左、本方在右；对方列仍为人物在左、宠物在右，本方改为宠物在左、人物在右。所有可见“主队”名称改为“人物”，人物行标签显示“人物5”至“人物1”；空槽行保留槽位名和横线，不显示“空槽”字样。EBP2 帧顺序与槽位映射未变。
+- `assembleDebug` 成功并覆盖安装到 Android 14 x86_64 `emulator-5554`；实战第 1 回合截图确认列顺序、人物标题和空槽文案调整。截图：`.scratch/mobile-labels-final.png`。
+- 悬浮面板底部说明和“停止读取”按钮已移除；停止入口仍保留在应用主页面与前台通知。横屏面板缩短后在实战画面确认四列和五个槽位均完整可见，截图：`.scratch/mobile-no-footer-final.png`。
+- 悬浮面板整体尺寸、槽位和文字同步缩小约 10%；重新构建并覆盖安装后，模拟器截图 `.scratch/mobile-resize-game.png` 确认四列、每列五个槽位仍完整可见。该截图仅验收布局尺寸，当前画面未确认实时读数。
+- 为避免战斗中双行“死亡”标签挤掉底部槽位，横屏槽位行高调为 35dp，窗口仍按设备可用高度限制。覆盖安装后在实战第 2 回合确认双方四列、五个槽位和死亡状态均完整显示，截图 `.scratch/mobile-panel-final.png`。
+- 点击启动且服务启动请求成功后，主页面自动退到后台；模拟器验证主页面窗口已隐藏、游戏回到前台且悬浮层保留，截图 `.scratch/mobile-hide-verified.png`。可从启动器或服务通知重新打开主页面。
+- HP、MP、SP 已有数字变化时用 320ms 减速补间更新，空槽、死亡与首次读数仍直接显示；悬浮球扩大到 64dp 并加入按压涟漪，浮球和面板间加入淡入缩放过渡。`assembleDebug` 成功并安装；模拟器实战第 3 回合确认面板可点按展开/收起，截图 `.scratch/mobile-ball-tap-open.png`。
+- 悬浮面板顶部“收起”按钮移至左侧，“战斗状态”标题右对齐到右侧。`assembleDebug` 成功并覆盖安装；模拟器确认新布局，截图 `.scratch/mobile-header-layout.png`。
+- 悬浮面板文字略微放大、数据加粗并提高灰白文字亮度；加深根面板、栏目和槽位底色，增强边线对比，仍保留半透明玻璃效果。`assembleDebug` 成功并覆盖安装；模拟器战斗画面确认六位数完整显示，截图 `.scratch/mobile-readable-verified.png`。
+- “收起”按钮扩大为 84×48dp，字体加大加粗，换用更亮的青蓝底色和高亮描边；顶部行同步加高。覆盖安装后模拟器确认可点按收起并再次展开，截图 `.scratch/mobile-big-button-confirmed.png`。
+- 面板底部新增等宽铺满整行的“属性”和“抗性”按钮；“属性”高亮代表当前页，“抗性”置灰禁用作为未开发占位。横屏面板高度同步增至 480dp，模拟器确认十槽区域和按钮完整显示，截图 `.scratch/mobile-tabs-final.png`。
+- 死亡槽位不再追加“死亡”文字，槽位名称保留，HP、MP、SP 仍显示横线；`assembleDebug` 成功并覆盖安装到 `emulator-5554`。
+
+## 2026-10-07 Android APK 双侧十槽协议升级
+
+- Rust worker 现在按本地角色 position 族采集本方十槽和对方十槽，帧内先本方主队/宠物十槽，再对方主队/宠物十槽；本地角色也读取 HP、MP、m_Speed。移除了把 `m_IsLocalPlayer` 当阵营标记的错误断言，但仍严格校验它是否与本地角色 ID 相符。进程、战斗、回合和整帧映射绑定保持。
+- APK 协议升为 EBP2：40 字节头部、20 个 32 字节槽位、680 字节固定载荷、1024 字节最大载荷。Rust 写帧和 Java 解码器严格检查长度、槽数、双方位置族与保留字节。面板横屏左右等宽并列两侧，每侧主队与宠物各成一列；窄屏可纵向滚动，槽位仍从上到下显示 5→1。启动页和实时服务通知均说明双方各十槽。
+- 验证：cargo fmt 检查通过；针对 Rust 帧模块的隔离自检 1 项通过；纯 JDK Java 解码自检通过，覆盖两种位置族、错误长度、旧版本、错误槽数、非零保留字节和混合位置族。Android x86_64 Rust release 编译及 gradlew.bat assembleDebug 均成功。
+- Windows host 上的 `cargo test` 因既有 `memory.rs` 使用 `std::os::unix::fs::FileExt` 而无法编译；Android target 的 `cargo check --tests`、2 项 Rust 离线自检及 `assembleDebug` 通过；未新增 Java 测试依赖。APK 已安装到 Android 14 x86_64 `emulator-5554`，实战第 1 回合确认我方和对方主队/宠物四列同时显示 HP/MP/SP，槽位顺序为从上到下 5→1；安装前后游戏 PID 均为 `28544`。未验证跨回合刷新、游戏重启后的冷定位。
+
+## 2026-10-07 Android APK 战斗观察面板读取修复
+
+- 修复前面板仅显示通用读取失败。旧 `manager-cache-v1` 曾允许只通过管理字段检查的地址被重复复用；现在冷发现验证管理字段、角色位置表和十槽角色结构，缓存只在完整样本成功后写入，重试按 2、4、8、16、30 秒退避。
+- `assembleDebug` 成功；Android x86_64 测试二进制在 `emulator-5554` 上执行，2 项候选选择测试通过。真实战斗第 2 回合已显示 4 个主单位和 1 个宠物的实时 HP/MP/SP，证明读取链路已工作。
+- 根据实机站位方向调整纵向显示：主队和宠物均从上到下显示槽位 5→1，让最下面的槽位对应 1；Rust 数据顺序与帧校验不变。`assembleDebug` 成功并覆盖安装，模拟器第 3 回合截图确认新顺序及实时 HP/MP/SP；游戏进程 PID 更新前后均为 `28544`。
+- 前一轮 CodeRabbit 审查完成 28 个文件、0 findings；本次单行 UI 顺序调整由构建和设备截图验证。Jev 结果判断返回 `not_run / LOW_CONFIDENCE`。
+
+## 2026-10-07 独立战斗状态观察面板（Python）
+
+### 双侧十槽扩展
+
+- 在原对方十槽基础上新增本方十槽，双方各含主单位五槽与宠物五槽；本地主位所在的已确认位置族用于选择双方位置 ID。本地角色现在也会经身份与战场引用校验后读取 HP、MP、`m_Speed`，孩子组和辅助对象仍被排除。Tkinter 窗口左右并列双方阵列，每侧主位、宠物位各成一列并竖排五槽；双方共二十槽同屏显示，并分别保留站位状态。
+- 本次针对性离线回归 19 项全部通过；`battle_reader.py` 与 `main.py` 的 `py_compile` 通过。未连接 Android 设备，也未访问当前游戏进程内存；双侧版本尚未在真实设备帧或实际窗口重新验收。下文记录的旧窗口与性能数据来自单侧版本，不能视为双侧版本证据。
+- CodeRabbit CLI 当前未认证，登录页已打开并等待用户在浏览器完成；本次代码审查尚未执行。Jev 计划和结果判断调用均因 `NETWORK_ACCESS_DENIED` 返回 `not_run`。
+
+### 后台控制台闪烁修复（双侧扩展前）
+
+- 原因确认：无控制台 `pythonw.exe` 启动的 ADB 子进程没有设置 `CREATE_NO_WINDOW`；面板自身请求和动态加载的私有页读取器都可能创建控制台。使用相同实际调用路径、由 `pythonw.exe` 运行本地子进程探针，修复前两条路径 `GetConsoleWindow` 均非零，修复后三条 run/Popen 路径均为零。证据在 `.scratch/enemy-panel-console-before.json`、`.scratch/enemy-panel-console-after.json`。
+- 仅在面板内增加 `_WindowlessSubprocess` 适配器，Windows 子进程标志保留已有位并附加 `CREATE_NO_WINDOW`；非 Windows 参数保持原样。私有加载的 LuaJIT probe 使用相同适配器，未修改共享 mount-reader 源码或全局 subprocess 模块。原有只读、进程绑定、缓存与十槽策略保持。
+- 新增 `tools/enemy-status-panel/打开战斗面板.vbs`，通过系统 WScript 隐藏启动 PowerShell，再打开 Tkinter 窗口；实际入口退出码 0，并成功启动面板及取得完整设备帧。用户以后双击 VBS 入口可避免启动控制台；原 CMD 入口保留追加参数能力并隐藏 PowerShell，但 CMD 自身可能短暂显示窗口。README 已更新。
+- 本轮完整 18 项回归通过，新增覆盖所有面板/私有 probe 的 run/Popen 隐藏标志、保留已有标志、异常类型转发与非 Windows 参数。当前窗口已切换到修复版继续读取，并确认 Tkinter 窗口实际可见且响应。CodeRabbit 此次明确列出面板七文件（含 VBS）为 `reviewedFiles`，返回 `review_completed / outcome=completed / 0 issues`；结构化证据在 `.scratch/enemy-panel-console-coderabbit-20261007.ndjson`。
+
+### 双侧扩展前的单侧版本现场交付记录
+
+- 已完成独立 Python/Tkinter 面板；双击 `tools/enemy-status-panel/打开战斗面板.cmd` 后自动连接唯一在线 ADB 设备并开始读取。Windows PowerShell 5 启动路径已现场执行，修复启动脚本 UTF-8 BOM、含空格路径引号与空参数数组问题；实际窗口已打开，状态为“实时”，十个站位均可见。
+- 对方十槽固定为主单位五槽与宠物五槽，依据当前本地角色与 `m_RoleIdPosDict` 判断对向一侧，按当前客户端 `initRolePos` 的两侧坐标排列。完整位置表可以超过十项，只有对向十槽读取 HP、MP、SP（`m_Speed`/速度）；孩子等第三组不纳入这十槽。空槽和死亡状态保留位置，单位名称仍未确认。
+- 找到此前无法形成有效帧的原因：GC64 userdata 的环境引用应读取绝对 64 位指针；角色表含预创建、辅助与 nil role 对象，不能把全战场对象都当对方十槽；LuaJIT array 索引包含第零项，哈希 position key 也可能是整数值浮点编码。已按实际对象布局修复，并严格检查角色 ID、位置、本地标记与当前战场引用。
+- manager 候选地址使用版本化用户缓存，绑定实际 serial、package、PID、startTicks、executable。未指定 serial 和明确指定唯一设备使用同一缓存键。每帧新建页读取器，结束校验前清除页缓存，再复核 BattleId、round、角色表与位置字典内容；验证失败丢弃帧并清除显示值。只在一致帧或身份验证后的未进战结果写入缓存。
+- 当前进程的候选 manager 已重新校验，取得完整设备帧。另一个新启动的 Python 进程在禁止冷发现的诊断条件下连续取得 12/12 完整帧，冷发现调用 0 次，跨三个回合，单次读取中位数 1.554 秒。正常 UI 在每次读取后等待 1.5 秒，因此该现场条件下约三秒更新一次，并非每秒全量扫描。实际窗口截图确认八个已映射对方单位及两个空槽显示正确，回合继续推进；证据保存在 `.scratch/battle-live-performance-20261007.json` 与 `.scratch/enemy-panel-live-window-20261007.png`。
+- 本次 16 项针对性回归通过，覆盖 GC64 环境指针、array 第零项、混合对象过滤、两侧映射、角色失配、设备解析、字典变化拒绝、失败清值、布局无重叠、预取消、两个扫描阶段取消与清理、内部失败和用户取消事件隔离、失败/停止提示保持，以及坏 manager 候选跳过、成功候选唯一性和候选检查取消传播。点击停止后取消后续扫描区块，当前已发出的有界 ADB 读取仍可能需要等操作结束。游戏进程重启或缓存失效后仍需重新定位；新进程首次冷发现的耗时与可靠性尚未完成现场验收。全过程只读，不写进程内存、不注入、不调用游戏方法、不暂停、不发包。
+- 本轮 CodeRabbit 首审明确覆盖面板六文件，提出 3 minor（重复 base64 校验、用户取消传播、失败提示被过期覆盖），均已修复；复审明确覆盖同六文件，提出 1 major（坏 manager 候选中止整个发现），已修复并补针对性回归。末轮仍明确列出六个 `reviewedFiles`、返回 0 issues，但 outcome 为 `completed_with_warnings`、message 为 `Review completed with unverified findings`，不按完整审查通过记录。三轮原始结构化结果分别在 `.scratch/enemy-panel-coderabbit-20261007.ndjson`、`.scratch/enemy-panel-coderabbit-followup-20261007.ndjson`、`.scratch/enemy-panel-coderabbit-final-20261007.ndjson`。
+- 本轮 Jev 计划阶段实际调用 API，但因 `LOW_CONFIDENCE` 返回 `not_run`。结果阶段及一次格式修正后的复判均返回 `INPUT_SCHEMA / not_run`、`http_status=none`，结果阶段未完成 API 调用；按每阶段最多一次修正后的复判约束停止继续尝试。主代理依据完整设备帧、实际 GUI、16 项回归及上述审查的实际范围和警告完成交付；不把 Jev 或带警告的末轮审查称为通过。修复版已通过启动器重新打开并继续读取，最后一次禁止冷发现的独立读取成功，单次耗时 1.672 秒。
+
+### 此前定位与模拟验证记录（不代表当前交付状态）
+
+- 本轮将面板改为窗口打开后自动读取；manager 地址另存于当前用户的应用缓存，并以 serial、package、PID、startTicks、executable 匹配。每次使用前先验证 manager 字段，验证失败就清除缓存并回退冷发现；缓存只减少同一游戏进程再次打开面板时的重复全图定位，不消除新进程首次冷发现。角色值收敛为 HP、MP、SP（`m_Speed`），同时读取维持十槽映射和帧校验所需的角色身份、存活、本地标记及 position 映射。6-worker 现场尝试耗时 124.56 秒后因冷扫描快照变化丢弃整帧；当时没有保存 identity/maps 的差异，不能确定是哪一项变化。之后将错误分类细化为进程身份变化或匿名映射变化并通过模拟验证，但尚无成功设备帧。CodeRabbit 最近一次覆盖面板 README/reader/UI 三文件，返回 0 issues 但状态为 `completed_with_warnings`（`Review completed with unverified findings`）；历史 findings 查询只显示一个不属于本次面板范围的 mount-reader minor。
+- 新增 `tools/enemy-status-panel/`，包含标准库 Tkinter 十格两排面板和独立只读 ADB/LuaJIT 读取器，不接入封包机器人。读取器按当前 PID、startTicks、executable 和 BattleId/round 绑定；从 `m_RoleIns` 的 array/hash 解析并验证 BattleRole 环境字段，再用 `m_RoleIdPosDict` 标注位置。
+- 面板字段为 HP、MP 和 SP（`m_Speed`/速度）。保留 `m_RoleIdPosDict` 的原始正整数 position ID，不限定为 1..10；十个显示框按首次观察 ID 数值排序分配，跨 round 保持，新 ID 追加，超过十个 ID 时整帧失败。failed 帧会清除属性展示并清空当前 `position_session`，保留 last-confirmed `position_mapping_session` 与位置顺序；只有后续成功帧确认进程身份/BattleId 改变时才重置映射。未进战和用户 Stop 会清两类 session 与位置顺序；框内区分未映射和已有 position ID 但当前无角色的空槽。排序不表示实际几何站位；阵营、名称和视觉位置关系仍未确认。
+- 设备只读诊断读到位置表含 12 个数值映射和 3 个 nil 值节点；LuaJIT 源码确认 nil 值节点不会出现在表遍历结果中，读取器只跳过这些节点。冷发现首遍完整读取匿名映射，同时收集 keys 与结构合格的 table header/node span；历史匿名映射总量约 2.17 GB，读取块为 16 MiB，失败时按 2 MiB 子块回退。第二遍现只扫描按页对齐、合并后的 node span 区间；表头 marker 搜索也仅检查 8 字节对齐可通过的候选位置。实际覆盖字节数尚未测量。优化前最近两次有诊断输出的单帧采样分别在 `key-discovery` 第 25 块（27.8 秒）和第 147 块（57.5 秒）因 ADB 返回长度不足失败，均未取得完整帧。第 147 块返回编码长度 2,102,616 字节，预期 2,277,376 字节；同次 2 MiB 回退仍返回相同长度。随后立即重查当前匿名映射时，第 147 块长度为 1,576,960 字节，与失败采样对应的 1,708,032 字节不同；由于失败采样的 PID/startTicks 未保留，是否同一进程/映射变化仍未确认。快照检测版此前唯一一次现场采样在 180 秒后仍未返回完整帧。节点范围优化版唯一一次现场采样由 ADB/目标进程前置检查后启动，199.6 秒返回 `state=failure`、`stage=sample`、`failure_category=other_failure`，未取得完整帧、没有更细诊断，也未重试；采样超过请求的 180 秒上限约 19.6 秒。之后增加的对齐表头搜索通过了新旧算法的 8 种 blob 起始偏移、跨块前缀和 marker 噪声合成比对，但没有现场采样，因此两项优化的实际提速与最终绑定均未确认。十槽及 HP/MP/SP 现场验收仍未完成。整个流程只读，未写进程内存、未注入、未调用游戏方法、未暂停、未发包。
+- 冷扫描通道回退错误现在只在白名单匹配后才显示固定扫描阶段、区块/子区块序号、固定错误类别和长度数字；其他错误仍显示通用提示。此诊断改动尚未现场验证。冷发现比较 PID/startTicks/executable 与完整匿名映射快照；首遍完整扫描匿名映射并同时收集 key 和结构合格的 table/node span，第二遍只扫描按页合并的 node span，保留原 span-owner 和 manager 唯一性检查，并在第二遍结束后再次核对快照；表头 marker 搜索限于可能通过 8 字节对齐的位置。发现变化或无法验证时废弃扫描；冷发现失败后每次尝试完成等待 10 秒，其他轮询在每次 sample 完成后等待 1.5 秒。节点范围优化版唯一一次现场采样在 199.6 秒返回 `state=failure`、未取得完整帧，细类为 `other_failure`；该次旧实现未保留更细诊断。后加的表头搜索优化未经现场采样，性能收益和绑定结果仍未证实。早先详细审查发现 1 个 minor（重建 ADB 通道失败时复核快照缺失）和 1 个 major（跨样本 BattleId 改变被误报为失败），两项已修复。早先面板详细审查发现 1 个 minor，指向回退前 `piece_ordinal` 初始化；已增加 0 默认值。2026-10-07 新详细审查覆盖面板 README/reader/UI 三文件，`findings=0`，但结果标记 `completed_with_warnings`（`unverified findings`）；CLI 的历史 findings 列表仍显示一条 `tools/mount-reader/mount_speed_memory_test.py` 记录，不属于本次面板审查范围。Jev 计划和结果阶段均因 `LOW_CONFIDENCE` 返回 `not_run`；主代理依据本地证据完成决策。Python 语法、映射快照变化/未变化 mock、冷发现重试间隔 mock、BattleId 跨样本 mock、选择性扫描边界 mock、表头扫描等价比对和本次安全错误过滤断言通过；仍无完整设备帧。
+
 ## 2026-10-06 坐骑速度保持保护检查误关闭 Root shell（桌面热更 2026.10.6.5）
 
 - 17:56:42 现场日志在多次成功写入并读回 5000 后记录 `Android Root shell 已关闭输出。`，随后恢复快照失败，当前 runId 以 `recovery-blocked / journal retained` 结束。因此没有进入仅允许安全恢复失败的自动重启分支；不能据此认定用户没有开启 Root。旧日志丢失实际保护退出码，具体触发哪项检查或是否同时发生外部会话关闭仍未确认。
@@ -2208,3 +2436,266 @@
 - 后续按用户要求在 PID 1681 的同一面板将 Speed 从 158 改为 10000；唯一表校验和写后读回均成功。此次修改按要求暂留供用户测试，恢复记录位于本机 `%LOCALAPPDATA%\Temp\partner-panel-speed-10000-20260927-wpe.json`，用户测试完成后可用原值 158 恢复。
 - 普通 su 持久 shell 仅在返回块数完整但存在短块时，扫描才关闭该会话并切换到逐块 Base64 的 exec-out 回退；关闭会话、异常或缺块直接 fail-closed。回退验证行数与解码长度，仍不完整即中止；root-broker/run-as 不跨通道回退。新增 0x0A/0x0D 数据及不完整 shell 批次回退回归。
 - 按用户后续请求，PID 1681 的伙伴属性表 HpMax 已由 23818 写为 1000000；Speed 10000、Atk 2072 保持。写后读回及 HP journal dry-run 成功，按请求暂留供测试；对应恢复 journal 为本机 `%LOCALAPPDATA%\Temp\partner-panel-hp-1000000-20260927-wpe.json`。因 journal 校验完整三值快照，后续恢复时须按修改的反序先还原 HP，再还原 Speed。该现场验证不代表服务端同步。
+
+## 2026-10-07 模拟器内战斗观察 APK
+
+- 2026-10-08 读取失败定位：当前前台为 `com.gdoo.dhxy`，旧 APK 固定读取后台的 `com.gdoo.xxxy2026`；DHXY 冷扫描还会因无关 LuaJIT 表头超过上限失败。新增保存目标选择及独立缓存，并改为字段/所属节点/关联表头三阶段定位。当前 DHXY 角色身份和 HP/MP 能校验，但没有已确认的 `m_Speed`。新增 EBP2 状态 4 显示已验证 HP/MP、SP 显示“—”；不猜测速度来源。独立 native 只读采样获得 BattleId 1608 的第 5、6 回合有效帧，覆盖空槽及死亡状态；随后位置字典与对象不一致时拒绝样本。后台 XXXY 当前旧对象身份校验失败，不能声称该现场仍可读取。
+- 2026-10-08 继续只读定位 SP：当前 DHXY 进程 PID 26088/startTicks 14984948 的完整 `m_Speed` 关联表扫描得到 0 个候选，扫描未跳过映射且前后布局一致；另发现 1 个同名 Lua 字符串、3 个原始指针引用，但没有表字段引用，也没有通过校验的 Lua 函数原型常量引用。当前 `fastAnalyzeCMD`、`setCurRoundCMD`、`startReadNextCMD`、`setBattleRoundInfo`、`verifyRoundData` 和 `initBattlefieldData` 的函数常量中也没有 `m_Speed`、`spd`、`SP` 或 `speed` 字段。`sp/spd/SP` 扫描找到 227 个关联表候选；对 8 个此前的结构候选做当前实例二次读取时，6 个仍有数值型 `sp/SP`，但扫描器识别的角色 ID/BPID 未映射到 `m_RoleIdPosDict`；其中可比较的 HP/MP 未匹配当前战斗槽位（BattleId 3406、第 3 回合），缺 HP/MP 的候选未验证。因此不能认定这些是战斗实时速度；现阶段没有可接入 APK 的已验证 SP 来源，保持 SP 显示“—”。
+- 最终 APK 构建和覆盖安装成功，已保存 DHXY 选择，Root 仅本次允许；13:04 的设备截图确认本方/对方四列 HP/MP 实际显示，状态条为实时第 1 回合、SP 未提供。Rust Android 全量 10 项测试、Java parser 断言及 Android Java 编译均通过。修复停止服务的无界等待为 500ms，并阻止旧线程发布到替代服务。交付 APK SHA256 为 `30B165C4CA9389CF72DC2D30E3F6E546C614FA00410C80E7F31B8214D93D11BA`；SP 来源和游戏重启后的定位仍未验收。
+- CodeRabbit 已完成七文件审查，提出死亡角色无需解析 SP、主线程停止等待应有界两项意见；均已修复，随后两文件复审 `review_completed`、findings 0。Jev 计划和结果调用因 `NETWORK_ACCESS_DENIED` 返回 `not_run`，未作为验收依据。保留 `.scratch/battle-target-diagnosis-20261008/` 内审查记录与最终截图，其余本次诊断临时文件已清理。
+- 2026-10-08 同一 DHXY 进程重新绑定到 BattleId 3864、第 6 回合；6 个 BattleRole 均通过位置字典、角色 ID/位置、战场引用和本地标记校验。各角色的 `m_Hp` 与 `m_Mp` 位于同一环境表的 LuaJIT hash nodes，节点地址相差 72 字节（3 个 24 字节节点）；`m_Hp` 附近可见 `m_MaxHp`、`m_Name`、外观字段，但未见 `m_Speed`/SP/SPD 或 AP/ActionPoint 字段。角色环境及常见 data/property/info/resource 子表也未发现这些键。采样前后进程身份、战斗、回合和角色/位置表一致；这只否定本样本中“同角色表相邻键”的直接线索，不排除其他对象或不同字段名。
+- 当前 BattleRole 类有 88 个方法，其中 86 个函数原型常量可完整解析；未发现 speed/spd/SP/AP/ActionPoint 字段常量，命中仅涉及 HP/MP 刷新和攻击动作方法名。
+- 随后 DHXY 进程重启为 PID 32304/startTicks 330390，旧 manager 地址作废。新进程冷定位两次均 fail-closed：一次扫描期间匿名映射变化，另一次遇到 ADB 短读并检测到映射变化；当前 Python 与 APK worker 尚未得到新管理器绑定，APK 缓存仍指向 PID 26088。已安装 base.apk 约 3.67 GB、含 1908 个哈希命名 Lua 资源；抽查 Lua 文件头为 `SZFGXT01`，未对整包解密或批量扫描。
+- 2026-10-08 续查本方 SP：emulator-5554 的 DHXY 仍为 PID 32304/startTicks 330390，executable 为 /system/bin/app_process64；APK 设置进程与 root reader 已退出，APK manager 缓存仍绑定旧 PID 26088。对当前 PID 的标准 Python 冷定位及基于两次快照稳定映射的受限冷定位均因匿名映射变化 fail-closed；没有得到 BattleId/回合/本地角色绑定，也没有确认本方 m_Speed。稳定映射搜索覆盖约 2.3 GB，期间未写游戏内存、应用缓存或 APK。
+- 2026-10-08 进入战斗后的 APK 复核：只读启动 APK worker 后，DHXY PID 32304/startTicks 330390 的 manager-cache 于 18:43 更新到当前身份；`main.rs` 仅在 `sample_current` 成功后持久化候选，因此至少完成过一次有效采样路径，但这不保证可选的本方 `m_Speed` 非空。面板随后显示“已找到战斗管理表，但角色队伍数据未通过校验”，槽位清空为横杠；18:46 通知仍为“读取错误”，未捕获可确认的本方 SP 数值。现有读取器仍需先经 `m_RoleIdPosDict` 定位并校验本地 BattleRole；具体 Rust 拒绝条件未从 stderr 取得，未并发运行第二个扫描器，也未写游戏内存。
+- 2026-10-08 旧实时回合误报修复：仅当 manager 同时含 boolean `m_AnalyzeFinish=true`、`m_CanOrder=false` 时才发 `NotInBattle`，跳过角色槽读取并清零 BattleId/round；对已绑定 manager 地址使用生命周期专用读取与前后复核，manager 结束后角色/位置表失效也能清除旧槽。缺少生命周期字段时走旧逻辑，字段类型错误拒绝样本。该生命周期组合尚无活动战斗对照，不能据此声称本方数据恢复验收；本方严格身份验证和对方身份不匹配时的部分采样逻辑保留。
+- 2026-10-08 APK 安装后地图现场复核仍显示旧实时帧。只读探针确认当前绑定管理器的生命周期标志为 false/false，旧角色、回合指令和动作表仍有数据；因此上一条仅处理 true/false 的修复不足以识别当前地图状态。单次冷定位未返回可验证候选，具体失败分支未留存，且严格对方身份校验也可能导致该结果；在取得活动战斗状态对照或找到独立 battle-UI 状态信号前，不增加猜测式过滤，也不宣称已修复实时战斗显示。
+- 2026-10-08 HP/MP 回归定位与修复：当前全队采样因 raw position 10001 的 BattleRole identity mismatch 拒绝；单独绑定本方 raw position 5 的受控样本通过帧保护，HP/MP 字段可解析为整数，`m_Speed` 字段未在本方 BattleRole 及其直接关联属性表中找到。APK 原路径遇任一槽读取错误会发送空错误帧，连带清空其他有效值。正常采样现仅容忍明确的非本方身份不匹配并把该槽编码为 state 1；本方及其它读取错误仍拒绝整帧，冷定位 `read_slots` 仍严格，进程/战斗/回合/映射复核未改。`cargo fmt --check`、Android target `cargo check --tests`、模拟器执行 11 项 Rust 单测和 release worker build 通过；`gradlew assembleDebug` 因未找到 Java/JDK 未完成，修复 APK 未安装，设备界面恢复情况仍未验收。README 与 PROTOCOL 已同步。
+- 新建独立 `mobile-battle-panel/` Android 工程，包名 `com.xnas.wpe.battlepanel`。Java 悬浮界面显示十槽 HP/MP/SP，支持拖动、收起和过期清值；Rust x86_64 worker 实现只读 `/proc` 采样、GC64/战斗绑定、完整帧校验，以及按 package/PID/startTicks/executable 校验的应用私有候选地址缓存。
+- `gradlew.bat assembleDebug` 构建通过；APK 包含 `lib/x86_64/libenemy_reader.so`。最终 CodeRabbit 复审覆盖此目录 28 个文件，`review_completed`、0 issues。
+- APK 已安装到 Android 14 x86_64 `emulator-5554`；冷启动成功，悬浮窗与通知权限已允许。首次启动时悬浮窗遮挡 Root 确认框的问题已修复：读取器先申请 Root，收到首帧或失败后才显示面板；`scripts/verify-root-prompt.ps1` 验证通过。
+- 用户已在 Root 管理器中允许本次 Root；模拟器确认 `libenemy_reader.so` 以 root 身份运行，悬浮窗窗口已创建。扩展/收起均正常，收起后等待扫描更新仍保持悬浮球。Root 拒绝分类已收窄到明确的 su 错误，读取线程退出也会校验当前线程身份。
+- 初次现场只得到“正在定位”且没有完整帧，之后游戏一度显示“连接服务器失败，请重新登录”。10 月 7 日再次进入战斗后，模拟器第 2、3 回合面板已显示实时 HP/MP/SP；此次也验证了安装新 APK 后游戏 PID 保持 `28544`。进程重启后的冷定位、长时间刷新和其他 ABI 仍未验证。
+- 2026-10-08 追加 DHXY SP 只读复查：新鲜 PID 1786/startTicks 1167 绑定下，BattleId 18967 第 1 回合的 19 个映射角色均通过 ID、位置、战场和本地标记校验；逐个检查 userdata 环境及最多 51 张可达 Lua 表，未发现 m_Speed 或速度/SP 命名字段。BattleId 19162 第 2 回合另有 13 个角色通过身份校验，五层元表链中未发现速度命名键或 .get getter 表；6 个身份不匹配槽未计入。BattleId 19039 的 20 个映射 userdata 元表 __index 指向同一 C 型闭包且无 upvalue，函数地址位于 libcocos2dlua.so 的 tolua 符号区附近；具体函数实现未能从已剥离符号中确认。采样后停止了本次诊断服务，游戏进程仍运行，未改源码或 APK。当前只能排除已检查的 BattleRole 表和 getter 路径，SP 数值仍未找到；其它对象及原始战斗消息仍待查。
+- 2026-10-08 DHXY APK 离线静态复查：普通 ADB 只读 base.apk 尾部 8 MiB 的 ZIP 索引，确认 60,088 个条目（1,908 个哈希 .lua、184 个 .json）；抽取并 CRC 校验的 3 个 JSON 样本均以 SZFGXT01 开头。APK 的 classes.dex 未发现该头标记、m_Speed、xxtea 或 decrypt 字符串。AArch64 libcocos2dlua.so 的 tolua_classevents 动态符号为地址 0x1c9562c、长度 604 字节，偏移 0x1c95888 起的匿名函数执行 userdata/environment 与 metatable 通用查找；库含 xxtea_decrypt 导出符号，但未证明用于该资源头，也未发现 SP 定义。未复制整包、未读私有 app data、未抓包。
+- 2026-10-08 对 2026-10-07 本地 live-read 旧样本复核：历史 JSON 含 speed 数字但未记录目标包名。该时期 APK 曾固定读取后台 com.gdoo.xxxy2026，无法绑定到当前 com.gdoo.dhxy，不作为当前 SP 证据。
+- 2026-10-08 SP 运行时对象样本身份补证：`.scratch/sp-probe-1816.json` 记录 PID 1816/startTicks 1329、`/system/bin/app_process64`、BattleId 8332 第 2 回合及 19 个角色，文件时间为 16:07:20；随后 Android `activity exit-info` 以 PID 1816 记录包名 `com.gdoo.dhxy` 并于 16:29:05 强制停止，支持将该样本绑定到当前包。对整份样本递归检查未见 speed/SP/SPD/ActionPoint 名称或字符串；这只排除该样本覆盖的对象路径，不排除战斗消息或未采集对象。只读检查。
+- 2026-10-08 当前 DHXY APK 静态 SP 追踪：从当前已安装 `libcocos2dlua.so` 确认 `SZFGXT01` 资源走 XXTEA；离线解密 1,908/1,908 个 Lua 资源，12 个已知明文 SHA 校验全部通过，LuaJIT 原型解析器可用范围为 1,509 个资源。普通角色 `calculateSP` 通过 `setProperty(PROPERTY_SP, ...)` 写速度；`S2C_StartBattle.selfMember/otherMember` 与 `S2C_GetRolePro` 均含泛型 `pro[{name,val}]`，`fightPetList` 无独立速度字段；selfMember 已追到 `setBattleRole`→`convertRoleData`→`data_proList2Obj` 动态转换。BattleRole 模型中无具名 SP 字段，`m_Speed` 全量搜索只命中飘字 UI 轨道速度；字节码尚不能确认 `pro` 的实际速度键、`S2C_GetRolePro` handler 或写入战斗对象的目标字段。面板所读 `m_Speed` 仍未找到。本轮另查 emulator-5554 当前 PID 1786 最近 3,000 行应用 logcat，未命中速度/战斗属性标识；未读新进程内存、未抓包、未改 APK。
+- 2026-10-08 SP 未解析资源范围核验（2026-10-09 更正格式结论）：1,509 个资源具有 LuaJIT magic 且可由本地 LJD 解析；其余 399 个第 5 字节均为 0x53，按 Lua 5.3 的字符串长度与 closure/root-upvalue 顺序解析后，399/399 均完整消费、无尾随字节或结构错误，确认是有效 Lua 5.3 chunks。此更正仅确认文件格式，不确认资源用途或运行时加载路径。当前 `com.gdoo.dhxy` base.apk 仅列出 `libcocos2dlua.so`；其 `LuaStack::luaLoadBuffer` 进入 LuaJIT `luaL_loadbuffer`，只确认 BOM 预处理，未见 Lua 5.3 runtime 或 LuaS body 转换，仍不能据此断定这些 chunks 会被当前 native loader 加载。对这 399 个 chunk 的静态提取共解析出 442 个 prototype、3,176,594 条指令；常量与调试名未命中 `S2C_GetRolePro`、`S2C_StartBattle`、`data_proList2Obj`、`PROPERTY_SP`、`m_Speed`、`Battle`、`Role`、`SPD` 或独立 `SP`。独立 `Speed` 常量出现于 6 个原型，但均无直接 LOADK/RK 引用；当前未发现可归属于战斗协议的动态数字映射候选。以上不能排除未命名的动态路径。同机 `com.gdoo.xxxy2026` 的 native SO 不同、59,230 个 outres 项均为无扩展名哈希名且约 2.95 GB；未全量解密，无法据此确认与当前包有相同业务模块。
+- 2026-10-09 当前安装包加载路径补查：emulator-5554 上 `com.gdoo.dhxy` 的 base.apk 仍仅列出 arm64-v8a `libcocos2dlua.so`；对 `classes.dex` 的 Lua 5.x/LuaJIT、lua_load/luaU_undump 等 ASCII loader 标识筛查仅命中 `Cocos2dxLuaJavaBridge`，未见第二套 Lua 5.3 loader 标识。当前 PID 1859 仅由 ADB 包名查询确认；本轮未读进程内存，不据此推断战斗绑定。
+- 2026-10-09 SP 映射资源续查：当前安装包 184 个 outres JSON 中，183 个带 `SZFGXT01` 并用当前 XXTEA 密钥离线解密，183/183 通过 JSON 解析；唯一明文 `version.json` 仅含 GameVersion、EngineVersion、packages、asserts。全量 183 个解密 JSON 未命中 `speed`、`spd`、`PROPERTY_SP`、`m_Speed`、RolePro 或独立 `SP`。全部 1,908 个 Lua 资源中 `data_proList2Obj` 仅发现 RoleManager 全局读取，无 Lua 定义/注册；当前精确 native SO 无该字符串，DEX 的设备端 strings 查询也未命中该符号、`PROPERTY_SP` 或 `m_Speed`。`PROPERTY_SP` 的整数枚举值、战斗 pro 的速度名称及其到 BattleRole 字段的映射均未确认；无字符串动态注册仍未排除。
+
+## 2026-10-08 独立坐骑速度保持 APK
+
+- 新建 `mobile-mount-speed-hold/`，包名 `com.xnas.wpe.mounthold`，独立迁移数据库中精确名称“坐骑速度保持”的目标值 5000；仅提供 `com.gdoo.dhxy` 与 `com.gdoo.xxxy2026` 两个精确包名选项，不复用原 GUID 或同步桌面预设。
+- Android Java 代码承载设置页、前台服务、可拖动状态悬浮条和 Rust worker 生命周期；首次启动保持前申请系统“显示在其他应用上层”权限，悬浮条提供“停止并恢复”操作。Rust x86_64 worker 实现进程身份绑定、LuaJIT 坐骑表识别、带恢复 journal 的条件写入和安全恢复。`gradlew.bat assembleDebug` 构建通过，APK 已安装到 `emulator-5554` 并成功打开设置页，界面显示默认包名 `com.gdoo.dhxy`、目标速度 `5000`。
+- 首次交付时助手未启动保持服务；随后用户在模拟器启动并反馈 `worker_stopped_after_recovery`。目标游戏读写与实际速度保持尚未验收。CodeRabbit CLI 仍未认证，自动登录的 localhost callback 超时；需在运行审查的本机交互终端完成 `coderabbit auth login` 后再审查。Jev 计划与结果判断均返回 `not_run`（`INPUT_SCHEMA`、`INPUT_MODE`），未作为验收依据。
+- Root 日志确认 `su` 已允许；worker 已退出，应用私有目录没有恢复 journal，但这无法区分未写入与写入后成功恢复。已有只读 speed-only 探针在同一进程因 `speed_owner_resource_limit`（250001 个 LuaJIT table header）退出，但这不是 Rust worker 的原始错误。更新 Rust 状态输出，现会展示过滤后的具体错误并区分零候选/多候选；首次扫描无候选时按 2、4、8、16、30 秒间隔等待，候选歧义仍停止。新 APK 已重建并覆盖安装，更新后未再次启动 worker。
+- 后续补入 Android 悬浮窗权限申请、可拖动的运行状态条和“停止并恢复”按钮；创建悬浮窗失败时不启动 Rust worker。`assembleDebug` 成功，新 APK 已覆盖安装并打开设置页；模拟器查询显示 `SYSTEM_ALERT_WINDOW` 为默认未授予，且 `MountHoldService` 未运行，因此没有启动速度保持或做真实悬浮显示验收。CodeRabbit 本次审查仍待登录：`coderabbit auth login --agent` 返回 `browser_open_unavailable`，未运行 review。
+- 本次启动后显示 `worker_stopped_after_recovery` 并移除了悬浮条的原因已定位：这是 Rust worker 把游戏恢复到已知原始 TValue 后误当作外部改写而退出，不是 Android 主进程崩溃。修复沿用桌面版规则：读到已知基准值时比较重写目标，写后仍读到基准值最多连续重试 3 轮；字段地址重绑读到基准值时保留计数，重新读到目标值才清零；未知值仍停止并保留安全恢复边界。地址重绑计数经只读审查指出后已修正并复审关闭。Rust 纯逻辑测试在模拟器通过（1 passed），`gradlew lintDebug assembleDebug` 成功；修复版 APK 已覆盖安装到 `emulator-5554`，设置 Activity 冷启动并成为前台 Activity。终止错误会保留悬浮提示和通知。本轮未再次启动游戏写入 worker，实际速度保持效果仍未确认。
+- 2026-10-08 服务自动重试修复：Rust worker 意外退出后按 1、2、4、8、16、30 秒退避无限次重启，收到 `holding_speed` 后重置退避；journal 被阻止或 worker 报错且未确认恢复时暂停重试。Android 前台服务返回 `START_REDELIVER_INTENT`，并让启动、停止和通知栏停止动作都携带游戏包名与目标速度，以便服务进程被回收后按最近动作继续。`lintDebug assembleDebug` 成功，APK SHA256 为 `B1452DD47AE9E8002437F11902DDD8888FF5547AEAD58F7F89EB0882FA3B4A01`，已覆盖安装到 `emulator-5554`；停止旧 worker 后再启动最终版，设备通知恢复为 `坐骑速度保持中：holding_speed`，AndroidRuntime/crash buffer 未见新崩溃。未通过杀进程注入故障测试，以免打断正在运行的游戏保持；通知 `holding_speed` 仅证明 worker 读回目标值，不证明画面中的实际速度。
+- 2026-10-09 增加 APK 私有 JSONL 运行日志：记录服务/worker 生命周期、状态转换、退出码、重试计划和恢复结论；高频写入核验状态按 30 秒汇总。当前文件 1 MiB，保留 3 个轮转文件，错误详情经过白名单过滤，不保存 PID、内存地址、原始 TValue 或 stderr 原文。Java 日志轮转与脱敏自检通过，Android Java 编译和隔离 `assembleDebug` 均成功；打包时复用了未修改的 Rust worker 二进制。候选 APK 为 `mobile-mount-speed-hold/artifacts/mount-hold-runtime-log-2026-10-09.apk`，SHA256 `B42275ED298E2982BEA2E037221BD32DB7BED65736D3960B81E3D51DE0C1F9A0`；未安装或现场验证。CodeRabbit 返回两条现有恢复重试逻辑的 minor 提醒，本次未改变该逻辑；Jev 结果判断因 `INPUT_SCHEMA` 为 `not_run`。
+- 2026-10-09 地图切换期间未找到坐骑候选时，重试间隔调整为 500ms、1000ms、2000ms 后封顶；瞬时内存读取重试保持 100/300/800ms，全局候选唯一性和现有身份校验不变。`cargo fmt --check` 与 Android 目标 Rust 测试编译通过；测试二进制在 emulator-5554 执行 9/9 通过。隔离目录 `assembleDebug` 成功，候选 APK SHA256 为 `9551CC708451F1256DF1CA97E7EB5FD4646F49B8A65B04D9B43520EFD10A55AB`，已替换安装到 emulator-5554，设备端 APK 哈希与候选一致；真实地图切换耗时仍待现场确认。
+
+## 2026-10-09 坐骑字段缓存优化
+
+- Rust worker 运行期间缓存 LuaJIT 表布局与六个目标字段节点；每轮仍按当前哈希链重新解析字段并校验值，表布局、节点或身份不匹配时丢弃缓存并回退完整扫描。缓存不写入恢复 journal，恢复路径仍完整扫描。
+- `cargo fmt --all -- --check` 通过；Android 模拟器 Rust 自检 12/12 通过；隔离 `assembleDebug` 成功；CodeRabbit 两个受影响 Rust 文件复审 `findings: 0`。
+- APK `mobile-mount-speed-hold/artifacts/mount-hold-field-cache-2026-10-09-final.apk`，SHA256 `1F8ECC15E6E3DEAD344B6D3D012009535641999807F5D8BDC0F9A3E3EE004664`，包名 `com.xnas.wpe.mounthold`、版本 `0.1.0`。APK 内 worker SHA256 `D93EFDC8EAC29150F44593368899A573BAD63B82A8F0259D10A1C921E738DBC5`；APK 已覆盖安装到 `emulator-5554`，设备拉取哈希与构建 APK 一致。更新后 `MountHoldService` 当前未运行；真实游戏地图切换延迟尚未验收。
+
+## 2026-10-09 坐骑缓存命中运行日志
+
+- Rust worker 每 30 秒汇总缓存命中、全扫描、缓存回退次数，以及缓存命中和全扫描的平均/最大耗时；缓存回退即时记录本轮耗时，候选重绑完成或 worker 结束时记录总耗时、尝试次数和候选是否找到。Android 将这些低频指标写入 APK 私有 JSONL，不含 PID、地址、原始 TValue 或 stderr。
+- 验证：Rust 格式检查通过；Android x86_64 测试二进制在 emulator-5554 上 12/12 通过；Java 日志自检通过；CodeRabbit 检查 5 个改动文件、0 issues；隔离 assembleDebug 成功。APK SHA256 `2A722DE6E8989D572AF0BB62DC4E50B09A41C4CE24CEF3719952C5B2EB4A0835`，内置 Rust worker SHA256 `85CA41FDBD2828E908ED57C914788055419423A4490B51BA088B1E243CE78D1A`。
+- `mobile-mount-speed-hold/artifacts/mount-hold-cache-telemetry-2026-10-09.apk` 已替换安装到 emulator-5554，设备回读 APK 与交付 APK 哈希相同。安装后坐骑保持服务未运行，因此尚无新版运行期指标；启动服务并有候选刷新后，首个 30 秒窗口会写入汇总日志。
+- 安装前备份保存在 `C:\Users\Administrator\.codex\backups\mount-hold-pre-cache-telemetry-20261009-1507`，包含旧 APK 与本次改动前源码。
+## 2026-10-09 坐骑 LuaJIT 表重排缓存复用
+
+- `FieldCache` 现在只保留 Lua table 对象地址和六个键字符串地址。同一 table 对象的节点数组或 mask 变化时，仍尝试沿当前 hash 链重新验证键名、唯一性、六个字段值、玩家/坐骑身份和速度 TValue；验证失败继续完整扫描/发现。进程身份、CAS 写入和恢复 journal 路径未改。
+- `cargo fmt --all -- --check` 通过；Android x86_64 Rust 测试二进制在模拟器 12/12 通过；隔离目录 `assembleDebug` 成功；CodeRabbit 只审查 `luajit.rs`，0 issues。APK `mobile-mount-speed-hold/artifacts/mount-hold-map-revalidate-2026-10-09.apk` SHA256 为 `8FD2046214910EE125C713015746D5B386C55007A3BF8A1475A6467F952D2CD5`，已安装且设备回读哈希一致。
+- 安装前停止流程日志确认 `RECOVERED/speed_restored`，活动 journal 已清除；安装后原配置 `com.gdoo.xxxy2026` / `10000000` 保留。重启 worker 时 Superuser 拒绝新二进制的 Root 请求，worker 以退出码 1 重试；没有活动 journal。地图切换后的新版本实际耗时尚未取得现场验证。
+## 2026-10-09 坐骑发现缓存种子与分路径耗时
+
+- 成功的全局发现现在可为已验证的坐骑字段表返回精确字段缓存，供后续刷新复用；身份、字段值、写入校验与恢复 journal 边界保持。全局发现自身仍需扫描，地图切换的首次完整发现耗时尚未被本次改动消除。
+- 运行指标区分缓存命中、已知表扫描、完整发现与缓存回退；即时回退日志记录耗时、路径和固定原因码。Android JSONL 仅接受白名单字段和原因码，并保留兼容的全扫描汇总字段。
+- 验证：Rust 格式检查通过，Android x86_64 测试二进制在 emulator-5554 上 14/14 通过；Java 运行日志自检通过；隔离 assembleDebug 成功。CodeRabbit 检查 6 个改动文件，findings: 0。Jev 结果响应为低置信度 fail（confidence 0.24），按项目规则不作为通过判断，记录为 not_run。
+- APK mobile-mount-speed-hold/artifacts/mount-hold-cache-seed-path-metrics-2026-10-09.apk，SHA256 FDECC1631E1365E37F52C1B2F7B4CBAF1D7737B11E912C5762D035AEB0E29CCF，包名 com.xnas.wpe.mounthold、版本 0.1.0。已安全停止旧服务并确认 speed_restored、无活动恢复 journal，再覆盖安装到 emulator-5554；设备回读 APK 哈希与构建产物一致。安装后设置仍为 com.gdoo.xxxy2026 / 1000000000，服务保持停止状态。
+- 安装前源码和旧 APK 备份位于 C:\Users\Administrator\.codex\backups\mount-hold-pre-cache-seed-metrics-20261009-160032。新 APK 的实际地图切换速度和运行期命中指标待用户运行后再从日志核验。
+
+## 2026-10-09 战斗面板 APK 野外复核
+
+- `com.xnas.wpe.battlepanel` 已安装在 `emulator-5554`（`lastUpdateTime=2026-10-09 16:56:02`），悬浮读取进程仍在运行。界面打开后，游戏实屏在宝象国藏宝自动寻路，面板却稳定显示“实时战斗·第 8 回合”和上一场角色资源值。
+- 同一游戏进程 `com.gdoo.xxxy2026` PID 32442/startTicks 4528495 上，旧 Python `battle_reader.sample()` 连续 10 次均返回 `state=ok, BattleId=4589, round=8, localPosition=3`。当前 manager 同时读到 `m_AnalyzeFinish=true`、`m_CanOrder=false`；`m_BattleStatus`、`m_ActionList`、`m_RoundCmdList` 为空，`m_BattleUI` 仍存在且 `m_AutoStatus=true`。这些候选字段在本次野外样本中均未证明能标识当前战斗。
+- 因此旧 Python 的非零 BattleId 路径也会把这份野外残留 manager 数据返回为 `ok`，不能仅靠切回旧读数器解决结束识别。新 APK 目前只以 BattleId 为零发 `NotInBattle`，故本次验证看到的是稳定但错误的旧实时帧；两张相隔约 2 分钟的展开面板截图内容相同。
+- LuaJIT `initBattlefieldData` 字节码会写入 `m_CanOrder=false`、`m_AnalyzeFinish=true` 并重建相关表，但调用时序未确认；不把该组合或空表当作已验证结束信号。本轮没有取得同一进程的活动战斗内存对照，所以安全结束判定仍未完成；未触发游戏战斗、未写进程内存。
+## 2026-10-09 战斗面板 APK 同进程进战对照
+
+- 同一 `com.gdoo.xxxy2026` 进程 PID 32442/startTicks 4528495，从野外快照 `BattleId=4589/round=8` 自然进入战斗后，旧 Python 读取器绑定到 `BattleId=7658`，连续读到第 5 至第 40 回合。活动战斗 manager 仍为 `m_AnalyzeFinish=true`、`m_CanOrder=false`；`m_BattleStatus`、`m_ActionList`、`m_RoundCmdList` 仍为空，`m_BattleUI` 存在、`m_AutoStatus=true`、`m_HideFrontView=false`。这些值与同进程野外快照一致，不能用作结束过滤条件。
+- 活动战斗期间，悬浮面板截图分别显示第 9 和第 13 回合；旧 Python 61 次采样中有 5 次 `ReadFailure`，其余连续读到新回合。该结果确认 Python 采样会因并发状态变化丢弃帧；没有记录到 APK 在每个拒帧瞬间的画面，因此不据此宣称全程无闪。
+- 新 APK 的 BattleId-only 判定避免把活动战斗的 `true/false` 生命周期组合清空；但同一进程回地图后的 `BattleId=4589` 残留也仍会被判为 Live。当前还缺 BattleId=7658 这场战斗结束回地图后的同进程样本，未找到可安全区分的结束信号；本轮未再改代码、未操作游戏战斗。
+
+## 2026-10-09 BattleId=7658 回地图复核与闪屏修正
+
+- 用户确认回到地图后，实屏为龙宫 `(35,15)` 的地图界面；旧 Python 读取器在同一游戏 PID 32442/startTicks 4528495 上两次均返回 `state=ok, BattleId=7658, round=51`，相隔 3 秒及 10 秒，显示内容不变。面板截图也仍显示“实时战斗·第 51 回合”和上一场角色数值。故旧 Python 与新 Rust 读取器在战斗结束识别上有相同限制；非零 BattleId 会让残留 manager 被报告为实时帧。
+- 地图快照中 `m_AnalyzeFinish=false`、`m_CanOrder=false`、`m_BattleUI.__isExist=true`；这些字段没有活动战斗和回地图的成对语义证据，仍不作为结束信号。`m_BattleId`、round、阵位表和角色数据本身仍保留上一场内容，安全的地图结束判定未确认。
+- 新 APK UI 对同进程的 `Locating`、读取错误和 worker `Expired` 短帧保留最近一帧，但不刷新帧时间，原有 5 秒过期规则继续清除；确认的 `NotInBattle`、新进程、Root 拒绝、坏协议流仍清值。Rust worker 对单帧 manager/table 变化不再重置已识别的进程身份，并把诊断分类为 `sample_changed`；只有后续进程身份比较确认变化时才重置绑定。
+- Java 7 项 assert 自检通过，Android x86_64 release worker 与 debug APK 构建成功，CodeRabbit 最终复审 0 issues。Debug APK 已安装到 `emulator-5554`，设备 `base.apk` 与本地构建 SHA-256 均为 `2B3BDE32A5702AB8D3233DA8993F5D0FD8B82E45ECDA61CEDC6E816DF7F5D3EB`；一次性 Root 授权后应用恢复显示，但地图上仍显示第 51 回合，证明终战信号问题尚未解决。Windows 原生 `cargo test --offline` 因 `std::os::unix::fs::FileExt` 不支持 Windows 而未运行通过；Android release 交叉编译已通过。
+
+## 2026-10-09 坐骑缓存玩家编号复核优化
+
+- 已缓存本地角色后，刷新不再用当前 m_PlayerId 是否有效/相同来触发重扫；缓存命中沿用首次发现的编号，仍逐轮确认本地角色标记、进程身份、字段键与哈希链、坐标和速度值。首次发现和全量发现仍要求有效玩家编号；恢复 journal 的玩家、地址和速度基线校验不变。
+- 修复恢复重试把停止通道断开误当作明确停止的问题：只有收到明确停止请求才中断恢复，通道断开时继续原有最多 5 次候选查找。
+- 验证：Android x86_64 Rust 测试 29/29 通过；cargo fmt 检查、lintDebug 和 assembleDebug 通过。CodeRabbit 初审指出恢复重试问题，已修复并加回归用例；复审返回 findings=0，但明确提示没有重新逐文件审查，故不记作完整复审。
+- APK：mobile-mount-speed-hold/artifacts/mount-hold-player-id-cache-bypass-2026-10-09.apk，SHA256 F35DFBA4B599D74BC5A8A35C72E147ABF03598F465680DD3C444470B0CF2AF9D。
+- 安装前从 emulator-5554 备份旧 APK：mobile-mount-speed-hold/artifacts/mount-hold-installed-before-player-id-cache-change-2026-10-09.apk，SHA256 DD420FC36944B39FDADEADAF42BDB8102F31CF663CA869D60F1EB229DD662299。安装前 JSONL 确认 RECOVERED/speed_restored、worker 退出码 0 和 service_stop；新版已用 adb install -r 替换，设备 APK 哈希与构建文件一致。游戏包名 com.gdoo.xxxy2026 和速度 1000000000 设置保留，服务保持停止。
+- 新逻辑在真实切图后的效果尚未复测；worker 未自动启动。
+
+## 2026-10-09 本地角色标记短暂变化重读
+
+- 缓存命中时本地角色标记暂时读到 false，会在 50 ms、100 ms 后各清除本轮页缓存并重读一次，最多额外等待 150 ms；仍未确认时丢弃缓存并走现有已知表刷新与全内存发现，重新验证前不会继续写入。已知表刷新另拒绝未按 8 字节对齐的哈希链节点，同时接受映射内对齐的外链节点。
+- Rust Android x86_64 release 构建与 `gradlew.bat assembleDebug` 成功；APK SHA256 为 `76F1963037555C642D693FFF24FD083EB3DC056D013F80B67EBEA0611DFD54E4`。安装前 APK 备份为 `mobile-mount-speed-hold/artifacts/mount-hold-installed-before-local-flag-recheck-2026-10-09.apk`，SHA256 `F35DFBA4B599D74BC5A8A35C72E147ABF03598F465680DD3C444470B0CF2AF9D`。
+- 旧版经“停止并恢复”完成 speed_restored、退出码 0，恢复 journal 已移除；新版 adb install -r 成功，设备回读 APK 哈希与候选一致，日志和设置仍在，服务保持停止。CodeRabbit 两次均未返回本次改动的详细审查，单元测试未执行；实际切图收益待新版运行日志确认。
+
+## 2026-10-12 金蟾操作台独立 APK
+
+- 新增 mobile-jinchan，包名 com.xnas.wpe.jinchan，版本0.1.0，x86_64、minSdk23。Android原生控件选择部位、服务器基础/炼化候选，提供查询、刷新、生成和归还；生成、归还分别确认。Rust一次性Frida执行层重新绑定进程身份、角色与候选，串行有界执行，写操作超时不重发；未确认恢复阻止后续叠加。没有修改旧助手或游戏文件。
+- assembleDebug成功；APK v1/v2签名检查通过，aapt包名与ABI符合模拟器。独立交付 artifacts/jinchan-control-v0.1.0-x86_64-20261012.apk，51463401 bytes，SHA256 E29FCDCA3262A6A2F2A976D7960FACEAC4C2A079A4673D044035CE89EC5BF3F9。
+- Rust Android --self-test通过；新Lua服务器候选查询ok/restored=true，读取角色与当前金蟾UID且货币未变化；失配token在调用生成前被拒绝并完成恢复。离线合同/包内容自检18/18通过。尚未安装或完成APK界面端到端验收，代码审查状态另补。
+- 最终修正交付包：mobile-jinchan/artifacts/jinchan-control-v0.1.0-x86_64-20261012-r3.apk，102755182 bytes，SHA256 06A6A67EF5D663E32AB4ADB4DED14F1BEB4EFE7198BD3619603C0B9B831EE1EF。前两份包被本包取代，不用于交付。 - CodeRabbit初审4项、一次完整复审3项有效问题已修复；最后异常清理修正未再次远程复审。最终assembleDebug、Android worker --self-test及21项合同/包自检通过。APK尚未安装，界面端到端生成/归还待验收；既有Lua候选查询证据不能替代APK完整验收。
+- 结果判断代理实际调用API返回HTTP 429，status=not_run；未将其计为通过，交付依据为已记录的本地验证。
+- 2026-10-12 按用户要求将桌面中文名称设为“金蟾装备助手”，构建并安装到 emulator-5554；aapt 清单确认标签、adb install 成功，启动 com.xnas.wpe.jinchan/.MainActivity 成功。安装包 artifacts/jinchan-control-v0.1.0-x86_64-20261012-cn-name.apk，SHA256 701B0587EEABE5140D71ADE2DCBE920577D0260BA628EA7702009DD8DA0F3A45。
+- 金蟾操作台新增DHXY/XXXY 2026游戏进程选择，Rust只接受两个白名单包名，按选择查找、复核唯一进程并定位对应游戏缓存。切换游戏/位置或写操作及不确定的刷新会清除旧候选，未运行Lua前的进程查找错误不再标成Lua恢复失败；异步完成等待UI线程确认选择一致。emulator-5554当前只运行com.gdoo.xxxy2026，PID 26084；进程选择版构建安装成功，桌面名仍为金蟾装备助手，UI XML可见游戏进程选择，未触发游戏查询。SHA256 D6D2B8784A2104004037440CBE8103A387D40968D91AF79AB633AC14696AB087。CodeRabbit一次有效复查提出问题并已修正；最后复查因免费额度已用尽返回rate_limit，未完成最终审查。
+
+## 2026-10-12 金蟾助手长驻连接与版本边界
+
+- mobile-jinchan 升为 0.2.0（versionCode 2）：Java 前台服务保持 Rust worker 与单一 Frida session；操作串行复用会话，每次脚本卸载与 Lua 恢复仍单独核验。游戏/助手进程身份变化、明确停止或会话断开后释放连接，未知清理仍阻止叠加。首次连接失败须重连，不承诺所有首次 attach 都成功。
+- 修复 Frida JSON 空格导致完成标记误判、nonce 失配、Lua 初始化异常没有结果文件、候选 JSON 对象字段顺序不稳定导致生成误拒绝，以及缺少 service package extra 的空指针。最后补上连接状态变化与结果落盘之间的小竞态检查。
+- DHXY（com.gdoo.dhxy）实测同一 token/worker 下 query、create、query 均成功并 restored=true，daemon 仅一次 attach；查询/背包结果实际显示服务器候选。XXXY 2026 的当前 Lua 全局 JinChanMgr 为 nil，业务兼容未确认，明确失败但保持 restored=true；不能据连接成功宣称兼容。
+- 按用户要求保持“查询 / 刷新”合并按钮，移除助手 UI 和 Lua create 的单件生成限制。保留已有金蟾时真实再次生成返回“请先归还当前装备”，无新增、无删除、普通仙玉变化为 0；多件生成尚未实现，没有自动归还第一件。归还仍仅允许明确的单一 UID。
+- 最终独立交付 mobile-jinchan/artifacts/jinchan-control-v0.2.0-x86_64-20261012-persistent-r3.apk，SHA256 8BC6C8FF20DAB1C146AA3E0ED74F2F0CF0C84627A8B366C086FD5E10C1BF957B；v1/v2 签名、包名/版本/x86_64 与 worker/JS/Lua 逐字节一致通过。已覆盖安装 emulator-5554，设备 base.apk SHA256 与交付一致，前台服务在线。最终安装后的候选查询 ok/restored=true，货币变化为 0；native --self-test、7 项真实 Java eligibility 断言通过。
+- CodeRabbit 对七个变更文件完成详细审查并修复有效问题；最后一轮无新问题但明确注明未重新详细逐文件审查，不算完整最终复审。计划/结果判断 API 均 HTTP 429，status=not_run，未计通过。验收和包证据分别在根 .scratch/jinchan-persistent-acceptance-20261012 与仓库 .scratch/jinchan-package-verification-20261012-f2c9fe33。
+
+## 飘渺助手统一 APK（2026-10-13）
+
+新增 `mobile-suite/`，应用名“飘渺助手”，包名 `com.xnas.wpe.suite`，versionName `1.0.0`、versionCode `1`，minSdk 23、targetSdk 35，仅 x86_64。整合战斗观察面板（原飘渺助手）、暗雷遇敌、角色速度保持、战斗循环、战斗快进、金蟾装备助手六项，排除肉包。只有一个桌面 launcher，左侧功能导航、右侧完整参数/状态/控制页；浏览金蟾页面不自动连接。旧模块源码保持不变，修改仅在统一工程副本中。
+
+模块私有文件与缓存分区、SharedPreferences 前缀和通知编号各自独立；速度恢复 journal 保留独立路径。循环与快进共享持久化原子启动门禁，两者轮流使用，未确认 Hooks/绑定清理时不释放，循环还要求恢复确认。各模块停止请求不联动其他功能。
+
+最终 `assembleDebug` 成功；302 项独立门禁/路径行为断言及生产 Gate self-test 通过；124 项结构契约检查通过；Rust 状态目录函数 2 正例/5 反例和 JS JSON 部分写入轮询测试通过。完整 Android Rust worker 不能在 Windows host 直接运行，局部函数测试不等同于完整运行。CodeRabbit 完成首轮（11 issues）与一次复审（3 issues），有效集成问题已做针对性修正；保留等待恢复/清理的 fail-closed 策略，没有第三次复审。计划判断实际 API 返回 LOW_CONFIDENCE/not_run，结果判断实际 API 返回 HTTP 429/not_run，主代理依本地验证接手。
+
+最终 APK 已验证：唯一 launcher、六个子界面 DEX 类、10 个脚本 assets、8 个 x86_64 原生组件，Android Debug 签名 v1/v2 通过。另存交付 `artifacts/飘渺助手-整合版-v1.0.0-20261013-r1.apk`，258978247 bytes，SHA-256 `2566F05E3C15E05197FB81D0B9E95B6AD556A717EBB0CF235A5C54B929BA31E7`，与构建原件一致。
+
+没有安装到设备，没有授予 Root、启动游戏功能或发送真实功能请求。设备界面、Android 权限回调、真实恢复/清理、各功能运行及跨功能组合兼容仍未验收；构建和签名检查不能替代这些验收。独立验证脚本和旧源哈希基线位于 `.scratch/suite-20261013/validation/`。
+独立最终复核补充：复审修补结构契约另有 6 项断言通过。旧模块的 3574 个源文件哈希保持一致；旧 `.gradle/build` 生成物没有本次开始前的二进制哈希基线，不把源文件检查当成旧 APK/SO 历史同一性证明。验证报告见 `.scratch/suite-20261013/validation/FINAL-VALIDATION-REPORT.md`。测试代理删除其临时编译目录/可执行文件时被执行策略拒绝，`source-copies/`、`cargo-target-mounthold/`、路径测试 harness `.exe/.pdb` 保留在该验证目录；未尝试绕过拒绝，不影响交付 APK。
+
+### 1.0.1 优化补充（2026-10-13）
+
+宿主右侧新增状态、目标、说明和处理建议卡片；侧栏显示每个模块最近状态，并随可用宽度收窄。状态只取自各模块自己的本地提供器，每秒仅读取当前页；身份、角色或有效帧没有证据时保持“未确认”。六个模块页均接入状态摘要，暗雷、战斗循环和快进页可滚动。保留每个功能原有参数、权限及确认流程。
+
+修复了暗雷 stop 标记启动竞态与身份歧义时过早重新绑定、JS 忙碌期间丢弃停止清理、快进启动失败状态被覆盖、地图号无匹配时错误显示，以及战斗面板 type52 数值和地址分两遍读取的问题。抗性查询仍明确限于 DHXY；面板选择 XXXY 时 Java 会拒绝该查询，Rust 继续校验 DHXY 包名和缓存路径。
+
+构建脚本仅裁剪套件生成的八个 JNI 副本，不改 Cargo 输出和旧独立模块。离线 `assembleDebug` 成功；发布检查确认包名 `com.xnas.wpe.suite`、应用名“飘渺助手”、versionCode 2、versionName 1.0.1、x86_64 唯一 launcher、六个子页、10 个资产、8 个原生库及 v1/v2 单签名。APK 为 `artifacts/PiaomiaoHelper-unified-v1.0.1-20261013.apk`，255002691 bytes，SHA-256 `6C2FA084BB37DD458DF7CA6D4B9CE4DBEDFFF6E776FEC43517C644D432626FD9`。
+
+APK 已安装并打开于 `emulator-5556`。界面首屏显示，但设备上原先运行的 `com.xinroubao2` 悬浮窗遮住侧栏一部分；为遵守排除肉包的范围，没有关闭或操作该窗口，因此导航点击验收未完成。没有授予 Root、启动任何功能 worker 或执行游戏请求。JS 语法与清理排队运行时用例通过，静态契约复核 6/6 通过，APK 元数据、DEX/资产/原生库清单和签名检查通过。Rust 单元测试未运行（`cargo` 不在当前 PATH）；完整 Android Rust 组件由 Gradle x86_64 构建编译通过。
+
+CodeRabbit 完成整合工程复审，提出一项抗性查询包名一致性疑点。调用链核对确认 XXXY 在 Java 层被明确拒绝，UI 说明仅支持 DHXY，Rust 身份与缓存路径也仅允许 DHXY，因此该条件性发现不适用于当前产品契约，没有扩大支持范围。计划判断和结果判断的 Decisions API 调用均因 HTTP 429 返回 `not_run`；交付依据为本地构建、包签名、清单和有限设备启动证据，不将判断调用记作通过。
+
+### 2026.10.13.1 统一目标与简约界面
+
+按版本规则将套件 versionName 改为 `2026.10.13.1`、versionCode 改为 `3`。宿主顶部是唯一游戏目标选择，首次默认 DHXY；六个功能页不再分别选择游戏。暗雷遇敌、战斗循环和快进只支持 DHXY，选择 XXXY 时侧栏标记不支持且启动入口拦截，停止仍可用；角色速度保持、金蟾和战斗面板主读取支持两种目标，抗性查询仍只支持 DHXY。目标切换要求所有已加载功能明确已停止。统一的是游戏包名，各 worker 仍独立查找并校验 PID、启动身份和自己的会话。功能启停互相独立；金蟾仅在用户点连接时连接游戏。战斗循环每个角色行动最多发送 4 次，恢复自动状态最多重试 3 次且仍等待确认；抗性查询完成消息、结果文件均绑定本次随机 nonce。界面移除重复副标题、静态说明和“启动前”提示卡，只保留模块名称、状态、参数、必要权限反馈和高影响操作确认。
+
+离线 `assembleDebug` 成功；APK 检查确认包名 `com.xnas.wpe.suite`、应用名“飘渺助手”、versionCode `3`、versionName `2026.10.13.1`、x86_64 唯一 launcher、六个子页、10 个资产、8 个原生库及 v1/v2 单签名。交付 `mobile-suite/artifacts/PiaomiaoHelper-2026.10.13.1.apk`，255009696 bytes，SHA-256 `B077D166F22D95ACB2B48DA0D18FC6EC85C2E39FF9B74D26CFA2F3B6790C6B1F`。战斗互斥目标切换自检通过；战斗循环有限重试、GL 队列卡住时停止回执失败关闭、抗性查询 nonce 校验、金蟾部位快照校验及快进身份变化清理均已纳入构建。金蟾提示 Hook 保留原函数引用，快照错误仍会写出失败结果；暗雷状态按 worker 原始状态分类，速度保持只在恢复未确认时保持活动锁；快进启动门禁单测 3/3 通过。最新代码还降低了金蟾连接循环中的 `/proc` 全量扫描频率，并在连接变化时保留已完成的生成/归还结果。CodeRabbit 复审发现的两项轻微问题已修正；修正后的复审待完成。
+
+该版本已于 2026-10-13 更新安装到 emulator-5554，保留应用数据；安装返回 Success，启动返回 Status: ok，设备包版本和主界面显示均为 2026.10.13.1。截图留存在 .scratch/suite-20261013/validation/piaomiao-20261013-main.png。已有悬浮窗遮挡侧栏，本轮没有点击功能启停或连接按钮、主动授予 Root 或发送游戏功能请求。安装及界面显示不代表游戏 PID 绑定、真实操作或恢复清理验收。
+
+最后的暗雷临时文件、租约和异常清理修正，以及速度保持浮点玩家 ID 解析和按 ErrorKind 恢复修正已纳入本次重新构建。相关离线针对回归通过；速度保持外部内存读比较写仍非原子，限制保留。最终结果判断实际调用 Decisions API 返回 HTTP 429/not_run，未将其计为通过。
+
+### 2026.10.13.1 后台运行与应用内战斗面板
+
+删除套件 SYSTEM_ALERT_WINDOW 权限，以及暗雷、速度保持、循环、面板的悬浮窗口与启动授权门槛；保留独立worker、foreground通知及停止恢复/互斥保护。战斗面板通过本地Binder让Activity读取服务状态，Service不保存Activity/View；页面退出只解绑。36项生产源码静态契约检查、抗性快照自检、离线assembleDebug及APK签名/权限/模块检查通过。CodeRabbit本次9文件复审完成0 issues（首轮临时审查仓库缺base分支，指定main后成功）。计划与结果判断实际API HTTP429/not_run。
+
+已更新安装emulator-5554，Success，主界面Status ok；versionName仍2026.10.13.1/versionCode3。本阶段包254991395 bytes，SHA256 EED27B7D426A4623FDAE2CA6AD635D9224E4B65E3908C457990C37EDDE5C077B。已有悬浮窗在WindowManager中归属旧独立包com.xnas.wpe.anlei和com.xnas.wpe.battleloop，不是suite。本轮只查看界面，没有点击功能启停/连接或Root操作。用户随后要求战斗面板恢复原卡片UI，布局调整进行中，以上记录为本阶段已安装包。
+
+### 2026.10.13.1 当前安装包与追加界面调整
+
+当前侧栏顺序：角色速度、战斗快进、战投跳过（内部battleloop）、战斗面板、金蝉装备（内部jinchan）、暗雷遇敌。前三到第五显示名按用户输入更新，module id、目录及协议标识不变；未要求删除的暗雷暂留第六，后续模块追加。面板恢复原双方分栏、人物/宠物阵型卡及5到1槽位；状态可换行、窄屏阵型上下排。抗性下拉替换为全部13项按钮，选中高亮并更新下方表头和值。金蝉三下拉及统一目标显示浅色文字、边框和箭头；空候选adapter仍零项，单独空态不参与索引。
+
+最终离线assembleDebug、36项后台源码契约、互斥门生产self-test及APK清单/签名检查通过。APK254996553 bytes，SHA256 98AE74F7A1554EA3F76AD91B952EADF31E5EB4C24AC4B782E3C7F6992F1F75A8，版本2026.10.13.1/code3，x86_64。已更新安装emulator-5554，安装Success、启动Status ok；屏幕确认侧栏顺序、原阵型、13按钮和抗风选中与表头对应，金蝉三个控件文字/空态清晰。截图在 .scratch/suite-background-validation/piaomiao-final-panel.png、piaomiao-final-resistance.png、piaomiao-jinchan-controls.png。本轮未点击功能启动/停止/连接、未执行游戏或装备操作；实际后台存活和游戏读取未实测。
+
+CodeRabbit：后台转换9文件0 issues；原布局复审2issues（状态固定高度、窄屏挤压）已修正；后续7文件1条Minor措辞建议核对后不采用，guidance接收保护位owner/candidate而非请求者，交换名称会误指需要停止的功能。最后抗性按钮首次隐藏页高度修补的复审返回 rate_limit，提示33minutes，无on-demand可用，该修补复审尚未完成，没有替代手工审查。实际截图曾暴露按钮区域高度为0，修补后确认13按钮出现，不能用早期静态PASS代替屏幕验收。循环cleanup_unconfirmed与快进互斥仍保留，未删保护位。
+
+追加UI的最终结果修订判断实际调用Decisions API仍返回HTTP429/not_run，未计为通过。本次gate-classes清理被执行策略拒绝，目录仍保留；隔离review快照保留供额度恢复后的复审，旧任务被执行策略拒绝清理的临时验证目录也未删除。
+
+### 2026.10.13.1 服务重建后的旧战斗任务恢复
+
+根因：battleloop历史status保留stopping/cleanup_unconfirmed，服务重建worker句柄为空，原STOP不发起核查且START先被gate拦截。旧native只在内存保存原进程身份，无法在重新打开/覆盖安装后证明旧任务已消亡。新增strict只读 --reconcile 模式及显式CHECK action，p为空STOP走核查；开启页面不自动请求Root或启动脚本。模式先独占本模块worker.lock，严格读取/proc，读失败不视为空进程。新run attach前原子持久recovery-identity，禁止覆盖损坏或仍存活未确认身份。legacy无记录完整扫描唯一target仅观察，0 target才可确认不存在。原boot变化、PID目录消失或startTicks变化才确认原进程结束；exe/cmdline变化或权限失败不清保护。
+
+Java gate识别state=stopped/processEnded/recoveryVerified/package/proof，缺证明、错误包、无效身份保持拒绝；release后只移除已经失效的gate-status提示，不改其他模块worker状态。快进页conflict_wait改为等待旧任务检查，循环页增加清理待确认、检查中、等待重启游戏状态及明亮文字，不再误报等待绑定。服务CHECK对活worker只提示，保留原监控与通知。CodeRabbit两轮分别指出扫描错误被当消亡、扫描失败仍可独立证实原PID结束，均已修正；最后单文件复审完成0 issues。没有替代手工审查。
+
+14项恢复生产纯模型、扩展gate selftest、36项后台契约、Android cargo check、最终assembleDebug与包清单/签名通过。用户在本聊天明确授权只读Root检查，并在观察基准建立后授权重启DHXY。实际初检state=waiting_restart/legacy_baseline_saved，旧status不曾被删；重启目标游戏后应用CHECK返回verified/original_process_ended，写独立process-ended终态，保护marker和两gate-status由正常release移除。重新打开APK屏幕确认战投跳过已停止，战斗快进未启动，无阻塞提示。未启动业务辅助、未执行装备操作；仅重启游戏、核查身份和打开页面。截图 .scratch/suite-background-validation/piaomiao-recovery-stopped.png 与piaomiao-skip-unblocked.png。
+
+当前交付 mobile-suite/artifacts/PiaomiaoHelper-2026.10.13.1.apk，255019532 bytes，SHA256 AB184141C584C9140EE2E1815C3A22D6AA4FBDCADE28FE5613E19B7A3E79C6DD。版本仍2026.10.13.1/code3，x86_64。
+本次计划与最终结果判断均实际调用Decisions API并返回HTTP429/not_run，未作为通过证据。最终交付依据为代码构建、14项模型测试、生产gate及后台契约、CodeRabbit修正后的0 issues，以及经用户明确授权后的设备核验与界面。
+### 2026.10.13.1 前台服务崩溃修复与独立悬浮面板
+
+当前包固定横屏，仅本应用资源比例调整为 density 0.8、fontScale 0.9；模块名、状态、全局目标小按钮及版本共用顶部一行，系统仍720×1280/density320。战斗面板子页改为两个启停按钮及动态短状态；启动需悬浮权限，Service拥有独立renderer和可拖悬浮球，收起不停止读取，停止清理窗口/handler。双方人物在上、宠物在下；抗性只保留八项单排小按钮，真实字段码200、201、204、205、206、207、212、211，删除静态说明。其它功能仍无悬浮窗。
+
+设备 crash buffer 确认21:36与21:37两次助手ForegroundServiceDidNotStartInTimeException，21:37启动请求因gate拒绝而在前台登记前stopSelf。循环、暗雷、速度、金蝉及面板入口现在先前台登记再判定；拒绝/幂等路径保持业务隔离。旧检查按钮已移除，仅用户点击启动且有未确认记录时调用只读内部核验，核验后不会自动启动。快进新增attach前身份持久化与--reconcile，独立recovery.lock/worker.lock，完整proc扫描和严格进程身份核验；新reservation starting阻止沿用旧证明。skip证明须recoveryModule=battleskip，不可清loop，仍不伪造Hooks/恢复字段。
+
+前台服务真实生产源码stub harness：旧版unsupported START、gate-denied START及CHECK已有worker场景均得到红；新代码三项均PASS。扩展GateSelfTest、BattleFrameProtocol、ResistanceSnapshot自检PASS；快进恢复模型7/7、Android cargo check/fmt通过；37项后台/独立面板源码契约通过。CodeRabbit覆盖18文件：首轮1 Major（proc读错时已退出PID被误认不可读）已修正；一次复审1 Minor（错误启动请求可能中断已有面板）已修正。最后active分支保护与清洁状态短文本未再次复审，已重新完整构建验证，不声明0 issues。计划判断实际API返回HTTP429/not_run。
+
+最终交付mobile-suite/artifacts/PiaomiaoHelper-2026.10.13.1.apk，255053220 bytes，SHA256 294988FF944409E09AC53CEF9CB4C3740B29AE27E9045DC6A3C6CF0478FA43D2，code3/x86_64/唯一launcher/六页/8原生库/10资产/Debug v1v2。安装emulator-5554 Success，六页逐一启动Status ok；截图.scratch/suite-background-validation/piaomiao-final-two-buttons.png与piaomiao-final-loop.png。UI启动期间DHXY同一PID持续存在，没有新增助手崩溃。不启动读取、速度、快进、跳过、连接或装备操作，不重新运行Root核查或重启游戏。当前快进旧记录仍缺完整身份，保护保留，核验与重启、悬浮读取实测分别等待用户授权。游戏PID2932的SIGSEGV与快进attach超时有进程关联，但dropbox仅unknown两帧，因果未确认。
+随后用户明确授权本次快进旧记录核查及一次DHXY重启。设备首次运行BattleSkipRecoveryService返回waiting_restart/legacy_baseline_saved，保存当前进程身份；执行一次force-stop并重新打开DHXY后，再核查返回verified/original_process_ended。skip/status写state=stopped/processEnded=true/recoveryVerified=true/recoveryModule=battleskip等完整proof，正常release移除.battle-conflict.guard、loop/gate-status与skip/gate-status。页面截图piaomiao-skip-recovered.png显示已停止且无旧阻塞；当前游戏进程仍存在，crash buffer没有新增助手FATAL。该阶段只做已授权的proc身份检查及游戏重启，没有启动业务辅助或抗性查询；悬浮读取实测仍未运行。结果判断实际API亦HTTP429/not_run，主代理依实际构建/测试/审查及设备证据接手。交付APK及hash不变。
+### 2026-10-14 悬浮球放大与拖动修复候选（未安装）
+
+修改范围为battlepanel/BattleOverlayService.java、新增FloatingBallGesture.java及tests/FloatingBallGestureSelfTest.java。球从56dp改为76dp，当前模拟器资源比例下预期直径约122px（旧90px）；青绿渐变双圆环、战/面板标识、按压反馈。记录上次球心，展开收起复用原位置。手势以DOWN始点计算总位移，固定主指针，UP补算最后坐标，CANCEL不点击，拖动结束不展开；请求低延迟事件派发。读取、抗性和其它模块业务路径未修改。
+
+旧设备长拖(260,120)仅移(68,32)，证据为WindowManager的球frame变化。旧生产listener原方法抽取harness在DOWN后UP但没有尾MOVE时得到预期红（位置未更新且click）；新纯Javahelper18断言PASS，当前生产adapter原样抽取harness对漏尾MOVE、MOVE后UP尾差、tap、CANCEL和unbuffered请求均PASS。harness不模拟完整Android系统，因此实际新球跟手效果尚未确认。
+
+CodeRabbit三文件1条Major兼容性提示不采用：提示要求requestUnbufferedDispatch仅API30可用；当前调用MotionEvent重载，官方SDK35 data/api-versions.xml第68974行标明since21，API30属于int重载（第68973行），支持本项目minSdk23。完整离线assembleDebug、37窗口契约、包/签名清单通过。计划与结果判断实际API HTTP429/not_run，未计作通过。
+
+独立候选mobile-suite/artifacts/PiaomiaoHelper-2026.10.13.1-floating-ball-20261014.apk，255055771 bytes，SHA256 F1AB50F0C46ED6DDBF3CA12D47CF7D2CA4D666C632F78E48E1793E43851A193B。版本仍2026.10.13.1/code3，仅x86_64、唯一launcher、六页、8原生库、10资产、Debugv1/v2。原交付PiaomiaoHelper-2026.10.13.1.apk未覆盖；设备仍运行旧包。发现角色速度/暗雷/战斗面板正在运行，已询问安装时间，尚未答复；没有更新安装或启停功能，避免中断运行中的业务。
+### 2026-10-14 悬浮球修正版已更新安装
+
+用户明确要求更新安装。第一份放大候选实机长拖仍出现 ACTION_CANCEL；暂停 MOVE 的 WindowManager 更新也复现。当前修正版使用同一 FrameLayout/window token：平时仅76dp小窗，DOWN临时扩为显示尺寸，MOVE只移动固定大小球子视图，UP/CANCEL恢复小窗；额外球外DOWN不会开启手势。保留球心，展开收起位置不变。全部 BallDragProbe 和 __ball_probe_defer 调试代码已移除。
+
+真实设备 emulator-5554：完整30ms拖动从(579,299)到(839,419)，位移(260,120)；反向短拖亦完整，点击展开、收起回原位置已确认。600ms长拖仍被 InputDispatcher 以 conflicting pointer actions 取消，并接收到另一组固定位置DOWN/UP；来源未确认，不能宣称长拖问题完全解决。未关闭或操作其它应用，未启动速度、快进、跳过、暗雷或装备；只恢复原先的panel reader。读取数据目前角色队伍校验未通过，与本次球UI验收分开。
+
+完整离线assembleDebug、八个native链接、37项源码窗口契约、纯Java18断言及生产host adapter检查通过。CodeRabbit复审三文件提出1条Major：误认为MotionEvent版requestUnbufferedDispatch仅API30可用；SDK35元数据标明该重载since21，API30是int重载，未采用，不声明0issues。计划修正判断HTTP429/not_run；结果修正判断INPUT_SCHEMA/not_run，未计作通过。
+
+交付 mobile-suite/artifacts/PiaomiaoHelper-2026.10.13.1-floating-ball-20261014-r2.apk，255056632 bytes，SHA256 CAD903E457A0514A338BDA72901FC53DB05C8AADD25764C3009AF433356D852F。版本2026.10.13.1/code3、x86_64、唯一launcher/六页/8native/10资产、Debug v1/v2通过；adb install -r返回Success，打开Status ok，仅panel前台服务运行，crash buffer无本次新增记录。原稳定交付及首份球候选没有覆盖。最终球截图 .scratch/suite-background-validation/piaomiao-ball-r2.png。
+补充验证：清除调试代码后的生产adapter新增球外DOWN/无活动MOVE/UP用例PASS，确认位置与translation不变、pressed清除且host保持小窗；helper18断言PASS。本次生成class已清理，保留测试源码、脚本与stubs。
+
+## 2026-10-16 飘渺助手激活授权候选（未部署、未安装）
+
+- 整合版接入激活码/首次激活计时/安装绑定、管理页批量发码/续期/停用/解绑，未添加游戏角色绑定；旧独立 APK 不变。默认授权服务地址为空并fail-closed，不能直接对外发放。
+- 服务端13项测试通过；独立实际回环验收同安装并发两会话均有效、跨安装409、解绑/停用后全部会话401、Java与管理页安装摘要一致。
+- Java租约7断言、安装摘要3断言、服务门禁与STOP放行脚本通过；可复现JVM stub证明首次无授权冷启动0个功能服务、500/连接失败保留session、401/403清session。Rust共享租约3单元+2集成通过，快进Lua沙箱6场景通过。
+- `gradlew.bat --offline assembleDebug`完整构建通过（含8个原生库），code6 / 2026.10.16.0-activation、min23/target35；Debug v1/v2签名验证通过。APK为候选，尚未安装和启动游戏。
+- 未验证实际HTTPS服务器、设备/proc读取权限、Root与后台进程调度、真实游戏到期后的停止恢复。CodeRabbit审查结果与最终产物记录另附；不将本地通过视作对外可用验收。
+
+### 激活候选最终产物与瘦身验证
+
+最终`clean assembleDebug`通过；候选`mobile-suite/artifacts/PiaomiaoHelper-2026.10.16.0-activation-candidate.apk`，255294291 bytes，SHA256 7F6F89775A159ADFD862DD8CB56C9F094C02D71AA47B2E680A17E12E217DE693，Debug v1/v2通过，6功能8native。未安装、服务URL仍空。最终服务端18/18、HTTP续期、Java错误矩阵、native3+5与Lua6场景通过。CodeRabbit一次复审提出4项，后续针对性修复测试但未第三审；详见mobile-suite/ACTIVATION_VALIDATION.md。
+
+增量候选306.1MB经clean重打包为255.3MB，主要去除约50MB打包空洞。5份重复FridaCore的共享库隔离实验构建成功，但仅一个anlei动态worker；约61至67MB仅五模块原生压缩区间推算，不是已产出的完整APK。PSS/Root加载/功能等价未测，未进入正式构建。详见mobile-suite/SIZE_OPTIMIZATION.md。结果判断初次schema错误，修正后实际API HTTP429，状态not_run，不计通过。
+
+## 2026-10-16 飘渺助手共享库瘦身测试版
+
+用户批准共享底层库方案后，五个真实Frida worker改为共用libfrida-core.so，六功能入口、授权与安全停止恢复保留，未更改独立APK。code7 / 2026.10.16.1-slim，x86_64，min23/target35。完整静态对照255308189 bytes、共享候选66149040 bytes（减少74.1%）；native文件8对9，Debug v1/v2通过。交付mobile-suite/artifacts/PiaomiaoHelper-2026.10.16.1-slim-candidate.apk，SHA256 A1FB13A08EDC8F504F1586A32DF9B229359280CF1BE9FC118B7E6910050096D6。旧交付未覆盖。
+
+emulator-5554/API34/shell UID2000，仅显式无游戏init/version/deinit诊断，两组各5个进程同时驻留30000ms；全部Frida17.17.0 ready/finished和exit0，PID+startTicks+cmdline绑定通过。PSS两帧合计静态43069KiB、共享28404KiB，低34.05%；RSS 56152对70984KiB、PrivateDirty第二帧13360对15304KiB均上升，不能称全部内存指标下降或游戏收益已验收。设备临时进程/目录已清理，未Root/安装/替换/操作游戏。
+
+诊断7stub、Android C兼容测试exit0、Android launcher7单测、Java命令转义、ELF全5对、SDK/smaps解析fixtures、原授权native3+5及STOP门禁通过。静态回退在shared之后实际构建8native无core残留，最终shared clean构建通过。CodeRabbit首轮1minor SDK精确判断已修；一次复审仅临时审查说明1minor已更正，无运行代码问题；判断API计划和结果均HTTP429/not_run。完整证据mobile-suite/SHARED_FRIDA_VALIDATION.md，原始数值mobile-suite/tests/shared-frida-validation/device-results.json。
+
+当前授权服务URL仍空，正常功能failclosed，未部署。真实游戏六功能与停止恢复、实际工作负载PSS/CPU以及API23设备仍未验收；完整Root/游戏验收范围等待用户明确，不能从非游戏自检推断效果。
+
+## 2026-10-16 飘渺助手网站授权接入（待所有者登录完成验收）
+
+现有“我的项目库”Sites源码取回独立目录 F:/项目目录/封包监听工具/sites-piaomiao-library，新增D1授权表、中文所有者管理页、公开激活/验证及R2 APK发布下载。保留public策略及projects表。已推送c01897434c55415e0e4b796e7ade3dddac2d7618，版本4部署appgdep_6ad111bdcf14819187c1766962231d92返回succeeded，站点 https://my-project-library.yinzhiping.chatgpt.site/piaomiao 。20项SQLite/R2合同回归与类型构建通过；本地Workerd D1发码/并发激活/验证/停用通过，真实66.1MB本地R2上传下载hash一致。CodeRabbit首审2issues修复，一次复审0issues；计划判断HTTP429/not_run。
+
+联网候选code8/2026.10.16.2-online，66,149,067bytes，SHA256 F4A3C6A869788ABB0CFE7311FE865B7CFBE4F39F8D3B402FE8D2D3DA24AD9018；Debug签名匹配原安装，9native/x86_64/min23/target35，构建配置及classes5.dex确认真实站点URL。emulator-5554原code5 APK已备份后install-r更新code8，冷启动与授权页截图通过；未激活0服务/0功能worker，实际APK无效码收到线上401。线上匿名/伪造身份管理及匿名上传403，原项目清单保持0条。
+
+尚未全部交付：所有者ChatGPT会话要求密码，Chrome页面已保留等待用户登录；线上有效发码、R2上传公网下载、有效码APK激活/重启/断网/停用仍待验收。Root/游戏六功能测试范围另待用户选择，未执行。权威进度和继续入口见 mobile-suite/ONLINE_ACTIVATION_VALIDATION.md；不得将已发布网站或本地测试说成全部验收完成。
+
+## 2026-10-16 网站授权实测与code9修复（仍有交付阻塞）
+
+所有者已登录并通过正式UI发码；正式激活200、重复激活期限不变、跨安装409、续期精确增加一天、解绑旧会话401/新安装重绑200、停用后401均实测。code8设备有效激活、冷启动自动验证及六页实屏已确认。三枚专用测试码现均已停用，页面刷新后不保留明文。
+
+停用实测发现空闲MountHold/Connection服务残留。code9修复锁内租约判断及重复STOP、无worker无journal时结束空服务、按startId和连接身份结束已确认清理的service，保留未知journal/活动worker安全恢复。两个真实源码JVM harness与门禁检查通过；CodeRabbit正确快照复审8文件0issues。计划判断HTTP200/LOW_CONFIDENCE/not_run；结果判断实际HTTP429/not_run，不计通过。
+
+当前拟发布APK mobile-suite/artifacts/PiaomiaoHelper-2026.10.16.3.apk，66,149,289bytes，SHA256 1A081015A590E34162968FCB0FAB8CA779919ED7DA483AE641C92CC62A4F4583；code9/2026.10.16.3-online，签名构建安装冷启动及有效激活通过，9native内容与code8一致。尚未上传生产R2，公网下载未验收。Chrome扩展不允许读取本机文件，平台又明确阻止代理打开chrome://extensions，不绕过；表单版本已准备，待用户手动选择文件。
+
+用户明确批准短暂断网后，测试卡在首张screencap；此后Android shell及恢复网络命令没有成功返回。仅重连ADB及重启主机ADB服务后设备仍offline，没有重启模拟器或操作游戏。网络恢复未确认，断网到期及code9空闲STOP设备验收不算通过。已请求用户手动恢复Wi-Fi/移动数据，或授权必要的模拟器重启。详见mobile-suite/ONLINE_ACTIVATION_VALIDATION.md，不能宣称全部完成。
+
+### 09:07起模拟器恢复进展
+
+用户明确允许必要时重启后，官方ldconsole reboot --index 0已执行，list2确认第0台进程由10472/16500变为76316/2228，第1台未动。重启后ADB仍offline，Android boot_completed未能读回；官方call.network connect也未取得恢复证据。已请求用户手动开启模拟器内Wi-Fi，网络与APK复验仍待确认。没有重建/清空实例或操作游戏，不能把进程启动说成网络恢复。
+
+### 09:20—09:25 网络已恢复与code9空闲停用通过
+
+用户手动打开Wi-Fi后，ADB仍offline；已使用雷电官方ld.exe独立通道确认Android boot_completed=1、wifi_on=1，恢复mobile_data=1，默认WIFI网络INTERNET/VALIDATED。code9真实HTTPS再激活成功、次日到期；后台停用第四枚专用码后应用自动尚未激活，lease消失、service列表nothing、无功能worker，空闲停止修复设备复验通过。没有再关闭网络，活动游戏worker停止恢复与断网120秒仍未验收。所有四枚专用码均停用；APK发布表单仍未选择文件，生产R2未上传。ld.exe默认uid0，仅执行系统及本应用操作，未调用su或附加游戏。证据见mobile-suite/ONLINE_ACTIVATION_VALIDATION.md文末及device-v3-revoked.png。
+
+### code9 APK正式上传完成
+
+用户开启Chrome扩展文件URL权限后，经已登录管理UI上传PiaomiaoHelper-2026.10.16.3.apk，版本2026.10.16.3-online。后台明确显示已发布，公开页/piaomiao显示63.1 MB与下载入口。匿名curl实际从https://my-project-library.yinzhiping.chatgpt.site/piaomiao/download下载66,149,289字节，SHA256 1A081015A590E34162968FCB0FAB8CA779919ED7DA483AE641C92CC62A4F4583，与本机一致。证据mobile-suite/build/online-acceptance/production-release-results.json。临时下载副本核对后删除；原交付APK保留。断网120秒及真实游戏worker安全恢复边界仍按验收报告保留，不从发布成功推断全场景通过。

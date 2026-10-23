@@ -1,0 +1,21 @@
+APK F:\项目目录\封包监听工具\WinsockPacketEditor\mobile-jinchan\app\build\outputs\apk\debug\app-debug.apk SHA256=8BC6C8FF20DAB1C146AA3E0ED74F2F0CF0C84627A8B366C086FD5E10C1BF957B
+PASS package/version/ABI: app-debug.apk
+PASS signature: app-debug.apk
+app-debug.apk Verified using v1 scheme (JAR signing): true
+app-debug.apk Verified using v2 scheme (APK Signature Scheme v2): true
+app-debug.apk Number of signers: 1
+HASH app-debug.apk lib/x86_64/libjinchan_worker.so APK=D3926724F45DE06D99CF10BE3C769B9D574D4EEFD8BA1CAD9872B48422CFA77C SOURCE=D3926724F45DE06D99CF10BE3C769B9D574D4EEFD8BA1CAD9872B48422CFA77C
+HASH app-debug.apk assets/jinchan_agent.js APK=2C5DA82D8E041830AA370939FC4680B96F929423D4D26D8C3D94FE9969DE4657 SOURCE=2C5DA82D8E041830AA370939FC4680B96F929423D4D26D8C3D94FE9969DE4657
+HASH app-debug.apk assets/jinchan.lua.in APK=B14D3E46C97D0DB983852C58641CDB47ED7A31C96F2786F4CFE1FE301CD86D67 SOURCE=B14D3E46C97D0DB983852C58641CDB47ED7A31C96F2786F4CFE1FE301CD86D67
+PASS embedded worker/JS/Lua exact hashes: app-debug.apk
+APK F:\项目目录\封包监听工具\WinsockPacketEditor\mobile-jinchan\artifacts\jinchan-control-v0.2.0-x86_64-20261012-persistent-r3.apk SHA256=8BC6C8FF20DAB1C146AA3E0ED74F2F0CF0C84627A8B366C086FD5E10C1BF957B
+PASS package/version/ABI: jinchan-control-v0.2.0-x86_64-20261012-persistent-r3.apk
+PASS signature: jinchan-control-v0.2.0-x86_64-20261012-persistent-r3.apk
+jinchan-control-v0.2.0-x86_64-20261012-persistent-r3.apk Verified using v1 scheme (JAR signing): true
+jinchan-control-v0.2.0-x86_64-20261012-persistent-r3.apk Verified using v2 scheme (APK Signature Scheme v2): true
+jinchan-control-v0.2.0-x86_64-20261012-persistent-r3.apk Number of signers: 1
+HASH jinchan-control-v0.2.0-x86_64-20261012-persistent-r3.apk lib/x86_64/libjinchan_worker.so APK=D3926724F45DE06D99CF10BE3C769B9D574D4EEFD8BA1CAD9872B48422CFA77C SOURCE=D3926724F45DE06D99CF10BE3C769B9D574D4EEFD8BA1CAD9872B48422CFA77C
+HASH jinchan-control-v0.2.0-x86_64-20261012-persistent-r3.apk assets/jinchan_agent.js APK=2C5DA82D8E041830AA370939FC4680B96F929423D4D26D8C3D94FE9969DE4657 SOURCE=2C5DA82D8E041830AA370939FC4680B96F929423D4D26D8C3D94FE9969DE4657
+HASH jinchan-control-v0.2.0-x86_64-20261012-persistent-r3.apk assets/jinchan.lua.in APK=B14D3E46C97D0DB983852C58641CDB47ED7A31C96F2786F4CFE1FE301CD86D67 SOURCE=B14D3E46C97D0DB983852C58641CDB47ED7A31C96F2786F4CFE1FE301CD86D67
+PASS embedded worker/JS/Lua exact hashes: jinchan-control-v0.2.0-x86_64-20261012-persistent-r3.apk
+RESULT PASS both APKs

@@ -144,6 +144,14 @@ namespace WPELibrary.Lib.MountSpeed
         public string RefinePacketHex { get; set; } = string.Empty;
 
         /// <summary>
+        /// 可选的目标坐骑形态 ID（rideShapeId）。
+        /// 有值时，启动预检会按该形态解析服务端当前下发的坐骑实例 ID，
+        /// 并在发送前重写 A050 帧尾部 19 字节为该当前实例 ID。
+        /// 保持可空以兼容未配置形态的旧预设：旧预设仍完全沿用包内实例 ID。
+        /// </summary>
+        public int? TargetRideShapeId { get; set; }
+
+        /// <summary>
         /// 创建一坐骑炼化的默认目标。
         /// 只由新建/未配置目标的编辑入口调用，不改变已有保存预设。
         /// </summary>

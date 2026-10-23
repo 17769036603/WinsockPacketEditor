@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_SUPERUSER" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <queries>
+        <package android:name="com.gdoo.dhxy" />
+        <package android:name="com.gdoo.xxxy2026" />
+    </queries>
+
+    <application
+        android:name="com.xnas.wpe.suite.SuiteApplication"
+        android:allowBackup="false"
+        android:extractNativeLibs="true"
+        android:icon="@drawable/ic_suite"
+        android:label="飘渺助手"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <activity
+            android:name="com.xnas.wpe.suite.MainActivity"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboardHidden|orientation|screenSize"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name="com.xnas.wpe.suite.ActivationActivity" android:screenOrientation="landscape" android:exported="false" />
+
+        <activity android:name="com.xnas.wpe.anlei.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.mounthold.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.battleloop.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.battleskip.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.jinchan.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.battlepanel.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.starhunt.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+        <activity android:name="com.xnas.wpe.bosshunt.MainActivity" android:screenOrientation="landscape" android:exported="false" />
+
+        <activity android:name="android.app.NativeActivity" android:screenOrientation="landscape" android:exported="false">
+            <meta-data android:name="android.app.lib_name" android:value="battle_skip_launcher" />
+        </activity>
+        <activity-alias
+            android:name="com.xnas.wpe.suite.BattleSkipStart"
+            android:targetActivity="android.app.NativeActivity"
+            android:exported="false"
+            android:label="战斗快进启动">
+            <meta-data android:name="android.app.lib_name" android:value="battle_skip_launcher" />
+        </activity-alias>
+        <activity-alias
+            android:name="com.xnas.wpe.suite.BattleSkipStop"
+            android:targetActivity="android.app.NativeActivity"
+            android:exported="false"
+            android:label="战斗快进停止">
+            <meta-data android:name="android.app.lib_name" android:value="battle_skip_launcher" />
+        </activity-alias>
+
+        <service
+            android:name="com.xnas.wpe.anlei.AnleiService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User initiated game assistance with persistent process monitoring" />
+        </service>
+        <service
+            android:name="com.xnas.wpe.mounthold.MountHoldService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Runs a user-started Rust worker that maintains and safely restores the local role movement speed in one exact game process in the emulator." />
+        </service>
+        <service
+            android:name="com.xnas.wpe.battleloop.BattleLoopService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User initiated battle-loop assistance with persistent process monitoring" />
+        </service>
+        <service
+            android:name="com.xnas.wpe.battleskip.BattleSkipRecoveryService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User initiated read-only verification of the previous battle worker process identity." />
+        </service>
+        <service
+            android:name="com.xnas.wpe.jinchan.ConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintain a foreground game worker for user-initiated Jinchan operations" />
+        </service>
+        <service
+            android:name="com.xnas.wpe.battlepanel.BattleOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Samples user-requested battle snapshots for a collapsible floating battle panel." />
+        </service>
+        <service
+            android:name="com.xnas.wpe.starhunt.StarHuntService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User initiated read-only star scanning and separately authorized star-hunt actions for the selected DHXY game." />
+        </service>
+        <service
+            android:name="com.xnas.wpe.bosshunt.BossHuntService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User initiated BOSS scanning and patrol actions across explicitly selected DHXY maps." />
+        </service>
+        <service
+            android:name="com.xnas.wpe.suite.ScheduleService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Runs user-defined daily start/stop timers that dispatch the same requests as the module buttons." />
+        </service>
+    </application>
+</manifest>

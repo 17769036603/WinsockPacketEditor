@@ -1,0 +1,10 @@
+local s=rawget(_G,'__codex_battle_loop_v1')
+assert(s and s.skipBattleRequested==false and s.hideBattleRequested==true,'hide-only observer was not installed')
+local before=table.concat({tostring(battleManager.m_CurCmdPlayIndex),tostring(battleManager.m_CurCmdIndex),tostring(battleManager.m_PauseAnalyze)},':')
+activePlayer.getPlayerId=function() return 999 end
+advance(0.01)
+assert(#sendCalls==0,'role change caused a battle send')
+assert(battleManager.m_BattleUI.m_AutoStatus==true,'role change changed auto-battle state')
+local after=table.concat({tostring(battleManager.m_CurCmdPlayIndex),tostring(battleManager.m_CurCmdIndex),tostring(battleManager.m_PauseAnalyze)},':')
+assert(after==before,'role change advanced or changed animation state')
+print('PASS hide-only role change: no sends or animation/auto-state changes')

@@ -1,0 +1,11 @@
+F:\项目目录\封包监听工具\WinsockPacketEditor\WinsockPacketEditor\work\SecondRideSolutionObj\WinsockPacketEditor.csproj.AssemblyReference.cache
+F:\项目目录\封包监听工具\WinsockPacketEditor\WinsockPacketEditor\work\SecondRideSolutionObj\WinsockPacketEditor.Injector_Form.resources
+F:\项目目录\封包监听工具\WinsockPacketEditor\WinsockPacketEditor\work\SecondRideSolutionObj\WinsockPacketEditor.ProcessList_Form.resources
+F:\项目目录\封包监听工具\WinsockPacketEditor\WinsockPacketEditor\work\SecondRideSolutionObj\WinsockPacketEditor.Properties.Resources.resources
+F:\项目目录\封包监听工具\WinsockPacketEditor\WinsockPacketEditor\work\SecondRideSolutionObj\WinsockPacketEditor.SocketProxy_Form.resources
+F:\项目目录\封包监听工具\WinsockPacketEditor\WinsockPacketEditor\work\SecondRideSolutionObj\WinsockPacketEditor.SystemMode_Form.resources
+F:\项目目录\封包监听工具\WinsockPacketEditor\WinsockPacketEditor\work\SecondRideSolutionObj\WinsockPacketEditor.Injector_Form.en-US.resources
+F:\项目目录\封包监听工具\WinsockPacketEditor\WinsockPacketEditor\work\SecondRideSolutionObj\WinsockPacketEditor.ProcessList_Form.en-US.resources
+F:\项目目录\封包监听工具\WinsockPacketEditor\WinsockPacketEditor\work\SecondRideSolutionObj\WinsockPacketEditor.SocketProxy_Form.en-US.resources
+F:\项目目录\封包监听工具\WinsockPacketEditor\WinsockPacketEditor\work\SecondRideSolutionObj\WinsockPacketEditor.SystemMode_Form.en-US.resources
+F:\项目目录\封包监听工具\WinsockPacketEditor\WinsockPacketEditor\work\SecondRideSolutionObj\WinsockPacketEditor.csproj.GenerateResource.cache

@@ -52,6 +52,9 @@ namespace MountSpeedRunnerHarness
                 Console.WriteLine("\n[TEST 6C] Mount speed hold safe restart supervisor");
                 if (!TestMountSpeedHoldRestartSupervisor()) return 1;
 
+                Console.WriteLine("\n[TEST 6D] Mount refine package candidates");
+                if (!TestMountRefinePackageCandidates()) return 1;
+
                 Console.WriteLine("\n[TEST 7] Android LuaJIT Mount Snapshot Protocol");
                 if (!TestMountStatusAndroidSnapshotProtocol()) return 1;
 
@@ -72,6 +75,9 @@ namespace MountSpeedRunnerHarness
 
                 Console.WriteLine("\n[TEST 9] Mount Refine A050 Offline Packet Template");
                 if (!TestMountRefineA050PacketTemplate()) return 1;
+
+                Console.WriteLine("\n[TEST 10] Mount ride shape resolution and dynamic A050 tail rewrite");
+                if (!TestMountRideShapeResolutionAndTailRewrite()) return 1;
 
                 Console.WriteLine("\n=== ALL TESTS PASSED ===");
                 return 0;
@@ -165,6 +171,50 @@ namespace MountSpeedRunnerHarness
         {
             return ((System.Collections.IEnumerable)method.Invoke(null, new object[] { configured, fallback }))
                 .Cast<string>().ToArray();
+        }
+
+        private static bool TestMountRefinePackageCandidates()
+        {
+            Type readerType = typeof(WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReader);
+            MethodInfo method = readerType.GetMethod(
+                "GetPackageCandidates",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            if (method == null)
+            {
+                Console.Error.WriteLine("GetPackageCandidates was not found.");
+                return false;
+            }
+
+            string oldEnvironment = Environment.GetEnvironmentVariable("WPE_MOUNT_STATUS_GAME_PACKAGE");
+            try
+            {
+                // 坐骑炼化构造读取器时使用的兜底集合：环境变量过时（指向另一个包名）时，
+                // 正在运行的客户端包名仍必须留在候选里，否则启动会报“未找到候选游戏进程”。
+                Environment.SetEnvironmentVariable(
+                    "WPE_MOUNT_STATUS_GAME_PACKAGE",
+                    "com.gdoo.xxxy2026");
+                string[] refineCandidates = InvokePackageCandidates(
+                    method,
+                    null,
+                    new[] { "com.gdoo.dhxy", "com.gdoo.xxxy2026" });
+                if (!refineCandidates.SequenceEqual(
+                    new[] { "com.gdoo.xxxy2026", "com.gdoo.dhxy", "com.gdoo.yzqcxy" },
+                    StringComparer.OrdinalIgnoreCase))
+                {
+                    Console.Error.WriteLine(
+                        "Mount refine fallback candidates are incorrect: " +
+                        string.Join(",", refineCandidates));
+                    return false;
+                }
+
+                Console.WriteLine(
+                    "PASS: a stale environment override still keeps the client package in the candidate list.");
+                return true;
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("WPE_MOUNT_STATUS_GAME_PACKAGE", oldEnvironment);
+            }
         }
 
         private static bool TestMountSpeedHoldRestartSupervisor()
@@ -1758,7 +1808,7 @@ namespace MountSpeedRunnerHarness
                     new WPELibrary.Lib.MountSpeed.MountRefineSendRequest
                     {
                         AttemptNumber = 1,
-                        ActiveRideInstanceId = "2092100442933833729"
+                        ActiveRideInstanceId = template.RideInstanceId
                     };
                 byte[] builtPacket;
                 if (!template.TryBuild(request, out builtPacket, out error) ||
@@ -1779,39 +1829,32 @@ namespace MountSpeedRunnerHarness
                 }
 
                 request.ActiveRideInstanceId = "2092100442933833730";
+                string rewriteFailure = string.Empty;
                 if (!template.TryBuild(request, out builtPacket, out error) ||
-                    builtPacket == null ||
-                    builtPacket.Length != firstPacket.Length)
+                    !AssertA050TailRewrite(
+                        builtPacket,
+                        firstPacket,
+                        request.ActiveRideInstanceId,
+                        out rewriteFailure))
                 {
-                    Console.WriteLine("  [FAIL] Third-mount A050 template build failed: " + error);
+                    Console.WriteLine(
+                        "  [FAIL] Third-mount A050 tail rewrite failed: " +
+                        (string.IsNullOrWhiteSpace(rewriteFailure) ? error : rewriteFailure));
                     return false;
-                }
-
-                for (int index = 0; index < firstPacket.Length; index++)
-                {
-                    if (builtPacket[index] != firstPacket[index])
-                    {
-                        Console.WriteLine("  [FAIL] Third-mount A050 template changed unexpected byte at offset " + index);
-                        return false;
-                    }
                 }
 
                 request.ActiveRideInstanceId = "2092100442933833731";
                 if (!template.TryBuild(request, out builtPacket, out error) ||
-                    builtPacket == null ||
-                    builtPacket.Length != firstPacket.Length)
+                    !AssertA050TailRewrite(
+                        builtPacket,
+                        firstPacket,
+                        request.ActiveRideInstanceId,
+                        out rewriteFailure))
                 {
-                    Console.WriteLine("  [FAIL] Fourth-mount A050 template build failed: " + error);
+                    Console.WriteLine(
+                        "  [FAIL] Fourth-mount A050 tail rewrite failed: " +
+                        (string.IsNullOrWhiteSpace(rewriteFailure) ? error : rewriteFailure));
                     return false;
-                }
-
-                for (int index = 0; index < firstPacket.Length; index++)
-                {
-                    if (builtPacket[index] != firstPacket[index])
-                    {
-                        Console.WriteLine("  [FAIL] Fourth-mount A050 template changed unexpected byte at offset " + index);
-                        return false;
-                    }
                 }
 
                 if (Encoding.ASCII.GetString(template.FixtureBytes, 20, 19) != "2092100442933833732")
@@ -1827,7 +1870,7 @@ namespace MountSpeedRunnerHarness
                     return false;
                 }
 
-                Console.WriteLine("  [PASS] fixed A050 frame remains byte-for-byte unchanged; template remains offline");
+                Console.WriteLine("  [PASS] fixed A050 frame structure stays intact; only the tail follows the requested ride instance");
                 return true;
             }
             catch (Exception ex)
@@ -1848,6 +1891,549 @@ namespace MountSpeedRunnerHarness
                 bytes[index] = Convert.ToByte(parts[index], 16);
             }
             return bytes;
+        }
+
+        /// <summary>
+        /// 逐位置比较 A050 改写结果：偏移 0-19 必须与捕获模板逐字节一致，
+        /// 偏移 20-38 必须等于请求里当前实例 ID 的 ASCII 字节。
+        /// 失败信息直接指出不一致的偏移。
+        /// </summary>
+        static bool AssertA050TailRewrite(
+            byte[] builtPacket,
+            byte[] fixtureBytes,
+            string expectedRideInstanceId,
+            out string failure)
+        {
+            failure = string.Empty;
+            if (fixtureBytes == null || fixtureBytes.Length != 39)
+            {
+                failure = "捕获模板不是 39 字节。";
+                return false;
+            }
+
+            if (builtPacket == null || builtPacket.Length != 39)
+            {
+                failure = "改写后的帧不是 39 字节：" +
+                    (builtPacket == null
+                        ? "<null>"
+                        : builtPacket.Length.ToString(CultureInfo.InvariantCulture));
+                return false;
+            }
+
+            byte[] expectedTail = Encoding.ASCII.GetBytes(expectedRideInstanceId ?? string.Empty);
+            if (expectedTail.Length != 19)
+            {
+                failure = "期望的坐骑实例 ID 不是 19 字节。";
+                return false;
+            }
+
+            for (int index = 0; index < 20; index++)
+            {
+                if (builtPacket[index] != fixtureBytes[index])
+                {
+                    failure = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "偏移 {0} 不应改写：模板 0x{1:X2}，实际 0x{2:X2}",
+                        index,
+                        fixtureBytes[index],
+                        builtPacket[index]);
+                    return false;
+                }
+            }
+
+            for (int index = 0; index < 19; index++)
+            {
+                int offset = 20 + index;
+                if (builtPacket[offset] != expectedTail[index])
+                {
+                    failure = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "偏移 {0} 的实例 ID 字节应为 0x{1:X2}('{2}')，实际 0x{3:X2}('{4}')",
+                        offset,
+                        expectedTail[index],
+                        (char)expectedTail[index],
+                        builtPacket[offset],
+                        DescribeAsciiByte(builtPacket[offset]));
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        static string DescribeAsciiByte(byte value)
+        {
+            return value >= 32 && value < 127
+                ? ((char)value).ToString()
+                : "?";
+        }
+
+        static bool TestMountRideShapeResolutionAndTailRewrite()
+        {
+            try
+            {
+                const string capturedRideInstanceId = "2092100442933833732";
+                const string currentRideInstanceId = "2108100442933833801";
+                byte[] capturedFrame = ParseHex(
+                    "4D 5A 00 00 00 00 00 00 00 1D A0 50 00 06 03 00 00 00 00 13 " +
+                    "32 30 39 32 31 30 30 34 34 32 39 33 33 38 33 33 37 33 32");
+
+                WPELibrary.Lib.MountSpeed.MountRefineA050PacketTemplate template;
+                string error;
+                if (!WPELibrary.Lib.MountSpeed.MountRefineA050PacketTemplate.TryCreate(
+                        capturedFrame,
+                        "test10-dynamic-tail",
+                        out template,
+                        out error) ||
+                    template.RideInstanceId != capturedRideInstanceId)
+                {
+                    Console.WriteLine("  [FAIL] Dynamic-tail fixture rejected: " + error);
+                    return false;
+                }
+
+                // a) 合法当前实例 ID：逐位置 diff，只有偏移 20-38 变化。
+                WPELibrary.Lib.MountSpeed.MountRefineSendRequest request =
+                    new WPELibrary.Lib.MountSpeed.MountRefineSendRequest
+                    {
+                        AttemptNumber = 1,
+                        ActiveRideInstanceId = currentRideInstanceId
+                    };
+                byte[] builtPacket;
+                string rewriteFailure = string.Empty;
+                if (!template.TryBuild(request, out builtPacket, out error) ||
+                    !AssertA050TailRewrite(
+                        builtPacket,
+                        capturedFrame,
+                        currentRideInstanceId,
+                        out rewriteFailure))
+                {
+                    Console.WriteLine(
+                        "  [FAIL] Legal current ride instance rewrite failed: " +
+                        (string.IsNullOrWhiteSpace(rewriteFailure) ? error : rewriteFailure));
+                    return false;
+                }
+
+                if (Encoding.ASCII.GetString(builtPacket, 20, 19) != currentRideInstanceId ||
+                    Encoding.ASCII.GetString(builtPacket, 20, 19) == capturedRideInstanceId)
+                {
+                    Console.WriteLine("  [FAIL] Offset 20-38 does not carry the current ride instance.");
+                    return false;
+                }
+
+                for (int index = 0; index < 20; index++)
+                {
+                    if (builtPacket[index] != template.FixtureBytes[index])
+                    {
+                        Console.WriteLine(
+                            "  [FAIL] Offset " + index + " differs from the capture template.");
+                        return false;
+                    }
+                }
+
+                // b) 模板自身字节未被改动，RideInstanceId 仍返回捕获原值。
+                byte[] fixtureAfterBuild = template.FixtureBytes;
+                if (fixtureAfterBuild.Length != capturedFrame.Length ||
+                    template.RideInstanceId != capturedRideInstanceId)
+                {
+                    Console.WriteLine("  [FAIL] Template identity changed after TryBuild.");
+                    return false;
+                }
+                for (int index = 0; index < capturedFrame.Length; index++)
+                {
+                    if (fixtureAfterBuild[index] != capturedFrame[index])
+                    {
+                        Console.WriteLine(
+                            "  [FAIL] Template fixture byte changed at offset " +
+                            index +
+                            " after TryBuild.");
+                        return false;
+                    }
+                }
+
+                // d) 改写后长度仍为 39 且完整结构校验通过。
+                if (builtPacket.Length != 39 ||
+                    builtPacket[0] != 0x4D || builtPacket[1] != 0x5A ||
+                    builtPacket[8] != 0x00 || builtPacket[9] != 0x1D ||
+                    builtPacket[10] != 0xA0 || builtPacket[11] != 0x50 ||
+                    builtPacket[19] != 0x13)
+                {
+                    Console.WriteLine("  [FAIL] Rewritten frame header structure is invalid.");
+                    return false;
+                }
+
+                byte[] expectedPrefix = { 0x00, 0x06, 0x03, 0x00, 0x00, 0x00, 0x00 };
+                for (int index = 0; index < expectedPrefix.Length; index++)
+                {
+                    if (builtPacket[12 + index] != expectedPrefix[index])
+                    {
+                        Console.WriteLine(
+                            "  [FAIL] Rewritten frame operation prefix changed at offset " +
+                            (12 + index) +
+                            ".");
+                        return false;
+                    }
+                }
+
+                for (int index = 20; index < 39; index++)
+                {
+                    if (builtPacket[index] < (byte)'0' || builtPacket[index] > (byte)'9')
+                    {
+                        Console.WriteLine(
+                            "  [FAIL] Rewritten frame tail is not ASCII digits at offset " +
+                            index +
+                            ".");
+                        return false;
+                    }
+                }
+
+                WPELibrary.Lib.MountSpeed.MountRefineA050PacketTemplate revalidated;
+                if (!WPELibrary.Lib.MountSpeed.MountRefineA050PacketTemplate.TryCreate(
+                        builtPacket,
+                        "test10-revalidate",
+                        out revalidated,
+                        out error) ||
+                    revalidated.RideInstanceId != currentRideInstanceId)
+                {
+                    Console.WriteLine(
+                        "  [FAIL] Rewritten frame failed full structural re-validation: " + error);
+                    return false;
+                }
+
+                // c) ID 非法或缺失时必须拒绝，且不静默回退到模板里的旧 ID。
+                string[] invalidRideInstanceIds =
+                {
+                    null,
+                    string.Empty,
+                    "   ",
+                    "209210044293383372",
+                    "20921004429338337290",
+                    "20921004429338337a2",
+                    "2092100442933833729 ",
+                    "２０９２１００４４２９３３８３３７２９"
+                };
+                foreach (string invalidRideInstanceId in invalidRideInstanceIds)
+                {
+                    request.ActiveRideInstanceId = invalidRideInstanceId;
+                    byte[] rejectedPacket;
+                    string rejectedError;
+                    if (template.TryBuild(request, out rejectedPacket, out rejectedError))
+                    {
+                        Console.WriteLine(
+                            "  [FAIL] Illegal ride instance id was accepted: " +
+                            (invalidRideInstanceId ?? "<null>"));
+                        return false;
+                    }
+
+                    if (rejectedPacket != null ||
+                        rejectedError != "mount_refine_a050_active_ride_instance_id_invalid")
+                    {
+                        Console.WriteLine(
+                            "  [FAIL] Illegal ride instance id rejection is not explicit: " +
+                            rejectedError);
+                        return false;
+                    }
+                }
+
+                WPELibrary.Lib.MountSpeed.MountRefineSendRequest missingRequest = null;
+                byte[] missingRequestPacket;
+                string missingRequestError;
+                if (template.TryBuild(missingRequest, out missingRequestPacket, out missingRequestError) ||
+                    missingRequestPacket != null ||
+                    missingRequestError != "mount_refine_a050_request_missing")
+                {
+                    Console.WriteLine("  [FAIL] Missing A050 request was not rejected explicitly.");
+                    return false;
+                }
+
+                // e) Resolver：单匹配成功、无匹配失败、多匹配失败、非法形态失败。
+                string resolverError;
+                WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot singleMatchSnapshot =
+                    ParseRideShapeSnapshot(
+                        "[" + BuildRideShapeInstanceJson("2092100442933833721", 9111) + ","
+                        + BuildRideShapeInstanceJson("2092100442933833722", 9121) + "]",
+                        out resolverError);
+                WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot ambiguousSnapshot =
+                    ParseRideShapeSnapshot(
+                        "[" + BuildRideShapeInstanceJson("2092100442933833721", 9111) + ","
+                        + BuildRideShapeInstanceJson("2092100442933833722", 9111) + "]",
+                        out resolverError);
+                if (singleMatchSnapshot == null || ambiguousSnapshot == null)
+                {
+                    Console.WriteLine("  [FAIL] Resolver fixture rejected: " + resolverError);
+                    return false;
+                }
+
+                string resolvedRideInstanceId;
+                string resolverCode;
+                string resolverMessage;
+                if (!WPELibrary.Lib.MountSpeed.MountRideShapeResolver.TryResolveRideInstanceId(
+                        singleMatchSnapshot,
+                        9111,
+                        out resolvedRideInstanceId,
+                        out resolverCode,
+                        out resolverMessage) ||
+                    resolvedRideInstanceId != "2092100442933833721")
+                {
+                    Console.WriteLine(
+                        "  [FAIL] Single shape match failed: " + resolverCode + " " + resolverMessage);
+                    return false;
+                }
+
+                if (WPELibrary.Lib.MountSpeed.MountRideShapeResolver.TryResolveRideInstanceId(
+                        singleMatchSnapshot,
+                        9131,
+                        out resolvedRideInstanceId,
+                        out resolverCode,
+                        out resolverMessage) ||
+                    resolverCode != WPELibrary.Lib.MountSpeed.MountRideShapeResolver.ErrorNoMatch ||
+                    string.IsNullOrWhiteSpace(resolverMessage))
+                {
+                    Console.WriteLine("  [FAIL] Missing shape match was not rejected with a clear reason.");
+                    return false;
+                }
+
+                if (WPELibrary.Lib.MountSpeed.MountRideShapeResolver.TryResolveRideInstanceId(
+                        ambiguousSnapshot,
+                        9111,
+                        out resolvedRideInstanceId,
+                        out resolverCode,
+                        out resolverMessage) ||
+                    resolverCode != WPELibrary.Lib.MountSpeed.MountRideShapeResolver.ErrorAmbiguous ||
+                    string.IsNullOrWhiteSpace(resolverMessage))
+                {
+                    Console.WriteLine("  [FAIL] Duplicate shape match was not rejected with a clear reason.");
+                    return false;
+                }
+
+                // 即使两个匹配项的实例 ID 完全相同，重复形态也必须拒绝。
+                WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot duplicateIdSnapshot =
+                    ParseRideShapeSnapshot(
+                        "[" + BuildRideShapeInstanceJson("2092100442933833721", 9111) + "]",
+                        out resolverError);
+                if (duplicateIdSnapshot == null)
+                {
+                    Console.WriteLine("  [FAIL] Duplicate-id fixture rejected: " + resolverError);
+                    return false;
+                }
+
+                SetInternalProperty(
+                    typeof(WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot),
+                    duplicateIdSnapshot,
+                    "RideInstances",
+                    new List<WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot>
+                    {
+                        CreateRideInstanceSnapshotForTest("2092100442933833721", 9111),
+                        CreateRideInstanceSnapshotForTest("2092100442933833721", 9111)
+                    });
+                if (WPELibrary.Lib.MountSpeed.MountRideShapeResolver.TryResolveRideInstanceId(
+                        duplicateIdSnapshot,
+                        9111,
+                        out resolvedRideInstanceId,
+                        out resolverCode,
+                        out resolverMessage) ||
+                    resolverCode != WPELibrary.Lib.MountSpeed.MountRideShapeResolver.ErrorAmbiguous)
+                {
+                    Console.WriteLine(
+                        "  [FAIL] Duplicate shape with identical instance id was not rejected.");
+                    return false;
+                }
+
+                int[] invalidShapeIds = { 0, -1, int.MinValue };
+                foreach (int invalidShapeId in invalidShapeIds)
+                {
+                    if (WPELibrary.Lib.MountSpeed.MountRideShapeResolver.TryResolveRideInstanceId(
+                            singleMatchSnapshot,
+                            invalidShapeId,
+                            out resolvedRideInstanceId,
+                            out resolverCode,
+                            out resolverMessage) ||
+                        resolverCode != WPELibrary.Lib.MountSpeed.MountRideShapeResolver.ErrorShapeIdInvalid)
+                    {
+                        Console.WriteLine("  [FAIL] Illegal shape id was not rejected: " + invalidShapeId);
+                        return false;
+                    }
+                }
+
+                if (WPELibrary.Lib.MountSpeed.MountRideShapeResolver.TryResolveRideInstanceId(
+                        null,
+                        9111,
+                        out resolvedRideInstanceId,
+                        out resolverCode,
+                        out resolverMessage) ||
+                    resolverCode != WPELibrary.Lib.MountSpeed.MountRideShapeResolver.ErrorSnapshotMissing)
+                {
+                    Console.WriteLine("  [FAIL] Missing resolver snapshot was not rejected.");
+                    return false;
+                }
+
+                // 旧路径等价：形态为空时直接沿用包内实例 ID；传 null 快照也必须成功，
+                // 证明旧路径既没有读取快照，也没有进入形态匹配。
+                string legacyPreferred;
+                bool legacyUsedShape;
+                string legacyCode;
+                string legacyMessage;
+                if (!WPELibrary.Lib.MountSpeed.MountRideShapeResolver.TryResolvePreferredRideInstanceId(
+                        null,
+                        null,
+                        capturedRideInstanceId,
+                        out legacyPreferred,
+                        out legacyUsedShape,
+                        out legacyCode,
+                        out legacyMessage) ||
+                    legacyUsedShape ||
+                    legacyPreferred != capturedRideInstanceId ||
+                    !string.IsNullOrWhiteSpace(legacyCode))
+                {
+                    Console.WriteLine(
+                        "  [FAIL] Legacy preset path did not keep the packet ride instance id.");
+                    return false;
+                }
+
+                // 同一个“形态重复”快照：形态为空时仍必须沿用包内 ID（未调用形态匹配），
+                // 形态有值时同一快照必须 fail-closed。
+                if (!WPELibrary.Lib.MountSpeed.MountRideShapeResolver.TryResolvePreferredRideInstanceId(
+                        ambiguousSnapshot,
+                        null,
+                        capturedRideInstanceId,
+                        out legacyPreferred,
+                        out legacyUsedShape,
+                        out legacyCode,
+                        out legacyMessage) ||
+                    legacyUsedShape ||
+                    legacyPreferred != capturedRideInstanceId)
+                {
+                    Console.WriteLine("  [FAIL] Legacy preset path consulted shape resolution.");
+                    return false;
+                }
+
+                bool shapeUsed;
+                if (!WPELibrary.Lib.MountSpeed.MountRideShapeResolver.TryResolvePreferredRideInstanceId(
+                        singleMatchSnapshot,
+                        9111,
+                        capturedRideInstanceId,
+                        out legacyPreferred,
+                        out shapeUsed,
+                        out legacyCode,
+                        out legacyMessage) ||
+                    !shapeUsed ||
+                    legacyPreferred != "2092100442933833721")
+                {
+                    Console.WriteLine(
+                        "  [FAIL] Shape resolution did not replace the expired packet ride instance id.");
+                    return false;
+                }
+
+                if (WPELibrary.Lib.MountSpeed.MountRideShapeResolver.TryResolvePreferredRideInstanceId(
+                        ambiguousSnapshot,
+                        9111,
+                        capturedRideInstanceId,
+                        out legacyPreferred,
+                        out shapeUsed,
+                        out legacyCode,
+                        out legacyMessage) ||
+                    !shapeUsed ||
+                    legacyCode != WPELibrary.Lib.MountSpeed.MountRideShapeResolver.ErrorAmbiguous)
+                {
+                    Console.WriteLine("  [FAIL] Ambiguous shape did not fail closed.");
+                    return false;
+                }
+
+                if (WPELibrary.Lib.MountSpeed.MountRideShapeResolver.RequiresShapeResolution(null) ||
+                    !WPELibrary.Lib.MountSpeed.MountRideShapeResolver.RequiresShapeResolution(9111))
+                {
+                    Console.WriteLine(
+                        "  [FAIL] Shape resolution requirement is not keyed on the optional shape id.");
+                    return false;
+                }
+
+                Console.WriteLine(
+                    "  [PASS] only offsets 20-38 are rewritten, illegal ids fail closed, " +
+                    "shape resolution is unique-match-only, and the legacy path keeps the packet id");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("  [FAIL] " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 构造 not_mounted 只读快照 JSON，用于离线形态解析用例。
+        /// </summary>
+        static string BuildRideShapeResolverFixtureJson(string rideInstancesJson)
+        {
+            return "{"
+                + "\"event\":\"mount_status_snapshot\","
+                + "\"schema\":\"mount_status_snapshot.v1\","
+                + "\"schemaVersion\":1,"
+                + "\"readOnly\":true,"
+                + "\"actionAuthorized\":false,"
+                + "\"sessionId\":\"33333333-3333-3333-3333-333333333333\","
+                + "\"sequence\":7,"
+                + "\"status\":\"ok\","
+                + "\"diagnosticCode\":\"ok\","
+                + "\"candidateCount\":1,"
+                + "\"process\":{\"pid\":1853,\"startTicks\":1466,\"exe\":\"/system/bin/app_process64\"},"
+                + "\"player\":{"
+                + "\"playerId\":256,\"isLocalPlayer\":true,\"mountId\":null,\"isMounted\":false,"
+                + "\"roleMoveSpeed\":200.0,\"gx\":43,\"gy\":18,"
+                + "\"rideInstances\":" + rideInstancesJson + ","
+                + "\"activeRideInstanceId\":null,"
+                + "\"rideBindingStatus\":\"not_mounted\","
+                + "\"rideBindingSource\":null"
+                + "}}";
+        }
+
+        static string BuildRideShapeInstanceJson(string rideInstanceId, long rideShapeId)
+        {
+            return "{\"rideInstanceId\":\"" + rideInstanceId + "\","
+                + "\"rideShapeId\":" + rideShapeId.ToString(CultureInfo.InvariantCulture) + ","
+                + "\"isRiding\":false,\"isCurrent\":false,\"skills\":["
+                + "{\"slotIndex\":1,\"skillId\":61008,\"exp\":0,\"skillName\":\"秋水流弦\"}]}";
+        }
+
+        static WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot ParseRideShapeSnapshot(
+            string rideInstancesJson,
+            out string error)
+        {
+            WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot snapshot;
+            if (!WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshotProtocol.TryParse(
+                    BuildRideShapeResolverFixtureJson(rideInstancesJson),
+                    out snapshot,
+                    out error))
+            {
+                return null;
+            }
+            return snapshot;
+        }
+
+        static WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot CreateRideInstanceSnapshotForTest(
+            string rideInstanceId,
+            long rideShapeId)
+        {
+            WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot instance =
+                new WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot();
+            Type type = typeof(WPELibrary.Lib.MountSpeed.MountRideInstanceSnapshot);
+            SetInternalProperty(type, instance, "RideInstanceId", rideInstanceId);
+            SetInternalProperty(type, instance, "RideShapeId", (long?)rideShapeId);
+            return instance;
+        }
+
+        static void SetInternalProperty(
+            Type type,
+            object target,
+            string propertyName,
+            object value)
+        {
+            PropertyInfo property = type.GetProperty(propertyName);
+            MethodInfo setter = property == null ? null : property.GetSetMethod(true);
+            if (setter == null)
+            {
+                throw new InvalidOperationException(propertyName + " setter is unavailable.");
+            }
+
+            setter.Invoke(target, new[] { value });
         }
 
         static WPELibrary.Lib.MountSpeed.MountSpeedPreset CreateRefineStateMachinePreset()

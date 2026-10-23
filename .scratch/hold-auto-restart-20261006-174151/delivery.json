@@ -1,0 +1,8 @@
+{
+  "Version": "2026.10.6.4",
+  "DatabaseHash": "E1035DDC324919024FFF146DBB50DA62F42574B47E29A183BAD83A81C26162B1",
+  "SignatureChecks": 3,
+  "Target": "F:\\项目目录\\封包监听工具\\WinsockPacketEditor\\releases\\2026.10.6.4\\小黑封包助手.exe",
+  "PresetTarget": 5000,
+  "LiveGameAcceptance": "not_run"
+}

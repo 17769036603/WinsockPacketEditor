@@ -1,0 +1,412 @@
+{
+  "Device": "emulator-5554",
+  "Api": 34,
+  "Abi": "x86_64",
+  "ShellUid": 2000,
+  "RemoteTestDirectory": "/data/local/tmp/piaomiao-shared-2e2b82f5e1f84e26a122c748fd443120",
+  "HoldMs": 30000,
+  "MetricUnits": "KiB from smaps_rollup; decimal MB is KiB*0.001024 and binary MiB is KiB/1024",
+  "Samples": [
+    {
+      "Group": "static",
+      "Worker": "libanlei_worker.so",
+      "Pid": 4185,
+      "StartTicks": "4462223",
+      "Cmdline": "/data/local/tmp/piaomiao-shared-2e2b82f5e1f84e26a122c748fd443120/static/libanlei_worker.so --suite-native-self-test --hold-ms 30000",
+      "Sample1": {
+        "PssKiB": 8815,
+        "RssKiB": 11584,
+        "PrivateDirtyKiB": 2668,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               11584 kB",
+          "Pss:                8815 kB",
+          "Private_Dirty:      2668 kB"
+        ]
+      },
+      "Sample2": {
+        "PssKiB": 8815,
+        "RssKiB": 11584,
+        "PrivateDirtyKiB": 2668,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               11584 kB",
+          "Pss:                8815 kB",
+          "Private_Dirty:      2668 kB"
+        ]
+      },
+      "Output": [
+        "{\"pid\":4185,\"version\":\"17.17.0\",\"phase\":\"ready\"}",
+        "{\"pid\":4185,\"version\":\"17.17.0\",\"phase\":\"finished\"}"
+      ],
+      "ExitCode": 0,
+      "Stderr": "",
+      "EffectScope": "init-version-deinit-only; no game, manager enumeration, or six-feature workload"
+    },
+    {
+      "Group": "static",
+      "Worker": "libbattle_loop_worker.so",
+      "Pid": 4187,
+      "StartTicks": "4462228",
+      "Cmdline": "/data/local/tmp/piaomiao-shared-2e2b82f5e1f84e26a122c748fd443120/static/libbattle_loop_worker.so --suite-native-self-test --hold-ms 30000",
+      "Sample1": {
+        "PssKiB": 8883,
+        "RssKiB": 11480,
+        "PrivateDirtyKiB": 2672,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               11480 kB",
+          "Pss:                8883 kB",
+          "Private_Dirty:      2672 kB"
+        ]
+      },
+      "Sample2": {
+        "PssKiB": 8883,
+        "RssKiB": 11480,
+        "PrivateDirtyKiB": 2672,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               11480 kB",
+          "Pss:                8883 kB",
+          "Private_Dirty:      2672 kB"
+        ]
+      },
+      "Output": [
+        "{\"pid\":4187,\"version\":\"17.17.0\",\"phase\":\"ready\"}",
+        "{\"pid\":4187,\"version\":\"17.17.0\",\"phase\":\"finished\"}"
+      ],
+      "ExitCode": 0,
+      "Stderr": "",
+      "EffectScope": "init-version-deinit-only; no game, manager enumeration, or six-feature workload"
+    },
+    {
+      "Group": "static",
+      "Worker": "libbattle_skip_worker.so",
+      "Pid": 4189,
+      "StartTicks": "4462231",
+      "Cmdline": "/data/local/tmp/piaomiao-shared-2e2b82f5e1f84e26a122c748fd443120/static/libbattle_skip_worker.so --suite-native-self-test --hold-ms 30000",
+      "Sample1": {
+        "PssKiB": 7913,
+        "RssKiB": 10548,
+        "PrivateDirtyKiB": 2676,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               10548 kB",
+          "Pss:                7913 kB",
+          "Private_Dirty:      2676 kB"
+        ]
+      },
+      "Sample2": {
+        "PssKiB": 7913,
+        "RssKiB": 10548,
+        "PrivateDirtyKiB": 2676,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               10548 kB",
+          "Pss:                7913 kB",
+          "Private_Dirty:      2676 kB"
+        ]
+      },
+      "Output": [
+        "{\"pid\":4189,\"version\":\"17.17.0\",\"phase\":\"ready\"}",
+        "{\"pid\":4189,\"version\":\"17.17.0\",\"phase\":\"finished\"}"
+      ],
+      "ExitCode": 0,
+      "Stderr": "",
+      "EffectScope": "init-version-deinit-only; no game, manager enumeration, or six-feature workload"
+    },
+    {
+      "Group": "static",
+      "Worker": "libjinchan_worker.so",
+      "Pid": 4191,
+      "StartTicks": "4462236",
+      "Cmdline": "/data/local/tmp/piaomiao-shared-2e2b82f5e1f84e26a122c748fd443120/static/libjinchan_worker.so --suite-native-self-test --hold-ms 30000",
+      "Sample1": {
+        "PssKiB": 8468,
+        "RssKiB": 11044,
+        "PrivateDirtyKiB": 2672,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               11044 kB",
+          "Pss:                8468 kB",
+          "Private_Dirty:      2672 kB"
+        ]
+      },
+      "Sample2": {
+        "PssKiB": 8468,
+        "RssKiB": 11044,
+        "PrivateDirtyKiB": 2672,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               11044 kB",
+          "Pss:                8468 kB",
+          "Private_Dirty:      2672 kB"
+        ]
+      },
+      "Output": [
+        "{\"pid\":4191,\"version\":\"17.17.0\",\"phase\":\"ready\"}",
+        "{\"pid\":4191,\"version\":\"17.17.0\",\"phase\":\"finished\"}"
+      ],
+      "ExitCode": 0,
+      "Stderr": "",
+      "EffectScope": "init-version-deinit-only; no game, manager enumeration, or six-feature workload"
+    },
+    {
+      "Group": "static",
+      "Worker": "libresistance_query.so",
+      "Pid": 4193,
+      "StartTicks": "4462240",
+      "Cmdline": "/data/local/tmp/piaomiao-shared-2e2b82f5e1f84e26a122c748fd443120/static/libresistance_query.so --suite-native-self-test --hold-ms 30000",
+      "Sample1": {
+        "PssKiB": 8990,
+        "RssKiB": 11496,
+        "PrivateDirtyKiB": 2672,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               11496 kB",
+          "Pss:                8990 kB",
+          "Private_Dirty:      2672 kB"
+        ]
+      },
+      "Sample2": {
+        "PssKiB": 8990,
+        "RssKiB": 11496,
+        "PrivateDirtyKiB": 2672,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               11496 kB",
+          "Pss:                8990 kB",
+          "Private_Dirty:      2672 kB"
+        ]
+      },
+      "Output": [
+        "{\"pid\":4193,\"version\":\"17.17.0\",\"phase\":\"ready\"}",
+        "{\"pid\":4193,\"version\":\"17.17.0\",\"phase\":\"finished\"}"
+      ],
+      "ExitCode": 0,
+      "Stderr": "",
+      "EffectScope": "init-version-deinit-only; no game, manager enumeration, or six-feature workload"
+    },
+    {
+      "Group": "shared",
+      "Worker": "libanlei_worker.so",
+      "Pid": 4357,
+      "StartTicks": "4465631",
+      "Cmdline": "/data/local/tmp/piaomiao-shared-2e2b82f5e1f84e26a122c748fd443120/shared/libanlei_worker.so --suite-native-self-test --hold-ms 30000",
+      "Sample1": {
+        "PssKiB": 5719,
+        "RssKiB": 14228,
+        "PrivateDirtyKiB": 4080,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               14228 kB",
+          "Pss:                5719 kB",
+          "Private_Dirty:      4080 kB"
+        ]
+      },
+      "Sample2": {
+        "PssKiB": 5719,
+        "RssKiB": 14228,
+        "PrivateDirtyKiB": 3056,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               14228 kB",
+          "Pss:                5719 kB",
+          "Private_Dirty:      3056 kB"
+        ]
+      },
+      "Output": [
+        "{\"pid\":4357,\"version\":\"17.17.0\",\"phase\":\"ready\"}",
+        "{\"pid\":4357,\"version\":\"17.17.0\",\"phase\":\"finished\"}"
+      ],
+      "ExitCode": 0,
+      "Stderr": "",
+      "EffectScope": "init-version-deinit-only; no game, manager enumeration, or six-feature workload"
+    },
+    {
+      "Group": "shared",
+      "Worker": "libbattle_loop_worker.so",
+      "Pid": 4360,
+      "StartTicks": "4465637",
+      "Cmdline": "/data/local/tmp/piaomiao-shared-2e2b82f5e1f84e26a122c748fd443120/shared/libbattle_loop_worker.so --suite-native-self-test --hold-ms 30000",
+      "Sample1": {
+        "PssKiB": 5685,
+        "RssKiB": 14248,
+        "PrivateDirtyKiB": 4132,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               14248 kB",
+          "Pss:                5685 kB",
+          "Private_Dirty:      4132 kB"
+        ]
+      },
+      "Sample2": {
+        "PssKiB": 5685,
+        "RssKiB": 14248,
+        "PrivateDirtyKiB": 3048,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               14248 kB",
+          "Pss:                5685 kB",
+          "Private_Dirty:      3048 kB"
+        ]
+      },
+      "Output": [
+        "{\"pid\":4360,\"version\":\"17.17.0\",\"phase\":\"ready\"}",
+        "{\"pid\":4360,\"version\":\"17.17.0\",\"phase\":\"finished\"}"
+      ],
+      "ExitCode": 0,
+      "Stderr": "",
+      "EffectScope": "init-version-deinit-only; no game, manager enumeration, or six-feature workload"
+    },
+    {
+      "Group": "shared",
+      "Worker": "libbattle_skip_worker.so",
+      "Pid": 4363,
+      "StartTicks": "4465641",
+      "Cmdline": "/data/local/tmp/piaomiao-shared-2e2b82f5e1f84e26a122c748fd443120/shared/libbattle_skip_worker.so --suite-native-self-test --hold-ms 30000",
+      "Sample1": {
+        "PssKiB": 5708,
+        "RssKiB": 14240,
+        "PrivateDirtyKiB": 3044,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               14240 kB",
+          "Pss:                5708 kB",
+          "Private_Dirty:      3044 kB"
+        ]
+      },
+      "Sample2": {
+        "PssKiB": 5708,
+        "RssKiB": 14240,
+        "PrivateDirtyKiB": 3044,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               14240 kB",
+          "Pss:                5708 kB",
+          "Private_Dirty:      3044 kB"
+        ]
+      },
+      "Output": [
+        "{\"pid\":4363,\"version\":\"17.17.0\",\"phase\":\"ready\"}",
+        "{\"pid\":4363,\"version\":\"17.17.0\",\"phase\":\"finished\"}"
+      ],
+      "ExitCode": 0,
+      "Stderr": "",
+      "EffectScope": "init-version-deinit-only; no game, manager enumeration, or six-feature workload"
+    },
+    {
+      "Group": "shared",
+      "Worker": "libjinchan_worker.so",
+      "Pid": 4366,
+      "StartTicks": "4465652",
+      "Cmdline": "/data/local/tmp/piaomiao-shared-2e2b82f5e1f84e26a122c748fd443120/shared/libjinchan_worker.so --suite-native-self-test --hold-ms 30000",
+      "Sample1": {
+        "PssKiB": 5634,
+        "RssKiB": 14040,
+        "PrivateDirtyKiB": 3092,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               14040 kB",
+          "Pss:                5634 kB",
+          "Private_Dirty:      3092 kB"
+        ]
+      },
+      "Sample2": {
+        "PssKiB": 5634,
+        "RssKiB": 14040,
+        "PrivateDirtyKiB": 3092,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               14040 kB",
+          "Pss:                5634 kB",
+          "Private_Dirty:      3092 kB"
+        ]
+      },
+      "Output": [
+        "{\"pid\":4366,\"version\":\"17.17.0\",\"phase\":\"ready\"}",
+        "{\"pid\":4366,\"version\":\"17.17.0\",\"phase\":\"finished\"}"
+      ],
+      "ExitCode": 0,
+      "Stderr": "",
+      "EffectScope": "init-version-deinit-only; no game, manager enumeration, or six-feature workload"
+    },
+    {
+      "Group": "shared",
+      "Worker": "libresistance_query.so",
+      "Pid": 4369,
+      "StartTicks": "4465661",
+      "Cmdline": "/data/local/tmp/piaomiao-shared-2e2b82f5e1f84e26a122c748fd443120/shared/libresistance_query.so --suite-native-self-test --hold-ms 30000",
+      "Sample1": {
+        "PssKiB": 5658,
+        "RssKiB": 14228,
+        "PrivateDirtyKiB": 3064,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               14228 kB",
+          "Pss:                5658 kB",
+          "Private_Dirty:      3064 kB"
+        ]
+      },
+      "Sample2": {
+        "PssKiB": 5658,
+        "RssKiB": 14228,
+        "PrivateDirtyKiB": 3064,
+        "PssConfirmed": true,
+        "PrivateDirtyConfirmed": true,
+        "Source": "proc-smaps_rollup",
+        "RawMetricLines": [
+          "Rss:               14228 kB",
+          "Pss:                5658 kB",
+          "Private_Dirty:      3064 kB"
+        ]
+      },
+      "Output": [
+        "{\"pid\":4369,\"version\":\"17.17.0\",\"phase\":\"ready\"}",
+        "{\"pid\":4369,\"version\":\"17.17.0\",\"phase\":\"finished\"}"
+      ],
+      "ExitCode": 0,
+      "Stderr": "",
+      "EffectScope": "init-version-deinit-only; no game, manager enumeration, or six-feature workload"
+    }
+  ],
+  "AllInitOnly": true
+}

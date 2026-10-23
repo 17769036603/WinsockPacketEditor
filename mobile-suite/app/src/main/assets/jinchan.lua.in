@@ -1,0 +1,210 @@
+local cfg = __CONFIG__
+local stateKey = '__codex_jinchan_operation_v1'
+local initialized, initializationError = pcall(function()
+assert(type(JinChanMgr)=='table' and type(JinChanMgr.getInstance)=='function',
+  '当前游戏未加载金蟾模块；金蟾功能此前仅在 DHXY 版验证，XXXY 2026 兼容未确认')
+local bindingKey = '__codex_jinchan_preview_v1'
+local bag, mgr = BagMgr:getInstance(), JinChanMgr:getInstance()
+local role = tostring(LocalPlayerMgr:getInstance():getPlayerId())
+local originals, hooks, timer, elapsed, finished = {}, {}, nil, 0, false
+local tips, response, pendingPreview = {}, nil, false
+local out = {nonce=cfg.nonce, ok=false, restored=false, role=role, pos=cfg.pos,
+  previewToken='0', currentUid='0', currentName='', added={}, removed={}}
+local names = {DisorderDefNeg='忽视混乱', SleepDefNeg='忽视睡眠', SealDefNeg='忽视封印',
+  Atk='攻击', HpMax='气血上限', Agility='速度', Power='力量', Wakan='灵性', Basecon='根骨',
+  ConFire='强力克火', ConWater='强力克水', ConGold='强力克金', ConWood='强力克木', ConSoil='强力克土'}
+local function hex(str)
+  return (tostring(str or ''):gsub('.',function(c)return string.format('%02x',string.byte(c))end))
+end
+local function options(rows)
+  local result={}
+  for _,r in ipairs(rows or {}) do
+    local row={index=r.index,tag='选项 '..tostring(r.index),tagHex=hex(r.tag),attrs={}}
+    for _,a in ipairs(r.attrs or {}) do
+      row.attrs[#row.attrs+1]={key=a.key,name=names[a.key] or a.key,value=a.value}
+    end
+    result[#result+1]=row
+  end
+  return result
+end
+local function previewFingerprint(data)
+  local function rows(source)
+    local result={}
+    for _,row in ipairs(source or {}) do
+      local attrs={}
+      for _,a in ipairs(row.attrs or {}) do attrs[#attrs+1]={a.key,a.value} end
+      result[#result+1]={row.index,hex(row.tag),attrs}
+    end
+    return result
+  end
+  -- JSON object key order is not stable; arrays preserve the candidate comparison order.
+  return json.encode({tostring(data.pos),tostring(data.tier),rows(data.baseOptions),rows(data.refineOptions)})
+end
+local function inventory()
+  local ids,marked={},{}
+  for _,row in ipairs(bag:getEquipItemIdList()) do
+    local uid=tostring(row[1]);ids[uid]=tonumber(row[2])
+    local item=bag:getItemIns(uid)
+    local prop=item and item.PropertyValueDict and item.PropertyValueDict.jinchanequipType
+    if type(prop)=='table' and tonumber(prop[1]) and tonumber(prop[1])>0 then marked[#marked+1]=uid end
+  end
+  return ids,marked
+end
+local before, marked = inventory()
+local beforeGold, beforeSilver = MoneyMgr:getInstance():getGold(), MoneyMgr:getInstance():getSilver()
+local function current()
+  local ids,marks=inventory()
+  if #marks==1 then return marks[1], '金蟾装备 '..tostring(ids[marks[1]]) end
+  return '0', #marks>1 and '存在多件金蟾装备，当前对象未确认' or '没有已绑定的金蟾装备'
+end
+out.currentUid,out.currentName=current()
+local function itemNameHex(uid)
+  local item=bag:getItemIns(uid)
+  local name=item and item.PropertyValueDict and item.PropertyValueDict.name
+  return hex(type(name)=='table' and name[1] or '')
+end
+local function snapshot()
+  local after=inventory()
+  out.gold=tostring(MoneyMgr:getInstance():getGold());out.silver=tostring(MoneyMgr:getInstance():getSilver())
+  out.deltaGold=tostring(MoneyMgr:getInstance():getGold()-beforeGold)
+  out.deltaSilver=tostring(MoneyMgr:getInstance():getSilver()-beforeSilver)
+  out.added={};out.removed={}
+  for uid,typeId in pairs(after) do if not before[uid] then
+    local item=bag:getItemIns(uid)
+    local pv=item and item.PropertyValueDict or {}
+    out.added[#out.added+1]={uid=uid,typeId=typeId,name='装备 '..tostring(typeId),
+      nameHex=itemNameHex(uid),
+      baseMixed=pv.nokanghunluan and pv.nokanghunluan[1] or 0,
+      refineMixed=pv.lh_nokanghunluan and pv.lh_nokanghunluan[1] or 0}
+  end end
+  for uid in pairs(before) do if not after[uid] then out.removed[#out.removed+1]=uid end end
+  out.currentUid,out.currentName=current()
+  out.currentNameHex=itemNameHex(out.currentUid)
+end
+local function finish(ok,message)
+  if finished then return end;finished=true
+  if timer then scheduler.unscheduleGlobal(timer);timer=nil end
+  local restored=true
+  for id,original in pairs(originals) do
+    if ProtoFunc[id]==hooks[id] then ProtoFunc[id]=original else restored=false end
+  end
+  if out.tipHook then
+    if ShowNotifyTips==out.tipHook then ShowNotifyTips=out.originalTip else restored=false end
+  end
+  if rawget(_G,stateKey)==cfg.nonce then rawset(_G,stateKey,nil) else restored=false end
+  out.tipHook=nil;out.originalTip=nil
+  out.ok=ok;out.message=message;out.restored=restored
+  local snapshotOk,snapshotError=pcall(snapshot)
+  if not snapshotOk then
+    tips[#tips+1]=hex(snapshotError)
+    out.ok=false;out.message='结果快照读取失败，请重新查询候选'
+  end
+  -- Backend notifications may use GBK; keep the result UTF-8 by reporting their hex bytes.
+  out.notifications=tips
+  local f=assert(io.open(cfg.resultPath,'w'));assert(f:write(json.encode(out)));assert(f:close())
+end
+local function safe(fn)
+  local ok,e=pcall(fn)
+  if not ok then
+    local detail=tostring(e):match('^.-:%d+: (.*)$') or tostring(e)
+    tips[#tips+1]=hex(detail)
+    finish(false,'操作未完成，请查看详情并重新查询候选')
+  end
+end
+local function observe(id,fn)
+  originals[id]=assert(ProtoFunc[id],'响应处理器缺失')
+  hooks[id]=function(data,...)
+    local ok,e=pcall(originals[id],data,...)
+    if not ok then finish(false,'原响应处理失败');return end
+    if not finished then safe(function()fn(data)end) end
+  end
+  ProtoFunc[id]=hooks[id]
+end
+local function preview(data)
+  if tonumber(data.pos)~=cfg.pos then return end
+  out.tier=data.tier;out.baseOptions=options(data.baseOptions);out.refineOptions=options(data.refineOptions)
+  if #out.baseOptions==0 or #out.refineOptions==0 then finish(false,'服务器候选为空');return end
+  snapshot()
+  local fingerprint=previewFingerprint(data)
+  assert(fingerprint==previewFingerprint(assert(mgr:GetPreviewData(),'候选缓存已清空')),'返回候选与客户端缓存不一致')
+  rawset(_G,bindingKey,{token=cfg.nonce,role=role,pos=cfg.pos,fingerprint=fingerprint,time=os.time(),currentUid=out.currentUid})
+  out.previewToken=cfg.nonce;finish(true,'已收到服务器候选')
+end
+local function selected(rows,index)
+  for _,row in ipairs(rows or {})do if tonumber(row.index)==index then return row end end
+end
+local function validatePreview()
+  local bound=assert(rawget(_G,bindingKey),'请重新查询候选')
+  assert(bound.token==cfg.previewToken and bound.role==role and bound.pos==cfg.pos,'候选绑定已变化，请重新查询')
+  assert(os.time()-bound.time<=300,'候选已过期，请重新查询')
+  local p=assert(mgr:GetPreviewData(),'候选缓存已清空')
+  assert(previewFingerprint(p)==bound.fingerprint,'服务器候选已变化')
+  assert(selected(p.baseOptions,cfg.baseIndex) and selected(p.refineOptions,cfg.refineIndex),'所选候选不存在')
+  return bound
+end
+local previous=rawget(_G,stateKey)
+if previous then
+  out.message='上次操作尚未清理，请保持游戏前台后重试';out.restored=false
+  local f=assert(io.open(cfg.resultPath,'w'));f:write(json.encode(out));f:close();return
+end
+rawset(_G,stateKey,cfg.nonce)
+safe(function()
+  assert(role:match('^%d+$') and role~='0','角色未绑定')
+  if cfg.action~='query' then assert(cfg.expectedRole==role,'角色已变化，请重新查询') end
+  local originalTip=ShowNotifyTips
+  assert(type(originalTip)=='function','游戏提示处理器缺失')
+  out.originalTip=originalTip
+  out.tipHook=function(message,...)
+    local str=tostring(message);tips[#tips+1]=(str:gsub('.',function(c)return string.format('%02x',string.byte(c))end))
+    if #tips>8 then table.remove(tips,1) end
+    return originalTip(message,...)
+  end
+  ShowNotifyTips=out.tipHook
+  observe(50217,preview)
+  observe(50220,function(data)response=data end)
+  observe(50213,function(data)response=data end)
+  observe(50222,function(data) if data.success==false then response=data end end)
+  timer=scheduler.scheduleGlobal(function()
+    if finished then return end
+    safe(function()
+      elapsed=elapsed+0.1
+      if tostring(LocalPlayerMgr:getInstance():getPlayerId())~=role then finish(false,'角色发生变化，结果未确认');return end
+      if cfg.action=='refresh' and pendingPreview and elapsed>=0.7 then
+        pendingPreview=false;mgr:ReqJinChanPreview(cfg.pos)
+      end
+      if cfg.action=='create' or cfg.action=='return' then
+        snapshot()
+        if cfg.action=='create' and #out.added==1 and #out.removed==0 and tonumber(out.deltaGold)==-100000 then
+          rawset(_G,bindingKey,nil);finish(true,'背包新增一件装备，普通仙玉扣除100000');return
+        elseif cfg.action=='return' and response and response.success==true then
+          local found=false;for _,uid in ipairs(out.removed)do if uid==cfg.expectedUid then found=true end end
+          if found and #out.removed==1 then rawset(_G,bindingKey,nil);finish(true,'归还成功，目标装备已删除');return end
+        end
+      end
+      if response and response.success==false then finish(false,'服务器拒绝操作，请查看游戏提示');return end
+      if elapsed>=4.5 then finish(false,'未确认成功：请查看游戏提示；不要自动重复生成或归还') end
+    end)
+  end,0.1)
+  if cfg.action=='query' then mgr:ReqJinChanPreview(cfg.pos)
+  elseif cfg.action=='refresh' then
+    assert(cfg.previewToken~='0','请先查询候选');validatePreview()
+    assert(out.currentUid=='0','请先归还当前金蟾装备')
+    mgr:ReqJinChanResetRefine(cfg.pos);pendingPreview=true
+  elseif cfg.action=='create' then
+    validatePreview()
+    assert(beforeGold>=100000,'普通仙玉不足100000')
+    mgr:ReqJinChanCreateEquip(cfg.pos,cfg.baseIndex,cfg.refineIndex)
+  elseif cfg.action=='return' then
+    local bound=assert(rawget(_G,bindingKey),'请先查询当前装备')
+    assert(bound.token==cfg.previewToken and bound.role==role and os.time()-bound.time<=300,'当前装备绑定已过期')
+    assert(cfg.expectedUid~='0' and out.currentUid==cfg.expectedUid and bound.currentUid==cfg.expectedUid,'当前金蟾装备已变化，归还取消')
+    mgr:ReqJinChanReturn()
+  else error('不支持的操作') end
+end)
+end)
+if not initialized then
+  local detail = tostring(initializationError):gsub('.',function(c)return string.format('%02x',string.byte(c))end)
+  local result = {nonce=cfg.nonce,ok=false,restored=rawget(_G,stateKey)==nil,
+    message='客户端执行失败，请查看详情',notifications={detail}}
+  local f=assert(io.open(cfg.resultPath,'w'));assert(f:write(json.encode(result)));assert(f:close())
+end

@@ -1,0 +1,43 @@
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:34: ����: ���� GBK �Ĳ���ӳ���ַ� (0x80)
+        if (root == null) return denied(modulesRoot, moduleId, "状�?�目录不可用，已安全阻止启动");
+                                                                  ^
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:60: ����: ���� GBK �Ĳ���ӳ���ַ� (0x80)
+            if (own == null) return denied(root, moduleId, "功能状�?�目录不可用，已保留启动保护");
+                                                                 ^
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:68: ����: ���� GBK �Ĳ���ӳ���ַ� (0x80)
+            return denied(root, moduleId, "启动保护状�?�无法写入，已安全阻止启�?");
+                                                   ^
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:68: ����: ���� GBK �Ĳ���ӳ���ַ� (0xA8)
+            return denied(root, moduleId, "启动保护状�?�无法写入，已安全阻止启�?");
+                                                                      ^
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:169: ����: ���� GBK �Ĳ���ӳ���ַ� (0x80)
+        if (LOOP.equals(moduleId)) return "上次战投跳过尚未确认�?出；请到战投跳过页面点�?�检查旧任务”�?�核查完成前不能启动战斗功能�?";
+                                                           ^
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:169: ����: ���� GBK �Ĳ���ӳ���ַ� (0x80)
+        if (LOOP.equals(moduleId)) return "上次战投跳过尚未确认�?出；请到战投跳过页面点�?�检查旧任务”�?�核查完成前不能启动战斗功能�?";
+                                                                             ^
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:169: ����: ���� GBK �Ĳ���ӳ���ַ� (0x80)
+        if (LOOP.equals(moduleId)) return "上次战投跳过尚未确认�?出；请到战投跳过页面点�?�检查旧任务”�?�核查完成前不能启动战斗功能�?";
+                                                                                        ^
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:169: ����: ���� GBK �Ĳ���ӳ���ַ� (0x82)
+        if (LOOP.equals(moduleId)) return "上次战投跳过尚未确认�?出；请到战投跳过页面点�?�检查旧任务”�?�核查完成前不能启动战斗功能�?";
+                                                                                                              ^
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:170: ����: ���� GBK �Ĳ���ӳ���ַ� (0x80)
+        if (SKIP.equals(moduleId)) return "先停止战斗快进并等待清理完成；清理未确认时不能启动战投跳过�??";
+                                                                                       ^
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:170: ����: ���� GBK �Ĳ���ӳ���ַ� (0x82)
+        if (SKIP.equals(moduleId)) return "先停止战斗快进并等待清理完成；清理未确认时不能启动战投跳过�??";
+                                                                                        ^
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:171: ����: ���� GBK �Ĳ���ӳ���ַ� (0x80)
+        return "战投跳过/快进状�?�未确认；请先停止战投跳�?/快进并等待清理完成�??";
+                            ^
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:171: ����: ���� GBK �Ĳ���ӳ���ַ� (0x87)
+        return "战投跳过/快进状�?�未确认；请先停止战投跳�?/快进并等待清理完成�??";
+                                               ^
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:171: ����: ���� GBK �Ĳ���ӳ���ַ� (0x80)
+        return "战投跳过/快进状�?�未确认；请先停止战投跳�?/快进并等待清理完成�??";
+                                                               ^
+mobile-suite\app\src\main\java\com\xnas\wpe\suite\BattleConflictGate.java:171: ����: ���� GBK �Ĳ���ӳ���ַ� (0x82)
+        return "战投跳过/快进状�?�未确认；请先停止战投跳�?/快进并等待清理完成�??";
+                                                                ^
+14 ������

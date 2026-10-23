@@ -1,0 +1,21 @@
+package com.xnas.wpe.suite;
+import android.content.Context;
+import android.content.Intent;
+
+public final class ModuleActionHarness {
+  // MODULE_ACTION_METHODS
+  private static int moduleIntPreference(Context context,String module,String key,int fallback){return fallback;}
+  static void check(boolean ok,String message){if(!ok)throw new AssertionError(message);}
+  public static void main(String[] args){
+    Context context=new Context();
+    context.preferences.put("selected_maps_v1","1010,1018");
+    Intent start=buildIntent(context,TargetGame.BOSSHUNT,ScheduleTask.ACTION_START);
+    check(start!=null,"BOSS scheduled start must produce an Intent");
+    check("com.xnas.wpe.bosshunt.START_HANGUP".equals(start.getAction()),"BOSS schedule start must use the hangup action");
+    check("1010,1018".equals(start.getStringExtra("maps")),"BOSS schedule start must pass saved selected_maps_v1 as maps extra");
+    Intent stop=buildIntent(context,TargetGame.BOSSHUNT,ScheduleTask.ACTION_STOP);
+    check("com.xnas.wpe.bosshunt.STOP_RUN".equals(stop.getAction()),"BOSS schedule stop must retain stop-run action");
+    check(stop.getStringExtra("maps")==null,"BOSS stop intent must not accidentally include saved maps");
+    System.out.println("Boss scheduled Intent contract: PASS (4 assertions)");
+  }
+}

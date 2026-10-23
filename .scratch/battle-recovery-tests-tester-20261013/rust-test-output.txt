@@ -1,0 +1,18 @@
+
+running 13 tests
+test tests::boot_change_proves_original_process_ended ... ok
+test tests::busy_worker_lock_never_confirms_clean ... ok
+test tests::same_pid_and_ticks_with_changed_exe_is_unknown ... ok
+test tests::denied_proc_read_is_unknown ... ok
+test tests::identity_round_trip_and_strict_parse ... ok
+test tests::legacy_complete_zero_scan_confirms_no_target ... ok
+test tests::legacy_single_live_target_is_only_an_observation_baseline ... ok
+test tests::missing_stat_only_proves_exit_when_pid_directory_is_gone ... ok
+test tests::pid_reuse_proves_original_process_ended ... ok
+test tests::same_pid_and_ticks_with_changed_cmdline_is_unknown ... ok
+test tests::legacy_multiple_targets_are_unknown ... ok
+test tests::corrupt_record_does_not_fall_back_to_legacy_scan ... ok
+test tests::unreadable_legacy_scan_is_not_zero_processes ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

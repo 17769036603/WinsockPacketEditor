@@ -1,0 +1,5 @@
+local s=rawget(_G,'__codex_battle_loop_v1')
+assert(s and s.skipBattleRequested==true and s.hideBattleRequested==false,'missing skipBattle did not preserve legacy skip-on behavior')
+assert(readStatus().skipBattleRequested=='true' and readStatus().hideBattleRequested=='false','legacy request status mismatch')
+assert(type(fakeTimer)=='function' and ProtoFunc[3584]~=originalHandlers[3584] and netconn.send~=originalSend,'legacy mode no longer installs skip behavior')
+print('PASS legacy: absent skipBattle preserves prior enabled behavior')

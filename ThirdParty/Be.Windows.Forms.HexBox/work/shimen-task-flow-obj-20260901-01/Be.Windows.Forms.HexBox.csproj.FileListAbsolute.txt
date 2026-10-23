@@ -1,0 +1,9 @@
+F:\项目目录\封包监听工具\WinsockPacketEditor\ThirdParty\Be.Windows.Forms.HexBox\work\shimen-task-flow-build-20260901-01\Be.Windows.Forms.HexBox.dll
+F:\项目目录\封包监听工具\WinsockPacketEditor\ThirdParty\Be.Windows.Forms.HexBox\work\shimen-task-flow-build-20260901-01\Be.Windows.Forms.HexBox.pdb
+F:\项目目录\封包监听工具\WinsockPacketEditor\ThirdParty\Be.Windows.Forms.HexBox\work\shimen-task-flow-build-20260901-01\Be.Windows.Forms.HexBox.xml
+F:\项目目录\封包监听工具\WinsockPacketEditor\ThirdParty\Be.Windows.Forms.HexBox\work\shimen-task-flow-obj-20260901-01\Be.Windows.Forms.HexBox.csprojResolveAssemblyReference.cache
+F:\项目目录\封包监听工具\WinsockPacketEditor\ThirdParty\Be.Windows.Forms.HexBox\work\shimen-task-flow-obj-20260901-01\Be.Windows.Forms.HexBox.resources
+F:\项目目录\封包监听工具\WinsockPacketEditor\ThirdParty\Be.Windows.Forms.HexBox\work\shimen-task-flow-obj-20260901-01\Be.Windows.Forms.Properties.Resources.resources
+F:\项目目录\封包监听工具\WinsockPacketEditor\ThirdParty\Be.Windows.Forms.HexBox\work\shimen-task-flow-obj-20260901-01\Be.Windows.Forms.HexBox.csproj.GenerateResource.Cache
+F:\项目目录\封包监听工具\WinsockPacketEditor\ThirdParty\Be.Windows.Forms.HexBox\work\shimen-task-flow-obj-20260901-01\Be.Windows.Forms.HexBox.dll
+F:\项目目录\封包监听工具\WinsockPacketEditor\ThirdParty\Be.Windows.Forms.HexBox\work\shimen-task-flow-obj-20260901-01\Be.Windows.Forms.HexBox.pdb

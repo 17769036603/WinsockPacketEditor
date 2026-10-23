@@ -1,0 +1,11 @@
+[package]
+name = "bosshunt-worker"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[[bin]]
+name = "bosshunt_worker"
+path = "src/main.rs"
+
+[dependencies]

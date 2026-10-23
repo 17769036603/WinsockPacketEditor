@@ -1,0 +1,20 @@
+战斗快进/战斗跳过状态显示修复 - 2026-10-17
+
+APK: artifacts/PiaomiaoHelper-2026.10.17.2-status-display.apk
+versionCode 12 / versionName 2026.10.17.2-friends / x86_64
+SHA256: 8531AEFC08F3F944A8B2C4C251C1A5791258647CC1548D336651D51DD51864C1
+installed base.apk sha256: 8531aefc08f3f944a8b2c4c251c1a5791258647cc1548d336651d51dd51864c1 (2026-10-17 21:26:54)
+
+回归:
+  BattleWorkerStatusSelfTest: PASS (14 assertions)
+  BattleStatusDisplayHarness PASS (11 assertions; 抽取 battleskip.currentStatus/formatStatus + battleloop.currentStatus/display，真实 BattleConflictGate)
+  BattleConflictGateSelfTest: PASS
+  gradlew --offline assembleDebug: BUILD SUCCESSFUL in 21s
+
+设备现场:
+  before-user-battleloop.png / before-user-battleskip.png: 用户现场，快进在跑但显示“未确认/暂未启动”
+  before-battleloop-stopped.png / before-start-flash.png: 旧版点击启动 0.25s 闪现提示、1.5s 后被“已停止”覆盖
+  after-battleskip-running.png: 新版快进页“状态：运行中”，侧栏“● 运行中”
+  after-battleloop-blocked.png: 新版战斗跳过页持续显示“战斗快进正在运行，已阻止启动战斗跳过……”
+
+CodeRabbit 审查: 待登录后执行（CLI not_authenticated，登录链接已提供）。

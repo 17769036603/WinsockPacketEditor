@@ -1,0 +1,2 @@
+state=conflict_wait
+message=先停止战斗循环并等待清理完成；清理未确认时不能启动战斗快进。

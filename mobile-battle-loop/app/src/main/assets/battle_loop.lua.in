@@ -1,0 +1,272 @@
+local cfg=__CONFIG__
+local key=cfg.stateKey
+local stopKey=key..'.coolUntil'
+local playerState='__codex_confusion_pet_continuous_20261013_r7'
+local skipState='__codex_apk_battle_skip_v1'
+local function val(v) if type(v)=='table' then return v[1] end return v end
+local function eq(a,b) return tostring(a)==tostring(b) end
+local function writeStatus(state,fields)
+ local f=io.open(cfg.resultPath,'w');if not f then return false end
+ f:write('state=',state,'\nstatus=',state,'\nrunId=',cfg.runId,'\n')
+ for k,v in pairs(fields or {}) do if v==nil then v='unknown' end;f:write(k,'=',tostring(v):gsub('[\r\n=]',' '),'\n') end
+ f:close();return true
+end
+local function result(state,removed,cleared,reason,calls,restoreConfirmed)
+ return writeStatus(state,{hooksRemoved=removed,bindingCleared=cleared,reason=reason or '',calls=calls or 0,restoreConfirmed=restoreConfirmed})
+end
+local function bound(s)
+ local ok,p=pcall(function() return LocalPlayerMgr:getInstance() end)
+ if not ok or p~=s.player then return false end
+ local roleOk,role=pcall(function() return p:getPlayerId() end)
+ return roleOk and eq(role,s.role)
+end
+local function validLocalRole(m,s)
+ if not m or not eq(val(m.m_PlayerId),s.role) then return false end
+ local pos=val(m.m_RoleIdPosDict[s.role]);local r=m.m_RoleIns[pos]
+ return r and eq(val(r.m_RoleId),s.role) and val(r.m_IsLocalPlayer)==true and r.m_Battlefield==m
+end
+local function send(s,op,...)
+ assert(bound(s),'role_binding_changed');s.inTest=true
+ local ok,e=pcall(s.sendOriginal,netconn,op,...);s.inTest=false;assert(ok,tostring(e))
+end
+local function status(s,state,extra)
+ local fields={characterSkillId=s.characterSkillId or 'unknown',petId=s.petId or 'none',petSkillId=s.petSkillId or 'none',round=s.target and s.target.round or 'unknown',calls=s.actions}
+ for k,v in pairs(extra or {}) do fields[k]=v end
+ local signature=table.concat({state,tostring(fields.calls),tostring(fields.characterSkillId),tostring(fields.petId),tostring(fields.petSkillId),tostring(fields.round),tostring(fields.reason or ''),tostring(fields.restoreConfirmed or ''),tostring(fields.hooksRemoved or ''),tostring(fields.bindingCleared or '')},'|')
+ if s.lastStatusSignature==signature and s.elapsed-(s.lastStatusAt or -1)<1 then return end
+ s.lastStatusSignature=signature;s.lastStatusAt=s.elapsed
+ writeStatus(state,fields)
+end
+local function actorResponse(s,d)
+ if eq(d.roleId,s.role) and d.type==5 and s.restoreSent then s.autoConfirmed=true end
+ local t=s.target;if not t or not t.offSent or (d.round~=nil and not eq(d.round,t.round)) then return end
+ if eq(d.roleId,s.role) and d.type==6 then t.offAck=true end
+ for _,a in ipairs(t.actors) do
+  if eq(d.roleId,a.roleId) then
+   if d.type==1 then a.ack=true
+   elseif not t.gotCommands and not a.ack and (d.type==2 or d.type==3 or d.type==4 or d.type==8) then a.rejectedAt=s.elapsed end
+  end
+ end
+end
+local function findEnemy(m,playerPos)
+ local base=playerPos>=10000 and 0 or 10000
+ for pos=base+1,base+5 do
+  local r=m.m_RoleIns[pos]
+  if r and r.m_Battlefield==m and type(r.getIsAlive)=='function' and r:getIsAlive() and tonumber(val(r.m_RoleId)) and tonumber(val(r.m_RoleId))>0 then return r,pos end
+ end
+end
+local function skillConfig(ui,roleId)
+ local configs=ui and ui.m_AutoSkill
+ local a=configs and (configs[roleId] or configs[tostring(roleId)])
+ if not a then return nil,'current_auto_skill_missing' end
+ local actType,skillId=val(a.actType),val(a.skillId)
+ if actType~=0 and actType~=1 and actType~=7 then return nil,'unsupported_act_type' end
+ if skillId==nil or not tonumber(skillId) then return nil,'current_skill_id_missing' end
+ if actType==7 then
+  local data=(data_SeniorPetSkill or {})[skillId] or (data_NormalPetSkill or {})[skillId] or (data_SpecialPetSkill or {})[skillId] or (data_Skill or {})[skillId]
+  if not data or not data.targetType or val(data.targetType[1])~=1 then return nil,'skill_target_type_unconfirmed' end
+ end
+ return {actType=actType,skillId=skillId}
+end
+local function actorValid(m,t,a)
+ local actor=m.m_RoleIns[a.position]
+ if actor~=a.object or actor.m_Battlefield~=m or not eq(val(actor.m_RoleId),a.roleId) or not actor:getIsAlive() then return false end
+ if a.actType==1 then return eq(a.targetId,a.roleId) end
+ local target=m.m_RoleIns[a.targetPosition]
+ return target==a.target and target.m_Battlefield==m and eq(val(target.m_RoleId),a.targetId) and target:getIsAlive()
+end
+local function requestRestore(s)
+ if not s.offPending or s.autoConfirmed then return true end
+ if not bound(s) then s.restoreAbandoned=true;return true end
+ local m=ClassIns and ClassIns['BattlefieldView.Ins'];local ui=m and m.m_BattleUI
+ if ui and val(ui.m_AutoStatus)==true then s.autoConfirmed=true;return true end
+ if not s.restoreSent then
+  local ok=pcall(send,s,3473,1)
+  if not ok then return false end
+  s.restoreSent=true;s.restoreAt=s.elapsed
+ end
+ return s.autoConfirmed
+end
+local function cleanup(s,reason)
+ if s.cleaned then return true end
+ if not requestRestore(s) then status(s,'stopping',{reason=reason,restoreConfirmed=false});return false end
+ if rawget(_G,key)~=s then status(s,'stopping',{reason='state_ownership_changed'});return false end
+ local clean=true
+ for id,fn in pairs(s.originals) do
+  if ProtoFunc[id]==s.hooks[id] then ProtoFunc[id]=fn elseif ProtoFunc[id]~=fn then clean=false end
+ end
+ if s.sendOriginal then
+  if netconn.send==s.sendHook then netconn.send=s.sendOriginal elseif netconn.send~=s.sendOriginal then clean=false end
+ end
+ if not clean then status(s,'stopping',{reason='owned_hook_changed',restoreConfirmed=s.autoConfirmed or not s.offPending});return false end
+ local binding=io.open(cfg.bindingPath,'w')
+ if binding then binding:write('runId=',cfg.runId,'\nplayer=\nmanager=\n');binding:close() else status(s,'stopping',{reason='binding_clear_failed'});return false end
+ if s.timer then pcall(scheduler.unscheduleGlobal,s.timer);s.timer=nil end
+ rawset(_G,key,nil)
+ s.cleaned=true
+ result('stopped',true,rawget(_G,key)==nil,reason,s.actions,s.autoConfirmed or not s.offPending)
+ return true
+end
+if cfg.mode=='stop' then
+ local s=rawget(_G,key)
+ if s then s.stopRequested=true;s.stopReason='user_stop';return 0 end
+ result('stopped',true,true,'nothing_owned');return 0
+end
+if os.time()<(rawget(_G,stopKey) or 0) then return 0 end
+local prior=rawget(_G,key)
+if prior then
+ if prior.runId~=cfg.runId then prior.stopRequested=true;prior.stopReason='worker_replaced';writeStatus('waiting_conflict',{reason='prior_run_cleanup'}) end
+ return 0
+end
+if rawget(_G,playerState) or rawget(_G,skipState) then writeStatus('waiting_conflict',{reason='active_battle_assistant'});return 0 end
+local playerOk,player=pcall(function() return LocalPlayerMgr:getInstance() end)
+if not playerOk or not player then writeStatus('waiting_role',{reason='player_manager_unavailable'});return 0 end
+local roleOk,role=pcall(function() return player:getPlayerId() end)
+if not roleOk or not tonumber(role) or tonumber(role)<=0 then writeStatus('waiting_role',{reason='role_not_ready'});return 0 end
+assert(C2S_BattleOperate==3470 and C2S_BattleCmdPlayOver==3472 and C2S_BattleChangeAuto==3473 and CMD_TYPE_USESKILL==7,'protocol_changed')
+local s={runId=cfg.runId,elapsed=0,actions=0,playovers=0,originals={},hooks={},roundMark=nil,stopRequested=false,player=player,role=role}
+rawset(_G,key,s)
+local function leaseAlive()
+ for _,p in ipairs({cfg.leasePath,cfg.workerPath}) do
+  local f=io.open(p,'r');if not f then return false end
+  local n=tonumber(f:read('*a'));f:close();if not n or os.time()-n>5 then return false end
+ end
+ return true
+end
+local ok,e=pcall(function()
+ for _,id in ipairs({3584,3585,3586,3587,3581}) do
+  s.originals[id]=assert(ProtoFunc[id],'handler_missing_'..id)
+  s.hooks[id]=function(d,...)
+   if not s.cleaned and bound(s) and type(d)=='table' then
+    if id==3587 then actorResponse(s,d) end
+    if id==3585 and s.target and eq(d.round,s.target.round) then s.target.gotCommands=true end
+    if id==3586 and d.autoStatus==true and s.restoreSent then s.autoConfirmed=true end
+    if id==3584 and s.restoreSent and val(d.autoStatus)==true then s.autoConfirmed=true end
+   end
+   return s.originals[id](d,...)
+  end
+  ProtoFunc[id]=s.hooks[id]
+ end
+ s.sendOriginal=netconn.send
+ s.sendHook=function(self,op,...)
+  if not s.cleaned and bound(s) and (op==3470 or op==3472 or op==3473) then
+   local a={...}
+   if op==3470 then s.lastAction={round=a[1],roleId=a[3],targetId=a[4],actType=a[5],skillId=a[6]} end
+  end
+  return s.sendOriginal(self,op,...)
+ end
+ netconn.send=s.sendHook
+ s.timer=scheduler.scheduleGlobal(function(dt)
+  if s.cleaned then return end
+  s.elapsed=s.elapsed+(type(dt)=='number' and math.max(0,dt) or 0)
+  local tickOk,tickErr=pcall(function()
+   if rawget(_G,key)~=s or not bound(s) then s.stopRequested=true;s.stopReason='role_changed' end
+   if not leaseAlive() then s.stopRequested=true;s.stopReason='lease_expired' end
+   if rawget(_G,playerState) or rawget(_G,skipState) then s.stopRequested=true;s.stopReason='assistant_conflict' end
+   if s.stopRequested then cleanup(s,s.stopReason);return end
+   local m=ClassIns['BattlefieldView.Ins'];local ui=m and m.m_BattleUI
+   if not JudgeIsInWar() or not m or val(m.m_IsClose)==true then s.target=nil;requestRestore(s);status(s,'waiting_battle');return end
+   assert(validLocalRole(m,s),'local_role_binding_changed')
+   if not s.manager then
+    s.manager=m
+    local f=assert(io.open(cfg.bindingPath,'w'));assert(f:write('runId=',cfg.runId,'\nplayer=',tostring(s.role):gsub('[\r\n=]',' '),'\nmanager=',tostring(m):gsub('[\r\n=]',' '),'\n'));assert(f:close())
+   elseif s.manager~=m then s.stopRequested=true;s.stopReason='battle_manager_changed';cleanup(s,s.stopReason);return end
+   if ui and val(ui.m_AutoStatus)==true and s.restoreSent then s.autoConfirmed=true end
+   local round=tonumber(val(m.m_CurRoundNum));local battle=val(m.m_BattleId)
+   if not round or round<=0 or not tonumber(battle) or tonumber(battle)<=0 then status(s,'waiting_battle');return end
+   local t=s.target
+   if t then
+    if m~=t.manager or not eq(battle,t.battle) or not eq(round,t.round) then
+     s.target=nil;requestRestore(s);status(s,'waiting_battle');return
+    end
+    if val(m.m_CmdRound)==t.round or t.gotCommands then t.gotCommands=true end
+    if not t.actionSent then
+     if val(m.m_CmdRound)==t.round then s.target=nil;requestRestore(s);return end
+     if not t.offAck then status(s,'running');return end
+     for _,a in ipairs(t.actors) do assert(actorValid(m,t,a),'actor_binding_changed') end
+     t.actionSent=true
+     for _,a in ipairs(t.actors) do
+      local now=s.elapsed;local retry=a.calls>0
+      local due=a.rejectedAt and a.rejectedAt+0.05 or a.lastSent+0.2
+      if a.calls==0 or now+0.000001>=due then
+       if retry then a.calls=a.calls+1 else a.calls=1 end
+       a.lastSent=now;a.rejectedAt=nil;s.actions=s.actions+1
+       send(s,3470,t.round,0,a.roleId,a.targetId,a.actType,a.skillId)
+      end
+     end
+     status(s,'running');return
+    end
+    if not t.gotCommands then
+     for _,a in ipairs(t.actors) do
+      if not a.ack then
+       local due=a.rejectedAt and a.rejectedAt+0.05 or a.lastSent+0.2
+       if s.elapsed+0.000001>=due then
+        assert(actorValid(m,t,a),'retry_actor_binding_changed')
+        a.calls=a.calls+1;a.lastSent=s.elapsed;a.rejectedAt=nil;s.actions=s.actions+1
+        send(s,3470,t.round,0,a.roleId,a.targetId,a.actType,a.skillId)
+       end
+      end
+     end
+     status(s,'running');return
+    end
+    for _,a in ipairs(t.actors) do if not a.ack then status(s,'running');return end end
+    if not requestRestore(s) then status(s,'stopping',{reason='restore_auto'});return end
+    if not t.playoverSent then
+     t.playoverSent=true;s.playovers=s.playovers+1
+     send(s,3472,'',s.role,t.round)
+    end
+    s.target=nil;s.roundMark=tostring(battle)..':'..tostring(round);status(s,'running');return
+   end
+   if eq(val(m.m_CmdRound),round) then status(s,'running');return end
+   local mark=tostring(battle)..':'..tostring(round)
+   if mark==s.roundMark then status(s,'running');return end
+   if not ui or val(ui.m_AutoStatus)~=true then status(s,'waiting_config',{reason='original_auto_not_true'});return end
+   local playerPos=tonumber(val(m.m_PlayerPos));if not playerPos or playerPos%10000<1 or playerPos%10000>5 then status(s,'waiting_role');return end
+   local player=m.m_RoleIns[val(m.m_PlayerPos)]
+   if not player or player.m_Battlefield~=m or not player:getIsAlive() or not eq(val(player.m_RoleId),s.role) then status(s,'waiting_role');return end
+   local playerCfg,playerErr=skillConfig(ui,s.role)
+   if not playerCfg then s.characterSkillId='unknown';status(s,'waiting_config',{reason=playerErr});return end
+   local actors={}
+   local function addActor(obj,pos,id,skill)
+    local target,targetPos
+    if skill.actType==1 then target=obj;targetPos=pos
+    else target,targetPos=findEnemy(m,playerPos) end
+    if not target then return false end
+    actors[#actors+1]={object=obj,position=pos,roleId=id,actType=skill.actType,skillId=skill.skillId,target=target,targetPosition=targetPos,targetId=val(target.m_RoleId),calls=0,lastSent=0,ack=false}
+    return true
+   end
+   if not addActor(player,val(m.m_PlayerPos),s.role,playerCfg) then status(s,'waiting_battle');return end
+   local petPos=val(m.m_PetPos);local pet=petPos and m.m_RoleIns[petPos]
+   if pet and pet.m_Battlefield==m and type(pet.getIsAlive)=='function' and pet:getIsAlive() then
+    local petId=val(pet.m_RoleId)
+    if tonumber(petId) and tonumber(petId)>0 and not eq(petId,s.role) then
+     local petCfg,petErr=skillConfig(ui,petId)
+     if not petCfg then s.characterSkillId=playerCfg.skillId;s.petId=petId;s.petSkillId='unknown';status(s,'waiting_config',{reason=petErr});return end
+     if not addActor(pet,petPos,petId,petCfg) then status(s,'waiting_battle');return end
+     s.petId=petId;s.petSkillId=petCfg.skillId
+    end
+   else s.petId='none';s.petSkillId='none' end
+   s.characterSkillId=playerCfg.skillId
+   s.target={manager=m,battle=battle,round=round,offSent=true,offAck=false,actors=actors,startedAt=s.elapsed}
+   s.offPending=false;s.restoreSent=false;s.autoConfirmed=false
+   send(s,3473,0)
+   s.offPending=true
+   status(s,'running')
+  end)
+  if not tickOk then
+   s.lastError=tostring(tickErr)
+   status(s,'error',{reason=s.lastError})
+   s.stopRequested=true;s.stopReason='lua_error'
+   cleanup(s,s.stopReason)
+  end
+ end,0.01)
+ status(s,'waiting_battle')
+end)
+if not ok then
+ if s.timer then pcall(scheduler.unscheduleGlobal,s.timer) end
+ for id,fn in pairs(s.originals) do if ProtoFunc[id]==s.hooks[id] then ProtoFunc[id]=fn end end
+ if s.sendOriginal and netconn.send==s.sendHook then netconn.send=s.sendOriginal end
+ if rawget(_G,key)==s then rawset(_G,key,nil) end
+ writeStatus('error',{reason=tostring(e),hooksRemoved=true,bindingCleared=rawget(_G,key)==nil})
+end
+return 0

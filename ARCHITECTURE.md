@@ -1,5 +1,13 @@
 # 视觉识别架构
 
+## 独立战斗快进 APK（2026-10-12）
+
+`mobile-battle-skip` v0.3.0 使用平台 Java MainActivity 作为唯一桌面入口，提供启动/停止两个按钮；按钮调用仅应用内部可访问的 Start/Stop 别名，再由系统 NativeActivity 和 Rust 启动壳处理请求。启动壳通过 Root 启动模拟器内部的 Rust worker；worker 内置 Frida core 并直接连接本机游戏进程，无桌面控制器和独立 frida-server 依赖。实际游戏线程调用使用内置 Java 桥及 Lua，运行链并非全部由 Rust 实现。
+
+v0.2.0 在绑定的 BattlefieldView 实例上临时覆盖 `startReadNextCMD`：本回合状态初始化完毕、第一条普通指令尚未解析时，同步快速解析剩余命令并执行已核实的普通战斗收尾逻辑。已有回合的轮询补救保留当前播放索引，避免重复应用命令状态；`netconn.send` 的本方结束通知按战斗/回合发送前防重，其他通知透传。实例原始槽（包括继承方法的 nil 槽）与发送入口均按所有权恢复。
+
+worker 绑定包名、PID、启动时刻和 executable；Lua 绑定本方角色、manager 及当前回合，身份或业务校验失败时停止。停止等待真实 Lua 清理结果确认后才卸载桥接会话。当前实现用于已验证的 x86_64 Root 模拟器与游戏版本。
+
 ## 范围
 
 本项目的视觉自动化只负责读取目标窗口客户区截图、识别状态并执行已有的鼠标动作。它不依赖上传的 Android APK 私有代码、私有模型或运行时资源，也不负责抓包、注入或发送网络数据。
@@ -733,3 +741,122 @@ LuaJIT 仍可能在最后一次校验之后移动或回收表节点，`/proc/PID
 ## LangSmith tracing
 
 Python vision worker requests can be traced to the fixed `my-first-agent` project when its local API key is configured. The key is read only from `%LOCALAPPDATA%\XNAS\WPE\vision-worker\langsmith.env`. Traces retain only the request method, boolean result flags, and elapsed time; image data, OCR text, action coordinates, and session tokens are removed.
+
+## 独立战斗状态观察面板
+
+`tools/enemy-status-panel/` 是独立 Python/Tkinter 桌面工具，双击启动器自动轮询，不依赖封包机器人。读取器通过 ADB 只读访问 Android 进程映射和内存；不提供 serial 时只连接唯一在线设备，并将解析后的实际 serial 用于缓存键。版本化用户缓存只保存候选 manager 地址，按 serial、package、PID、startTicks、executable 隔离；使用前复核 manager，失效时删除候选并回退冷发现。缓存通过临时文件替换，只在完整一致帧或身份验证后的未进战结果写入。相同进程下重开面板复用缓存曾在双侧扩展前现场确认；新进程首次冷发现的耗时与可靠性尚未完成现场验收。
+
+每帧新建页读取器，重新绑定进程身份、manager、BattleId 与 round。GC64 userdata 的环境引用按绝对 64 位 GCRef 读取；`m_RoleIns` 的 array 从索引零起解析，并读取合法 hash 节点。先以 manager 的本地角色 ID、位置字典、本地标记和战场引用绑定本地角色，再依据本地主位位置确定双方各自的主单位五槽和宠物五槽：本地主位 1..5 时本方为 1..5 / 101..105、对方为 10001..10005 / 10101..10105；本地主位 10001..10005 时本方为 10001..10005 / 10101..10105、对方为 1..5 / 101..105。第三组孩子及预创建辅助对象不进入任一侧十槽。本地位置不属于已确认主位族时拒绝猜测。每个已映射对象（包括本地角色）检查角色 ID、位置、本地标记与当前战场，资源仅取 HP、MP、`m_Speed`，并要求有限数值。结束检查前清除页缓存，再核对进程、战场、回合、表引用与字典内容；期间发生变化则废弃整帧。
+
+面板左右并列显示“本方”和“对方”，每侧的人物、宠物各成一列并从上到下排列五槽，共二十槽同时可见；本方宠物列在前，人物列在后。卡片保留 position ID 和游戏位置顺序。SP 标签表示速度。空槽保留、死亡角色标注死亡；失败时清除两侧属性显示并分别保留最后确认站位，成功确认进程或 BattleId 变化、明确未进战或用户 Stop 时重置映射。`m_IsLocalPlayer` 只校验角色是否为本地玩家本人，不用于判断阵营；双方由确认的位置族决定。单位名称未确认。双侧扩展前，单侧版本曾取得跨回合完整设备帧并通过实际窗口确认显示和更新，单次读取中位数约 1.55 秒；双侧版本已在 Android 14 x86_64 `emulator-5554` 的实战第 1 回合确认双方四列 HP/MP/SP 与 5→1 排列。跨回合更新速度和进程重启后的冷定位尚未验收。
+
+冷发现首遍完整扫描匿名映射，同时收集 GCstr 键及结构合格的 table header/node span；第二遍只扫描页对齐的 node-span 并集，并保留 span 所有权与 manager 唯一性判定。表头 marker 只访问满足 8 字节对齐的位置，扫描区间不跨映射合并，各阶段前后复核身份与映射快照。冷发现失败后等待 10 秒再试；相关历史失败与模拟验证记录见 `PROJECT_STATUS.md`。整个工具不写内存、不注入、不调用游戏方法、不暂停、不发包。
+
+每次点击启动生成独立取消事件，经 `sample` 传入两个发现阶段；区块间与候选检查前响应用户停止，取消不合并部分发现结果或写入新绑定缓存，并关闭扫描会话。已发出的有界 ADB 读取可能要等本次操作结束。扫描内部失败通知与用户取消事件独立，普通失败仍向面板报告并按延迟重试。读不了的 manager 候选跳过，只在成功解析的候选中要求唯一匹配；取消异常原样传播。过期提示只适用于活跃且有效的帧，不覆盖失败诊断或停止状态。
+
+Windows 无控制台启动使用 `打开战斗面板.vbs -> 隐藏 PowerShell -> pythonw/Tkinter`。面板的 `_WindowlessSubprocess` 为 Windows run/Popen 附加 `CREATE_NO_WINDOW`，覆盖直接 ADB、扫描会话及私有加载 probe 的页读取会话；保留原进程标志，不改共享 probe 源码或进程全局 subprocess 模块。非 Windows 不附加标志。CMD 入口仍支持自定义设备/包名参数，其自身可能短暂显示控制台；无黑框双击入口为 VBS。
+
+## 独立坐骑速度保持 APK
+
+`mobile-mount-speed-hold/` 是独立 Android 模拟器应用，包名 `com.xnas.wpe.mounthold`，首版只打包 x86_64。Activity 让用户选择精确游戏包名并设定目标速度，默认值 5000；包名仅允许 `com.gdoo.dhxy` 和 `com.gdoo.xxxy2026`。APK 不复用桌面预设 GUID，也不与桌面数据库同步。首次启动保持前会申请 Android“显示在其他应用上层”权限；Android 前台服务显示可拖动的状态悬浮条，包含“停止并恢复”操作，并负责常驻通知和 worker 生命周期，通过 `su` 启动包内 Rust ELF；所有坐骑发现、TValue 校验、写入、journal 与恢复逻辑均在 Rust worker。
+
+Rust worker 异常退出后，前台服务按 1、2、4、8、16、30 秒退避持续重试，进入 `holding_speed` 后重置退避；Android 回收服务进程时通过 `START_REDELIVER_INTENT` 重放最近的启动或停止请求及参数。journal 被阻止或 worker 报错但未确认恢复时暂停自动重试并保留异常提示，避免跳过安全恢复状态。
+
+Android 服务把生命周期、worker 状态变化、退出码、重试计划和恢复结论追加到应用私有的 `files/logs/mount-hold.jsonl`。文件限制为 1 MiB，并保留 3 个轮转文件；高频写入核验状态按 30 秒间隔汇总。日志按 service session 和 worker run 关联，错误详情经过白名单过滤，不保存 PID、内存地址、原始 TValue 或 stderr 原文；写入失败不改变保持流程。
+
+Rust worker 每轮重新绑定目标进程的 package、PID、startTicks 和 executable。首次扫描使用有效的 `m_PlayerId` 与 `m_IsLocalPlayer` 唯一定位角色；缓存命中后保留首次绑定的玩家编号，不再因当前编号无效或变化触发重扫，但每轮仍确认 `m_IsLocalPlayer`、`m_RoleMoveSpeed`、`m_Gx`、`m_Gy` 和字段位置；缓存命中时本地角色标记若暂时为 false，会在 50 ms、100 ms 后各清除本轮页缓存重读一次，最多额外等待 150 ms；仍未确认则沿用已知表刷新和全内存发现，确认前不继续写入。目标速度只接受受支持、有限且为正数的 TValue；每 100 ms 复核绑定，写入前持久化恢复 journal，写后读回确认。保持中若当前值回到 journal 中记录的原始基准值，worker 会再次比较写入目标值；单次写后读回仍为基准值时最多连续重试 3 轮，每轮都重新确认进程、本地角色标记和字段地址。地址重绑后读到基准值不会清零计数，只有重新确认目标值才清零；未知 TValue、绑定变化或连续 3 次仍读回基准值都会停止并按原 journal 安全恢复。停止时仅在进程身份、表和节点绑定仍一致且当前值仍是工具写入值时恢复；分歧或身份变化保留 journal 并停止，旧 journal 未安全处理前不继续写入。冷扫描用于地址失效后的重新定位。
+
+worker 的 `ERROR` 状态携带经过字符过滤的内部错误类别和原因；候选为零与多个时分别报告。首次扫描无候选时以 2、4、8、16、30 秒间隔继续等待上马，用户停止可打断等待；候选歧义仍立即停止。遇到终止错误时，Android 前台服务保留悬浮错误信息和通知供用户查看、关闭；worker 已退出且 `active=false`，不会继续改写内存。
+
+此前版本在 worker 完成恢复后立即销毁前台服务，导致终止错误提示和悬浮条一同消失；修复后终止错误会保留在悬浮条和通知中。已在 `emulator-5554` 确认 Android overlay 窗口曾成功创建。真实目标游戏内的速度保持效果仍待用户现场确认。
+
+## 模拟器内战斗观察 APK
+
+2026-10-08：启动页提供 `com.gdoo.xxxy2026` 与 `com.gdoo.dhxy` 的精确选择并保存；服务捕获启动时的包名，两个目标使用独立 manager 候选缓存。冷发现先扫描字段字符串，再找 `m_RoleIns` 所属节点，最后只保留覆盖这些节点的表头，保留完整战斗绑定与候选上限。EBP2 增加槽位状态 4：身份、HP/MP 已验证但缺少 `m_Speed`，SP 编码哨兵为 0，界面显示“—”；存活角色的已存在但无效的速度字段仍拒绝样本。旧 Java 解码器拒绝状态 4，因此 worker 与 APK 必须一起更新。
+
+`mobile-battle-panel/` 是独立 Android 应用（`com.xnas.wpe.battlepanel`），与桌面面板和 WPE MobileSync 预设控制端分开。Java 前台服务显示可拖动、收起的双方二十槽半透明面板；Rust x86_64 Android worker 作为独立 Root 子进程运行。Java 与 worker 通过本地有界 EBP2 二进制帧传值，不经电脑或网络：40 字节头部、二十个 32 字节槽位，固定载荷 680 字节，最大载荷 1024 字节。帧顺序为本方十槽、对方十槽，每侧均为人物五槽后接宠物五槽。面板显示已验证槽位的 HP、MP、SP；SP 优先读取 `m_Speed`，字段缺失时仅从精确绑定的本方本人、宠物与伙伴缓存读取客户端属性速度，战斗增减速后的最终速度未确认。未知、空槽、死亡和过期状态不会伪装成数值 0。横屏对方在左、本方在右且两侧等宽并列；对方人物在左、宠物在右，本方宠物在左、人物在右；窄屏上下滚动；四列均从上到下显示槽位 5→1，以匹配游戏中 1 号位在最下方的站位；Rust 帧保持升序位置，反向只发生在 Java 行绑定。
+
+Rust worker 只读 `/proc/<pid>/mem`，绑定 package、PID、startTicks 与 executable；保留 GC64 userdata 环境、array/hash、BattleRole、BattleId/round、position map 和整帧一致性校验。冷发现对候选管理表调用字段类型校验，并要求活跃战斗候选通过角色位置表和双方二十槽角色验证；本地角色也读取 HP、MP、`m_Speed`。属性回退从当前本地角色的 `initData` Lua 闭包环境进入 `ClassIns`，按完整实例键、当前角色 ID 与人物/宠物位置族绑定；本人和宠物读取 `PropertyValueDict.SP`，伙伴合计 `FiedPro` 数组的 type 52。每帧重新读取，清除页缓存后复核对象链与数值，进程、映射或绑定变化时丢弃该帧。对方与其他玩家无已验证属性来源时保持未知。Rust 写帧前和 Java 解析时都检查精确槽数、载荷长度、双方位置族和保留字节。manager 地址缓存在应用私有目录，只有完整样本成功后才写入；每次复用前重新验证，旧缓存版本会忽略。缓存不是稳定指针。冷发现失败后按 2、4、8、16、30 秒间隔重试。Java 服务使用 `su -c` 启动打包在 `lib/x86_64/libenemy_reader.so` 的 Android ELF；普通 APK UID 不会自动获得跨进程读取权限。
+
+面板使用半透明底色和亮边；首版不启用整窗后方模糊，也不使用隐藏 API。EBP2 双侧 APK 已在 Android 14 x86_64 `emulator-5554` 安装，以 Root 启动 worker，并在实战第 1 回合现场确认本方/对方四列与实时 HP/MP/SP；游戏进程在安装前后均为 PID `28544`。跨回合更新和游戏进程重启后的冷定位尚未验收。Root 对话框显示前不创建覆盖窗，集成脚本验证通过；历史现场结果见 `PROJECT_STATUS.md` 对应日期记录。
+
+## 独立金蟾操作台
+
+mobile-jinchan采用Android原生Java界面和Rust一次性执行层，独立包名com.xnas.wpe.jinchan。Java只展示候选、确认与结果并启动Root worker；Rust校验十个业务参数，游戏包名只允许com.gdoo.dhxy或com.gdoo.xxxy2026，检查应用私有路径/所选包名的唯一进程身份/游戏文件所有权，用flock串行attach，桥接内置JS与Lua至游戏GL线程。Lua通过原有JinChanMgr调用候选查询、刷新、生成、归还，绑定游戏包名、服务器返回索引和五分钟有效的候选token，不伪造成功，不自动重发写操作。结果经nonce/restored校验后回传应用私有目录；未确认清理则写worker.blocked阻止后续叠hook。
+
+游戏包名选择保存在操作台偏好中；切换游戏或部位、写操作、以及结果不确定的刷新都会使本地候选失效，避免跨角色或跨客户端复用。进程尚未找到时没有加载Lua，结果按未执行处理，不误报Lua清理失败。异步操作保持BUSY直到界面线程检查返回结果仍属于当前游戏选择。
+
+生成和归还依据背包、货币变化及服务器响应确认，旧候选在成功后失效。游戏文字原字节以hex回传，由Android UTF8/GB18030严格解码，以防旧编码损坏JSON。APK提交后返回游戏处理，用户回来查看结果；不要求电脑常驻，也不修改飘渺助手和战斗快进。首版没有自动刷词条、奖励领取和升星升阶。
+
+### 金蟾独立版 0.2.0 常驻执行
+
+本节只记录独立 APK 0.2.0 的验证范围；不代表 `mobile-suite` 中金蟾模块的当前支持范围。
+
+ConnectionService 持有不可变包名/token 的连接，前台通知维持 Rust --serve worker。十行业务请求通过应用私有目录原子替换提交，状态心跳与结果按 token/nonce 校验；worker 校验文件归属、大小、包名及进程身份，非法私有请求终止连接，不自动重放。每次只加载/卸载本次 JS，正常操作复用 Frida session。停止和进程结束释放连接；Lua 清理未知保留阻止标记。
+
+候选指纹使用固定顺序数组，查询时核对原始响应与管理器缓存一致。模块初始化异常以受保护结果返回；业务仅已验证 DHXY，XXXY 当前缺失 JinChanMgr。助手不再强制先归还才能发送生成，但当前 DHXY 原入口仍拒绝第二件。没有改动服务器规则，归还对象不明确时保持禁用。
+
+## 统一 Android 宿主（2026-10-13）
+
+`mobile-suite` 是新增独立应用工程。原六功能的 Java package、独立 Service/native worker 和业务资产保留在集成副本，宿主 `ActivityGroup/LocalActivityManager` 在右侧承载模块页面，左侧持续显示功能导航；没有使用其他 APK 的启动快捷方式替代整合。切换页面不请求停止后台服务。宿主负责选中页恢复、通知/悬浮入口定向、子页运行时权限回调和金蟾弹窗窗口上下文。
+
+`ModuleActivity`/`ModuleService` 将文件、缓存与偏好限定到各模块；各 worker 使用对应套件路径契约，游戏侧 Lua 文件仍写游戏 UID 可读的专属缓存。`BattleConflictGate` 原子持久化预约用于循环/快进共享 Hook 槽的双向互斥，只有模块自己的明确清理状态才能释放。其它功能保持自己的生命周期，任意并发组合未作为已确认能力。构建、源码与 JNI 生成输出全部由本工程管理，旧模块不作为 Gradle 子工程引用。细节见 `mobile-suite/README.md`。
+
+1.0.1 版在宿主增加六模块本地状态摘要：侧栏显示最近状态，详情区展示当前页状态、目标、说明和下一步提示；宿主只轮询当前页面，模块没有提供证据时显示“未确认”，不从服务存活推导游戏已绑定或战斗帧有效。窄屏侧栏收窄，暗雷、战斗循环和快进页支持纵向滚动。构建脚本只对套件生成的八个 JNI 副本执行 NDK `llvm-strip --strip-unneeded`；Cargo 原件和独立 APK 源码不参与裁剪。战斗观察页的抗性查询当前明确只支持 DHXY；目标选择为 XXXY 时，Java 层拒绝查询，Rust 侧身份与游戏缓存也保持 DHXY 校验。
+
+2026.10.13.1 版把目标游戏选择收敛到宿主的单一偏好项，默认 DHXY；各功能页和服务读取该值，不再各自选择游戏。切换目标前，已加载模块必须都明确处于已停止状态；状态未知、等待、运行或清理时禁止切换。暗雷遇敌、战斗循环和战斗快进仅允许 DHXY，XXXY 下保持停止入口可用并阻止启动；角色速度保持、金蟾和战斗面板主读取允许两种游戏。战斗面板抗性查询继续只支持 DHXY。每项 worker 仍独立扫描并校验 PID、进程启动身份和自身会话；宿主选择共享的是目标包名，不是可跨 worker 复用的 PID 或 Frida session。各功能的启停仍独立，金蟾仍只在用户明确点击连接时连接目标。
+
+角色速度保持的外部内存写入入口命名为 `checked_write`：它校验进程身份、比较 8 字节 TValue、写入并回读，但 `/proc/<pid>/mem` 提供的分步读写不能构成对游戏线程的原子 CAS。游戏侧在比较后发生的更新仍可能被覆盖；恢复日志和回读不能消除该窗口。这是当前已确认的未解决限制，消除它需要目标进程内执行真正的原子 compare-exchange，不能靠 worker 内部锁或额外一次读取保证。
+
+### 飘渺助手套件后台运行界面
+
+套件不再声明 SYSTEM_ALERT_WINDOW。暗雷、角色速度保持和战斗循环删除窗口创建及权限门槛，后台 worker、通知和停止恢复逻辑保留；战斗快进和金蟾原本无独立悬浮窗口。战斗面板由 Activity 渲染属性与抗性，started foreground service 只保留读取、状态和查询，本地 Binder 传递结果，不保存 Activity/View。Activity 只绑定已有服务，离开页面只解绑；手动启动和停止入口仍在应用内。循环与快进互斥及 cleanup_unconfirmed 保护不变。
+
+战斗面板应用内布局恢复原版本的双方分栏、人物/宠物阵型卡和5到1槽位排列，保留属性/抗性双页及选择器。横屏并排、竖屏上下排；没有恢复窗口覆盖权限或悬浮窗口。
+
+套件导航顺序登记为mounthold、battleskip、battleloop、battlepanel、jinchan、anlei。battleloop显示名为战投跳过，jinchan为金蝉装备，内部状态目录/协议未重命名。抗性101至113项目保持原映射，以13按钮高亮选择；按钮在隐藏页构建时先生成默认3列，宽度调整异步重排并先从旧row移除，防止首次高度为0和父容器冲突。
+
+### 战投跳过旧任务核查
+
+仅battleloop的 --reconcile 分支不初始化Frida或执行Lua。recovery.rs负责纯决策，main.rs持有运行锁、strict扫描/proc与原子保存私有recovery-identity。身份含version/package/pid/startTicks/exe/boot_id。缺旧记录时保存唯一当前游戏观察基准，原进程消亡证明通过后写process-ended独立终态；不伪造hooksRemoved或restoreConfirmed。BattleLoopService显式CHECK控制核查生命周期，核查未知不不断重试，活worker不会因CHECK被停。BattleConflictGate保留互斥但支持有验证来源的进程结束终态，旧提示仅在所有战斗活动均已确认终止时清除。扫描失败时保留旧session与身份进入受控cleanup；仍可通过原PID目录、ticks、boot核对独立确认消亡，避免永久等待死进程回执。
+#### 统一APK：紧凑横屏与单独战斗悬浮面板（2026-10-13）
+
+CompactUi以ApplicationContext的资源为基准，只覆盖densityDpi及fontScale；宿主、ModuleActivity和服务派生overlay Context各自应用同一比例，避免嵌套缩放叠乘，保留orientation等配置。八个Activity固定横屏。全局目标选择通过标题行小按钮与单选Dialog保留原目标持久化与运行锁。
+
+battlepanel/MainActivity仅承担启动/停止与权限反馈。BattleOverlayService拥有WindowManager窗口、刷新handler、BattleOverlayRenderer与只读reader，renderer仅保留服务派生Context，不保存Activity；收起切换为可拖动球，展开复用同一reader和快照，停止移除两类窗口。原13字段协议不变，UI显式选择200,201,204,205,206,207,212,211；双方阵型均人物在上、宠物在下。错误启动参数不停止已有会话，撤销悬浮权限移除窗口但已有后台读取保留到用户停止。
+
+所有服务入口在提前返回之前完成前台登记。BattleSkipRecoveryService只在用户启动交互触发时执行native --reconcile，先登记通知、不启动辅助worker，45秒限制与锁忙均不提供清理证明；Rust在worker.lock内清旧身份并写waiting_game，再在attach前记录当前进程身份。reconcile持recovery.lock并检查worker.lock；未派发starting、身份/权限/扫描未知均failclosed。BattleConflictGate允许skip带本模块标识的独立process-ended证明，loop保留自身旧格式兼容，互相不能代替。实际恢复后需用户再次点击启动，打开页面不执行Root或Frida。
+#### 悬浮球手势（2026-10-14候选）
+
+FloatingBallGesture不依赖Android：以固定pointerId、DOWN原始屏幕坐标和窗口起点计算总位移，按触摸slop分辨点击/拖动并裁剪窗口边界；release补算UP最终位置，cancel禁止点击。Service只负责把MotionEvent转交纯状态类、应用WindowManager位置，并在拖动后记录球心。API29以上按指针索引取raw坐标，旧平台使用第一指针raw与local差值；MotionEvent版本requestUnbufferedDispatch可用于API21以上。球窗口使用76dp尺寸，展开再收起复用最近球心；读取worker和抗性查询路径不参与手势状态。
+悬浮球修正版使用固定大小装饰子视图与独立FrameLayout host。ballParams保存虚拟球几何，ballHostParams保存真实窗口几何；同一已附加host在DOWN临时扩屏，MOVE只改子视图translation，UP/CANCEL缩回球几何，球外DOWN取消且恢复小窗。展开面板仍通过原窗口切换入口，记录球心复用。此路径没有新增权限或隐藏API；正式代码移除调试extra/log。实机长拖的conflicting pointer actions仍未完全排除，详见PROJECT_STATUS.md。
+
+### 2026-10-14 战斗循环动画收尾
+
+统一APK的battleloop在所需人物/宝宝行动确认及本回合命令到齐后，对未完成动画调用fastAnalyzeSurplusCMD处理剩余命令；处理前后保持本方角色、manager、战斗号、回合号绑定，verifyRoundData后再次检查完成态。已完成状态不要求命令表/播放游标仍有效，也不重放。自然与模块3472统一经本方战斗回合去重，其他操作透传；现有自动状态恢复、停止清理保持。离线回归入口为mobile-suite/tests/battle-loop-sandbox/run-tests.ps1。该收尾仅处理本机动画，不代表全队快进。
+
+## 2026-10-16 整合 APK 激活码授权候选
+
+`mobile-suite` 候选版本 code 6 / `2026.10.16.0-activation` 新增独立授权服务与 Android 激活页面。`licensing-server` 使用 Node.js 24 内置 HTTP、crypto、SQLite，无外部依赖；管理端只监听回环，客户端公网入口需另外部署 HTTPS 代理。首次激活事务绑定一个随机安装凭证并连续计时，数据库只保存激活码、会话、安装凭证的哈希；同一授权最多 8 个会话。停用/解绑撤销全部会话，解绑保留原到期。安装显示摘要统一为 SHA-256 前12位大写，便于管理页定位，不代替认证。
+
+`LicenseManager` 以请求开始的 elapsedRealtime 和服务端短租约计算期限，默认服务地址为空且禁止启动；`SuiteApplication` 监督续租。明确401/403撤销本地凭证，临时网络失败保留凭证但不延长授权。首次无授权记录不启动功能服务。Java各模块的启动门禁和原生 `native/license_lease.rs` 共享 bootId+BOOTTIME 租约文件，最长120秒；停止、恢复、reconcile不受启动授权限制。快进game-cache短租约镜像在Lua Hook回调内再次核验；worker已死且无回调时不会主动执行Lua清理，下一次回调先恢复/透传，不继续辅助。普通Root客户端可篡改本机代码/存储的边界未被宣称消除。
+
+仅修改整合版，独立 APK 未接入。产品与跨端契约见 `mobile-suite/ACTIVATION_DESIGN.md`，运行入口见 `mobile-suite/licensing-server/README.md`。完整构建、离线/回环测试与实际HTTPS部署、设备后台调度和游戏清理验收分别记录，不能互相代替。
+
+激活到期协议区分自然到期与撤销：verify自然到期返回403及LICENSE_EXPIRED，客户端清租约保token；服务端保留过期未撤销会话30天以便管理员续期。解绑/停用立即撤销，过期保留窗外需原码。MountHold停止恢复使用--recover-only true，普通启动仍经授权。共享FridaCore仅在mobile-suite/build/size-lab隔离原型，不是正式依赖，参见SIZE_OPTIMIZATION.md。
+
+## 2026-10-16 共享Frida运行库接入
+
+mobile-suite现在默认shared：native/frida-shared/build.ps1从已有17.17.0 archive构建带SONAME的core及overflow安全reallocarray，五个build.rs经native/frida-link.rs统一选择dylib或static。Gradle -PpiaomiaoFridaMode=static保留回退，生成包分别9/8native。NativeWorkerCommand及快进NativeActivity在五类Root启动/核查命令前将可信nativeLibraryDir设为LD_LIBRARY_PATH，不继承目录，兼顾API23不支持ORIGIN RUNPATH的限制；当前API34实测而非API23实测。
+
+五个worker main最前的--suite-native-self-test分支只调用frida_init/version/deinit及有界驻留，不进入授权/业务/设备扫描路径。tests/shared-frida-validation采用5个异步前台adb句柄，全部ready后按身份统一采样并核对退出。详细接口、实际APK与PSS边界见mobile-suite/SHARED_FRIDA_VALIDATION.md；该测试入口不等同生产功能验收，默认授权地址为空时功能仍禁止启动。
+
+## 飘渺助手 Sites 授权适配（2026-10-16）
+
+授权云端在独立sites-piaomiao-library checkout，沿用现有Vinext/Cloudflare Workers、D1与R2及站点project_id。D1新表使用独立piaomiao前缀，不修改projects；条件绑定与binding_generation防止跨安装/解绑竞态会话复活，D1 batch替代BEGIN事务，批量发500码通过json_each单参数与容量gate在3条语句内完成。限流计数持久化且20k键满表允许已有键继续计数。管理读取依赖Sites可信身份与运行时owner配置，写入还需严格Origin；APK公开/v1路由采用激活码/会话凭证认证，不携带管理秘密。源码中不保存owner身份值或管理密钥。
+
+APK发布由所有者上传原始流，R2校验SHA256、独立版本对象写成后才切换current清单；下载仅披露版本/大小/hash并流式返回文件。生产环境配置通过Sites工具保存，源工作流推送精确提交并打包schema-only迁移。部署本身不代表管理UI、有效码、文件上传下载或游戏功能验收；证据与缺项见mobile-suite/ONLINE_ACTIVATION_VALIDATION.md。
+
+### code9授权失效的空闲服务收尾
+
+LicenseManager在租约锁内确定是否需要发送一次STOP，SuiteApplication不再重复发送。MountHold仅在可靠确认无worker、无当前journal且没有未解决恢复时直接结束服务；目录不可读/未知或journal存在时仍启动安全恢复。ConnectionService使用本次startId及current/wanted身份核验，确认退出才结束对应started service，迟到回调不停止新连接，结束后不重新刷新前台通知。此变化不重写native或游戏业务。针对性JVM及代码审查已通过；设备断网过程中ADB失去响应，真实设备收尾尚未确认，不能以静态测试代替。

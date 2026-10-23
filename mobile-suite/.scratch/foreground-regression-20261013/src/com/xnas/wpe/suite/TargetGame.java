@@ -1,0 +1,1 @@
+package com.xnas.wpe.suite; public final class TargetGame {public static final String BATTLE_LOOP="battleloop"; public static boolean supported=true; public static boolean supportsModule(String a,String b){return supported;} public static String getSelectedPackage(Object c){return "com.gdoo.dhxy";} }

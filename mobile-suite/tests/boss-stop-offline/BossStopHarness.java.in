@@ -1,0 +1,90 @@
+// Template: PowerShell runner inserts exact production methods from BossHuntService.
+package com.xnas.wpe.bosshunt;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import com.xnas.wpe.bosshunt.BossHuntStopJournal;
+
+public final class BossStopHarness {
+  static int assertions;
+  static final String STOP_JOURNAL_FILE = "stop_read.state";
+  static volatile boolean stopReadPending, stopReadRetryable, active, actionSlotHeld;
+  static volatile boolean hangupPending;
+  static long pendingReadStopSequence, pendingActionStopSequence, stopAttemptStartedAtMillis;
+  int latestStartId=9;
+  BossHuntHangupRequest hangupRequest;
+  static String serviceMessage;
+  final File filesDir;
+  int monitors;
+  static int acquired, released;
+  BossStopHarness(File dir) { filesDir=dir; }
+  File getFilesDir(){ return filesDir; }
+  void setMessage(String value){ serviceMessage=value; }
+  void ensureMonitor(){ monitors++; }
+  static final class AnleiService { static void tryAcquireBossHuntAction(){ acquired++; } }
+  BossHuntStopJournal readStopJournal() throws IOException {
+    File f=new File(filesDir,STOP_JOURNAL_FILE); if(!f.isFile()) return null;
+    return BossHuntStopJournal.parse(new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
+  }
+  void writeJournal(BossHuntStopJournal s) throws IOException {
+    java.nio.file.Files.write(new File(filesDir,STOP_JOURNAL_FILE).toPath(),s.toFileContents().getBytes(StandardCharsets.UTF_8));
+  }
+  void writeStopJournal(BossHuntStopJournal s) throws IOException { writeJournal(s); }
+  void releaseActionSlot(){if(actionSlotHeld){actionSlotHeld=false;released++;}}
+  void stopForeground(boolean remove){}
+  boolean stopSelfResult(int id){return true;}
+  void stopAfterUnconfirmed(){}
+  void deleteIfPresent(File f){ f.delete(); }
+  // PRODUCTION_METHODS
+  static void check(boolean condition,String message){assertions++;if(!condition)throw new AssertionError(message);}
+  static void reset(){stopReadPending=false;stopReadRetryable=false;active=false;actionSlotHeld=false;hangupPending=false;pendingReadStopSequence=0;pendingActionStopSequence=0;stopAttemptStartedAtMillis=0;serviceMessage="";acquired=0;released=0;}
+  public static void main(String[] args) throws Exception {
+    File root=new File(System.getProperty("boss.stop.tempRoot")); root.mkdirs();
+    File journal=new File(root,STOP_JOURNAL_FILE);
+    reset(); BossStopHarness pending=new BossStopHarness(root);
+    pending.writeJournal(new BossHuntStopJournal(BossHuntStopJournal.Phase.PENDING,41,1000,true));
+    pending.restoreStopJournal();
+    check(stopReadPending&&active&&!stopReadRetryable&&pendingReadStopSequence==41&&actionSlotHeld,"PENDING journal must restore stop sequence and action ownership");
+    check(pending.monitors==1,"PENDING restore must start monitor");
+
+    reset(); BossStopHarness unconfirmed=new BossStopHarness(root);
+    unconfirmed.writeJournal(new BossHuntStopJournal(BossHuntStopJournal.Phase.UNCONFIRMED,42,2000,true));
+    unconfirmed.restoreStopJournal();
+    check(stopReadPending&&stopReadRetryable&&active&&pendingReadStopSequence==42&&pendingActionStopSequence==42,"UNCONFIRMED must remain retryable and retain held action slot");
+    check(unconfirmed.hasRetryableStop(root),"UNCONFIRMED must expose retry path");
+
+    reset(); BossStopHarness complete=new BossStopHarness(root);
+    complete.writeJournal(new BossHuntStopJournal(BossHuntStopJournal.Phase.COMPLETE,43,3000,false));
+    complete.restoreStopJournal();
+    check(!stopReadPending&&!stopReadRetryable&&!complete.hasRetryableStop(root),"COMPLETE must not restore as retryable");
+    check(!journal.exists(),"COMPLETE journal is consumed during service restore");
+
+    reset(); BossStopHarness malformed=new BossStopHarness(root);
+    java.nio.file.Files.write(journal.toPath(),"broken".getBytes(StandardCharsets.UTF_8));
+    malformed.restoreStopJournal();
+    check(stopReadPending&&stopReadRetryable&&active,"malformed journal must fail closed as retryable");
+    check(malformed.hasRetryableStop(root),"malformed journal must remain visible for explicit retry");
+
+    reset(); BossStopHarness timeout=new BossStopHarness(root);
+    timeout.writeJournal(new BossHuntStopJournal(BossHuntStopJournal.Phase.PENDING,44,4000,true));
+    stopReadPending=true;active=true;actionSlotHeld=true;pendingReadStopSequence=44;stopAttemptStartedAtMillis=4000;
+    timeout.markReadStopUnconfirmed("timeout",false);
+    BossHuntStopJournal timed=timeout.readStopJournal();
+    check(timed.phase==BossHuntStopJournal.Phase.UNCONFIRMED&&timed.sequence==44,"unconfirmed timeout must persist UNCONFIRMED with original sequence");
+    check(stopReadPending&&stopReadRetryable&&actionSlotHeld&&released==0,"unconfirmed timeout must retain retry and action ownership");
+    timeout.completeReadStop(new BossHuntStatus(),-1);
+    check(timeout.readStopJournal().phase==BossHuntStopJournal.Phase.UNCONFIRMED,"missing cleanup evidence must not write COMPLETE");
+
+    BossHuntSelection maps=BossHuntSelection.parseCsv("1010,1018");
+    BossHuntStatus status=new BossHuntStatus(); status.acceptedSequence=77;
+    BossHuntCommand command=new BossHuntCommand(); command.mode=BossHuntCommand.Mode.SCAN; command.sequence=77;
+    BossHuntHangupRequest delayed=new BossHuntHangupRequest(maps,77,5000L);
+    BossStopHarness callback=new BossStopHarness(root); callback.hangupRequest=delayed; hangupPending=true;
+    callback.cancelHangupRequest();
+    check(callback.hangupRequest==null&&!hangupPending,"stop must detach pending delayed callback");
+    check(delayed.evaluate(status,command,5001L)==BossHuntHangupRequest.Decision.CANCEL,"late matching scan callback after stop must not authorize RUN");
+    check(!delayed.markSubmitted(77),"cancelled callback must not transition to submitted");
+
+    // Production request cancellation and delayed callback validation are exercised in the companion Java test.
+    System.out.println("Boss stop restore, timeout and late callback: PASS ("+assertions+" assertions)");
+  }
+}

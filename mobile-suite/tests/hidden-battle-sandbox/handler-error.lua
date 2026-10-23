@@ -1,0 +1,11 @@
+local state = assert(rawget(_G, '__codex_battle_loop_v1'), 'state missing')
+local beforeVisible = battleManager.visible
+local beforeWar = JudgeIsInWar()
+local ok, err = pcall(ProtoFunc[3584], {token='error'}, nil, 9)
+assert(not ok and tostring(err):find('mock_original_handler_failure', 1, true), 'original handler error was not propagated')
+assert(original3584Calls == 0, 'error fixture unexpectedly used normal original handler')
+assert(battleManager.visible == beforeVisible, 'visual wrapper changed root after handler error')
+assert(JudgeIsInWar() == beforeWar, 'visual wrapper changed battle flag after handler error')
+assert(state.hiddenBattles == 0 and state.visibilityRestoreConfirmed == true, 'handler error fabricated a hidden battle')
+assert(#sendCalls == 0, 'handler error generated sends')
+print('PASS handler error: original error propagates without UI/flag/send side effects')

@@ -1,0 +1,8 @@
+assert(fakeTimer, 'timer missing')
+advance(0.01)
+assert(countCalls(3473) == 1, 'expected one auto-off request')
+offAck(4)
+advance(0.01)
+assert(countCalls(3470, 101, 4, 111) == 1, 'character skill did not send from current auto-skill config')
+assert(countCalls(3470, 202, 4, 222) == 1, 'pet skill did not send from current auto-skill config')
+print('Lua battle-loop basic smoke passed')

@@ -34,6 +34,7 @@ $reader = Read-SourceFile "WPELibrary\Lib\MountSpeed\MountStatusAndroidSnapshotR
 $probe = Read-SourceFile "tools\mount-reader\mount_status_luajit_probe.py"
 $sender = Read-SourceFile "WPELibrary\Lib\MountSpeed\MountRefineA050SocketPacketSender.cs"
 $packetTemplate = Read-SourceFile "WPELibrary\Lib\MountSpeed\MountRefineA050PacketTemplate.cs"
+$shapeResolver = Read-SourceFile "WPELibrary\Lib\MountSpeed\MountRideShapeResolver.cs"
 $socketCache = Read-SourceFile "WPELibrary\Lib\Socket_Cache.cs"
 $socketForm = Read-SourceFile "WPELibrary\Socket_Form.cs"
 $stateMachine = Read-SourceFile "WPELibrary\Lib\MountSpeed\MountRefineStateMachine.cs"
@@ -192,6 +193,10 @@ Assert-Contains $socketCache 'mountRefineA050Evidence.Clear()' `
     "Starting a new injection session must discard previous A050 evidence."
 Assert-Contains $socketCache 'capturedPackets.AddRange(CaptureMountRefineA050Evidence())' `
     "Current-route resolution must survive UI-list auto-clear for A050 sends."
+Assert-Contains $socketCache 'new[] { "com.gdoo.dhxy", "com.gdoo.xxxy2026" })' `
+    "The mount-refine reader must keep both known client packages as fallback candidates, not the environment variable alone."
+Assert-Contains $harness 'Mount refine fallback candidates are incorrect' `
+    "The mount runner harness must lock the refine package candidate order."
 Assert-Contains $sender 'Socket_Cache.SocketList.CaptureMountRefineA050Evidence()' `
     "A050 binding must consume current-session evidence as well as visible rows."
 Assert-Contains $sender 'capturedPacket.PacketSocket' `
@@ -201,11 +206,53 @@ Assert-Contains $sender '_routeTemplate.PacketSocket' `
 Assert-NotContains $sender 'ResolveCurrentRoute(' `
     "A050 sender must not silently switch to another route at send time."
 Assert-Contains $packetTemplate 'packet = (byte[])_fixtureBytes.Clone();' `
-    "A050 template must return a clone of the fixed fixture."
+    "A050 template must build the send copy from a clone of the fixed fixture."
 Assert-Contains $packetTemplate 'public string RideInstanceId' `
     "A validated A050 template must expose its immutable ride instance for read binding."
 Assert-NotContains $packetTemplate 'Buffer.BlockCopy(encodedId' `
-    "A050 template must not rewrite the fixed ride-instance bytes."
+    "A050 template must rewrite the tail with one explicit offset loop, not a bulk copy."
+Assert-Contains $packetTemplate 'packet[RideInstanceIdOffset + index] = encodedRideInstanceId[index];' `
+    "A050 TryBuild must rewrite only the 19 ride-instance bytes at offsets 20-38."
+Assert-Contains $packetTemplate 'TryValidateFrame(packet, out error)' `
+    "A050 TryBuild must re-run the full structural validation on the rewritten frame."
+Assert-Contains $packetTemplate 'frame[19] != RideInstanceIdLength' `
+    "A050 structural validation must keep the offset-19 0x13 selector check."
+Assert-Contains $packetTemplate 'mount_refine_a050_active_ride_instance_id_invalid' `
+    "A050 TryBuild must reject a missing or illegal current ride instance id instead of reusing the fixture id."
+Assert-NotContains $packetTemplate '_fixtureBytes[' `
+    "A050 TryBuild must never write into the immutable template fixture bytes."
+Assert-Contains $robot 'MountRideShapeResolver.RequiresShapeResolution(' `
+    "The startup chain must gate the shape lookup on the optional preset target shape."
+Assert-Contains $robot 'preset.TargetRideShapeId' `
+    "The startup chain must read the optional target ride shape from the preset."
+Assert-Contains $robot 'TryResolvePreferredRideInstanceId(' `
+    "The startup chain must use the pure shape resolver for the refine preferred instance id."
+Assert-Contains $robot 'preferredRefineRideInstanceId = resolvedRefineRideInstanceId;' `
+    "The shape-resolved current instance id must become the refine binding instance."
+Assert-Contains $robot 'shapeReadResult = reader.ReadSnapshotAsync(' `
+    "Shape lookup must use one read-only snapshot before the strict refine preflight read."
+Assert-Contains $robot 'mount_ride_shape_snapshot_invalid' `
+    "A failed shape-resolution snapshot must stop the start with a diagnostic."
+Assert-Contains $robot 'preferredRefineRideInstanceId = configuredTemplate.RideInstanceId;' `
+    "Presets without a target shape must keep the packet ride instance id unchanged."
+Assert-Contains $shapeResolver 'public static bool TryResolveRideInstanceId(' `
+    "The ride shape resolver must expose a pure single-shape lookup."
+Assert-Contains $shapeResolver 'public static bool RequiresShapeResolution(' `
+    "The ride shape resolver must state whether a snapshot read is required."
+Assert-Contains $shapeResolver 'matchCount > 1' `
+    "The ride shape resolver must fail closed on duplicate shapes, even with identical instance ids."
+Assert-Contains $shapeResolver 'mount_ride_shape_ambiguous' `
+    "Duplicate shapes must produce an explicit ambiguous error code."
+Assert-Contains $shapeResolver 'mount_ride_shape_no_match' `
+    "A missing shape match must produce an explicit error code."
+Assert-Contains $shapeResolver 'mount_ride_shape_id_invalid' `
+    "An illegal target shape id must produce an explicit error code."
+Assert-Contains $harness 'TestMountRideShapeResolutionAndTailRewrite' `
+    "The harness must cover shape resolution and the dynamic A050 tail rewrite."
+Assert-Contains $harness 'AssertA050TailRewrite' `
+    "The harness must compare the rewritten A050 frame position by position."
+Assert-Contains $harness 'mount_refine_a050_active_ride_instance_id_invalid' `
+    "The harness must lock the explicit rejection of a missing or illegal ride instance id."
 Assert-Contains $sender 'speedMode={3}' `
     "A050 binding diagnostics must expose whether high-speed capture bypassed the UI list."
 Assert-Contains $sender 'a050_protocol_not_matched' `
@@ -228,6 +275,39 @@ Assert-Contains $robot 'Socket_Cache.Robot.ThirdRideRefinePresetName' `
     "Only the exact third-ride preset may enable its selected-ride state-machine path."
 Assert-Contains $robot 'SelectedRefineRideInstanceId = selectedRefineRideInstanceId' `
     "The exact third- or fourth-ride instance must reach state-machine validation."
+
+# 配置了坐骑形态的预设必须与三/四坐骑洗炼共用同一个 refine_selected 绑定入口：
+# 预检按 refine_selected 通过后，状态机不得再退回 bound 分支（即不得再要求骑乘状态）。
+$refinePlanStart = $robot.IndexOf(
+    'private void RunMountRefinePlanInstruction(',
+    [System.StringComparison]::Ordinal)
+$refinePlanEnd = $robot.IndexOf(
+    'private WPELibrary.Lib.MountSpeed.IMountRefinePacketSender',
+    $refinePlanStart,
+    [System.StringComparison]::Ordinal)
+if ($refinePlanStart -lt 0 -or $refinePlanEnd -le $refinePlanStart) {
+    throw "Could not isolate the mount-refine plan instruction method."
+}
+$refinePlanSource = $robot.Substring($refinePlanStart, $refinePlanEnd - $refinePlanStart)
+Assert-Contains $refinePlanSource 'Socket_Cache.Robot.ThirdRideRefinePresetName' `
+    "The exact third-ride preset name branch must be retained."
+Assert-Contains $refinePlanSource 'Socket_Cache.Robot.FourthRideRefinePresetName' `
+    "The exact fourth-ride preset name branch must be retained."
+Assert-Contains $refinePlanSource 'StringComparison.Ordinal' `
+    "The ride-preset name comparison must stay an exact ordinal match."
+Assert-Contains $refinePlanSource 'RequiresShapeResolution(' `
+    "A preset with a target ride shape must also bind through the selected refine ride."
+Assert-Contains $refinePlanSource 'preset.TargetRideShapeId' `
+    "The selected refine binding must be keyed on the preset's optional target ride shape."
+Assert-Contains $refinePlanSource 'MountRefinePreferredRideInstanceId' `
+    "The selected refine binding must reuse the preflight-resolved preferred ride instance id."
+Assert-NotContains $refinePlanSource 'StartsWith(' `
+    "The ride-preset name gate must not be broadened to a prefix match."
+Assert-NotContains $refinePlanSource 'IndexOf(robotName' `
+    "The ride-preset name gate must not be broadened to a substring match."
+Assert-NotContains $refinePlanSource 'robotName.Contains' `
+    "The ride-preset name gate must not be broadened to a substring match."
+
 Assert-Contains $stateMachine 'readResult.WasCancelled' `
     "Android snapshot cancellation must be classified as a user/host stop."
 Assert-Contains $stateMachine 'long baselineSequence' `

@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.xnas.wpe.battleskip'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.xnas.wpe.battleskip'
+        minSdk 23
+        targetSdk 35
+        versionCode 3
+        versionName '0.3.0'
+        ndk {
+            abiFilters 'x86_64'
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDir(layout.buildDirectory.dir('generated/jniLibs'))
+        }
+    }
+}
+
+def buildRustLauncher = tasks.register('buildRustLauncher', Exec) {
+    workingDir rootProject.projectDir
+    commandLine 'powershell.exe', '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+            '-File', new File(rootProject.projectDir, 'build.ps1').absolutePath
+}
+
+tasks.named('preBuild').configure {
+    dependsOn buildRustLauncher
+}

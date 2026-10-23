@@ -1,0 +1,2 @@
+package android.view;
+public final class WindowManager { public static final class LayoutParams {public static final int TYPE_APPLICATION_OVERLAY=2038,TYPE_PHONE=2002,FLAG_NOT_FOCUSABLE=8,FLAG_NOT_TOUCH_MODAL=32,FLAG_LAYOUT_IN_SCREEN=256; public int x,y,width,height,gravity; public LayoutParams(int x,int y,int width,int height){this.x=x;this.y=y;this.width=width;this.height=height;}} public int updates; public void updateViewLayout(View view,LayoutParams params){updates++;} }

@@ -1,0 +1,76 @@
+--------- beginning of crash
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: FATAL EXCEPTION: main
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: Process: com.xnas.wpe.suite, PID: 3696
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: android.app.RemoteServiceException$ForegroundServiceDidNotStartInTimeException: Context.startForegroundService() did not then call Service.startForeground(): ServiceRecord{bf17b59 u0 com.xnas.wpe.suite/com.xnas.wpe.battleloop.BattleLoopService}
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.app.ActivityThread.generateForegroundServiceDidNotStartInTimeException(ActivityThread.java:2138)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.app.ActivityThread.throwRemoteServiceException(ActivityThread.java:2109)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.app.ActivityThread.-$$Nest$mthrowRemoteServiceException(Unknown Source:0)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:2403)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:106)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:205)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:294)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:8373)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:555)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:971)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: Caused by: android.app.StackTrace: Last startServiceCommon() call for this service was made here
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.app.ContextImpl.startServiceCommon(ContextImpl.java:1952)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.app.ContextImpl.startForegroundService(ContextImpl.java:1906)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.content.ContextWrapper.startForegroundService(ContextWrapper.java:830)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at com.xnas.wpe.battleloop.MainActivity.lambda$onCreate$0$com-xnas-wpe-battleloop-MainActivity(MainActivity.java:21)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at com.xnas.wpe.battleloop.MainActivity$$ExternalSyntheticLambda0.onClick(D8$$SyntheticClass:0)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.view.View.performClick(View.java:7659)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.view.View.performClickInternal(View.java:7636)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.view.View.-$$Nest$mperformClickInternal(Unknown Source:0)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.view.View$PerformClick.run(View.java:30168)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.os.Handler.handleCallback(Handler.java:958)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:99)
+10-13 21:36:48.934  3696  3696 E AndroidRuntime: 	... 6 more
+10-13 21:36:51.651  2932  2932 F libc    : Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x320 in tid 2932 (com.gdoo.dhxy), pid 2932 (com.gdoo.dhxy)
+10-13 21:36:52.062  4044  4044 F DEBUG   : *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+10-13 21:36:52.062  4044  4044 F DEBUG   : Build fingerprint: 'Xiaomi/unicorn/unicorn:14/UQ1A.240205.09211156/ucsm.20260921.115630:user/release-keys'
+10-13 21:36:52.062  4044  4044 F DEBUG   : Revision: '0'
+10-13 21:36:52.062  4044  4044 F DEBUG   : ABI: 'x86_64'
+10-13 21:36:52.062  4044  4044 F DEBUG   : Timestamp: 2026-10-13 21:36:51.769423917+0800
+10-13 21:36:52.062  4044  4044 F DEBUG   : Process uptime: 2944s
+10-13 21:36:52.062  4044  4044 F DEBUG   : Cmdline: com.gdoo.dhxy
+10-13 21:36:52.062  4044  4044 F DEBUG   : pid: 2932, tid: 2932, name: com.gdoo.dhxy  >>> com.gdoo.dhxy <<<
+10-13 21:36:52.062  4044  4044 F DEBUG   : uid: 10077
+10-13 21:36:52.062  4044  4044 F DEBUG   : signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x0000000000000320
+10-13 21:36:52.062  4044  4044 F DEBUG   : Cause: null pointer dereference
+10-13 21:36:52.062  4044  4044 F DEBUG   :     rax 00007ec42fa08000  rbx 00007ec3980d0480  rcx 00007ec418761aca  rdx 0000000000000007
+10-13 21:36:52.062  4044  4044 F DEBUG   :     r8  ffffffffffffffff  r9  0000000000000000  r10 0000000000000022  r11 0000000000000246
+10-13 21:36:52.062  4044  4044 F DEBUG   :     r12 7fffffffffffffff  r13 00007ec398042cb0  r14 00007ec3980d0550  r15 0000000000000000
+10-13 21:36:52.062  4044  4044 F DEBUG   :     rdi 0000000000000000  rsi 0000000000012000
+10-13 21:36:52.062  4044  4044 F DEBUG   :     rbp 00000000ffffffff  rsp 00007ffc21f25c90  rip 0000000000000320
+10-13 21:36:52.062  4044  4044 F DEBUG   : 2 total frames
+10-13 21:36:52.062  4044  4044 F DEBUG   : backtrace:
+10-13 21:36:52.062  4044  4044 F DEBUG   :       #00 pc 0000000000000320  <unknown>
+10-13 21:36:52.062  4044  4044 F DEBUG   :       #01 pc 0000000000000000  <unknown>
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: FATAL EXCEPTION: main
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: Process: com.xnas.wpe.suite, PID: 3981
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: android.app.RemoteServiceException$ForegroundServiceDidNotStartInTimeException: Context.startForegroundService() did not then call Service.startForeground(): ServiceRecord{24904d1 u0 com.xnas.wpe.suite/com.xnas.wpe.battleloop.BattleLoopService}
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.app.ActivityThread.generateForegroundServiceDidNotStartInTimeException(ActivityThread.java:2138)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.app.ActivityThread.throwRemoteServiceException(ActivityThread.java:2109)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.app.ActivityThread.-$$Nest$mthrowRemoteServiceException(Unknown Source:0)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.app.ActivityThread$H.handleMessage(ActivityThread.java:2403)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:106)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:205)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:294)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.app.ActivityThread.main(ActivityThread.java:8373)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at java.lang.reflect.Method.invoke(Native Method)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:555)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:971)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: Caused by: android.app.StackTrace: Last startServiceCommon() call for this service was made here
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.app.ContextImpl.startServiceCommon(ContextImpl.java:1952)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.app.ContextImpl.startForegroundService(ContextImpl.java:1906)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.content.ContextWrapper.startForegroundService(ContextWrapper.java:830)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at com.xnas.wpe.battleloop.MainActivity.lambda$onCreate$0$com-xnas-wpe-battleloop-MainActivity(MainActivity.java:21)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at com.xnas.wpe.battleloop.MainActivity$$ExternalSyntheticLambda0.onClick(D8$$SyntheticClass:0)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.view.View.performClick(View.java:7659)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.view.View.performClickInternal(View.java:7636)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.view.View.-$$Nest$mperformClickInternal(Unknown Source:0)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.view.View$PerformClick.run(View.java:30168)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.os.Handler.handleCallback(Handler.java:958)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:99)
+10-13 21:37:20.792  3981  3981 E AndroidRuntime: 	... 6 more

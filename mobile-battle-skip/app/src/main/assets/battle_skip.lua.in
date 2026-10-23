@@ -1,0 +1,233 @@
+local cfg = __CONFIG__
+local unpack = table.unpack or unpack
+local function pack(...) return {n=select('#', ...), ...} end
+local function unwrap(v) if type(v) == 'table' then return v[1] end return v end
+local function clean(v) return tostring(v):gsub('[\r\n=]', ' ') end
+local function writeResult(row)
+    local f, err = io.open(cfg.resultPath, 'w')
+    if not f then return false, err end
+    for k, v in pairs(row) do
+        local ok, e = f:write(k, '=', clean(v), '\n')
+        if not ok then f:close(); return false, e end
+    end
+    local ok, e = f:close(); return ok, e
+end
+local function restore(s)
+    local restored=true
+    if s.createOriginal then
+        if cc and cc.CallFunc and cc.CallFunc.create==s.createHook then cc.CallFunc.create=s.createOriginal
+        elseif not cc or not cc.CallFunc or cc.CallFunc.create~=s.createOriginal then restored=false end
+    end
+    if s.readHook then
+        if type(s.managerRef)=='table' and rawget(s.managerRef,'startReadNextCMD')==s.readHook then
+            rawset(s.managerRef,'startReadNextCMD',s.readRawOriginal)
+        elseif type(s.managerRef)=='table' and rawget(s.managerRef,'startReadNextCMD')~=s.readRawOriginal then restored=false end
+    end
+    if s.sendOriginal then
+        if netconn and netconn.send == s.sendHook then netconn.send=s.sendOriginal
+        elseif not netconn or netconn.send ~= s.sendOriginal then restored=false end
+    end
+    s.hooksRemoved=restored
+end
+local function report(s, status, extra)
+    local row={status=status, calls=s.calls or 0}
+    for k,v in pairs(extra or {}) do row[k]=v end
+    local ok, err=writeResult(row)
+    if not ok then s.logError=tostring(err); return false end
+    return true
+end
+local function fatal(s, reason, detail)
+    s.status='fatal'; s.error=reason; restore(s)
+    report(s,'fatal',{error=reason,battle=detail and detail.battle or s.battle,round=detail and detail.round or s.round,
+        calls=s.calls or 0})
+    return -1
+end
+local function writeBinding(s)
+    local f, err=io.open(cfg.bindingPath,'w')
+    if not f then return false,err end
+    local ok,why=f:write('runId=',clean(s.runId),'\nplayer=',clean(s.expectedPlayer),
+        '\nmanager=',clean(s.expectedManagerTostring),'\n')
+    if not ok then f:close(); return false,why end
+    return f:close()
+end
+if type(cfg)~='table' or type(cfg.resultPath)~='string' or type(cfg.stateKey)~='string'
+    or type(cfg.runId)~='string' or type(cfg.expectedPlayer)~='string'
+    or type(cfg.expectedManagerTostring)~='string' or type(cfg.bindingPath)~='string'
+    or (cfg.mode~='tick' and cfg.mode~='stop') then return -1 end
+local s=rawget(_G,cfg.stateKey)
+local bindingKey=cfg.stateKey..'.binding'
+if cfg.mode=='stop' then
+    local owned=type(s)=='table' and s.runId==cfg.runId
+    if owned then
+        restore(s)
+        if s.hooksRemoved==true then rawset(_G,cfg.stateKey,nil) end
+    end
+    local binding=rawget(_G,bindingKey)
+    local bindingCleared=type(binding)~='table' or binding.runId~=cfg.runId
+    if type(binding)=='table' and binding.runId==cfg.runId and (not owned or s.hooksRemoved==true) then
+        rawset(_G,bindingKey,nil); bindingCleared=true
+    end
+    local hooksRemoved=not owned or s.hooksRemoved==true
+    local ok=writeResult({status='stopped',calls=owned and (s.calls or 0) or 0,
+        hooksRemoved=hooksRemoved,bindingCleared=bindingCleared})
+    if not ok or not hooksRemoved or not bindingCleared then return -1 end
+    return 0
+end
+if type(s)=='table' and s.runId~=cfg.runId then
+    restore(s)
+    if not s.hooksRemoved then return fatal(s,'old_owned_hook_replaced') end
+    local oldBinding=rawget(_G,bindingKey)
+    if type(oldBinding)=='table' and oldBinding.runId==s.runId then
+        rawset(_G,bindingKey,nil)
+        if type(s.bindingPath)=='string' then os.remove(s.bindingPath) end
+    end
+    rawset(_G,cfg.stateKey,nil)
+    s=nil
+end
+if type(s)=='table' and s.status=='fatal' then return -1 end
+local currentBinding=rawget(_G,bindingKey)
+if type(s)=='table' and (type(currentBinding)~='table' or currentBinding.runId~=s.runId
+    or currentBinding.player~=s.expectedPlayer or currentBinding.manager~=s.expectedManagerTostring) then
+    return fatal(s,'binding_identity_changed')
+end
+local ok, err=pcall(function()
+    local manager=type(ClassIns)=='table' and ClassIns['BattlefieldView.Ins'] or nil
+    if type(manager)~='table' then return end
+    local managerText=tostring(manager)
+    if s and s.expectedManagerTostring and managerText~=s.expectedManagerTostring then error('manager_identity_changed') end
+    if cfg.expectedManagerTostring~='' and managerText~=cfg.expectedManagerTostring then error('manager_identity_changed') end
+    if s and s.managerRef and s.managerRef~=manager then error('manager_binding_changed') end
+    local player=unwrap(manager.m_PlayerId)
+    local playerText=tostring(player)
+    if s and s.expectedPlayer and playerText~=s.expectedPlayer then error('player_identity_changed') end
+    if cfg.expectedPlayer~='' and playerText~=cfg.expectedPlayer then error('player_identity_changed') end
+    local localRole=false
+    if type(manager.m_RoleIdPosDict)=='table' and type(manager.m_RoleIns)=='table' then
+        local pos=unwrap(manager.m_RoleIdPosDict[player]); local role=manager.m_RoleIns[pos]
+        localRole=(type(role)=='table' or type(role)=='userdata') and unwrap(role.m_RoleId)==player
+            and unwrap(role.m_IsLocalPlayer)==true and role.m_Battlefield==manager
+    end
+    if not localRole then return end
+    if not s then
+        local staleBinding=rawget(_G,bindingKey)
+        if type(staleBinding)=='table' then error('binding_without_owned_state') end
+        s={runId=cfg.runId,status='waiting',calls=0,seen={},sent={},
+            normalSendCount=0,testSendCount=0,expectedPlayer=playerText,
+            expectedManagerTostring=managerText,bindingPath=cfg.bindingPath}
+        rawset(_G,cfg.stateKey,s)
+        local binding={runId=cfg.runId,player=playerText,manager=managerText}
+        rawset(_G,bindingKey,binding)
+        local bindingOk,bindingErr=writeBinding(s)
+        if not bindingOk then error('binding_write_failed:'..tostring(bindingErr)) end
+        if not report(s,'waiting',{calls=0}) then error('initial_snapshot_failed:'..tostring(s.logError)) end
+    end
+    s.managerRef=manager
+    local battle=tostring(unwrap(manager.m_BattleId)); local cmdRound=unwrap(manager.m_CmdRound)
+    local curRound=unwrap(manager.m_CurRoundNum); local key=battle..':'..tostring(cmdRound)
+    s.battle,s.round=battle,cmdRound
+    if s.status=='done' then s.status='waiting' end
+    if s.readHook and (rawget(manager,'startReadNextCMD')~=s.readHook or netconn.send~=s.sendHook) then error('hook_replaced') end
+    if not s.readHook then
+        if C2S_BattleCmdPlayOver==nil then error('opcode_unavailable') end
+        s.readRawOriginal=rawget(manager,'startReadNextCMD')
+        s.readOriginal=s.readRawOriginal or manager.startReadNextCMD
+        s.sendOriginal=netconn.send
+        s.netconnRef=netconn
+        if type(s.readOriginal)~='function' or type(s.sendOriginal)~='function' then error('hook_target_unavailable') end
+        local function identityValid()
+            local current=type(ClassIns)=='table' and ClassIns['BattlefieldView.Ins'] or nil
+            local p=unwrap(manager.m_PlayerId)
+            if current~=manager or manager~=s.managerRef or tostring(p)~=s.expectedPlayer
+                or tostring(manager)~=s.expectedManagerTostring then return false end
+            local pos=type(manager.m_RoleIdPosDict)=='table' and unwrap(manager.m_RoleIdPosDict[p]) or nil
+            local role=type(manager.m_RoleIns)=='table' and manager.m_RoleIns[pos] or nil
+            return (type(role)=='table' or type(role)=='userdata') and unwrap(role.m_RoleId)==p
+                and unwrap(role.m_IsLocalPlayer)==true and role.m_Battlefield==manager
+        end
+        s.sendHook=function(self,opcode,...)
+            if self==s.netconnRef and opcode==C2S_BattleCmdPlayOver then
+                local sentArgs=pack(...); local sentPlayer=unwrap(sentArgs[2]); local sentRound=unwrap(sentArgs[3])
+                local battle=tostring(unwrap(s.managerRef.m_BattleId)); local k=battle..':'..tostring(sentRound)
+                if s.sent[k] and tostring(sentPlayer)==s.expectedPlayer then return end
+                if identityValid() and tonumber(battle)~=nil and tonumber(battle)>0
+                    and tostring(unwrap(s.managerRef.m_CmdRound))==tostring(sentRound)
+                    and tostring(sentPlayer)==s.expectedPlayer and unwrap(s.managerRef.m_AnalyzeFinish)==true then
+                    s.sent[k]=1; s.lastSendAt=os.time()
+                end
+            end
+            local result=pack(s.sendOriginal(self,opcode,...))
+            return unpack(result,1,result.n)
+        end
+        local function skip(managerRef,trigger,playBefore,readBefore)
+            if managerRef~=s.managerRef or not identityValid() then error('binding_identity_changed') end
+            local battle=tostring(unwrap(managerRef.m_BattleId)); local round=unwrap(managerRef.m_CmdRound)
+            local cur=unwrap(managerRef.m_CurRoundNum); local k=battle..':'..tostring(round)
+            if not tonumber(round) or tonumber(round)<=0 then return false end
+            local cmds=managerRef.m_RoundCmdList
+            local count=type(cmds)=='table' and type(table.nums)=='function' and table.nums(cmds) or 0
+            if not tonumber(battle) or tonumber(battle)<=0 or not tonumber(round) or tostring(round)~=tostring(cur)
+                or not count or count==0 or unwrap(managerRef.m_AnalyzeFinish)~=false
+                or unwrap(managerRef.m_PauseAnalyze)~=false or s.seen[k] then return false end
+            s.battle,s.round=battle,round
+            s.seen[k]=true; s.calls=s.calls+1
+            local row={battle=battle,round=round,calls=s.calls,trigger=trigger,playIndexBefore=playBefore,
+                readIndexBefore=readBefore,directFinish=true,sendCount=0,callbackCalled=false,fastOk=false,error=''}
+            local play=managerRef.m_CurCmdPlayIndex
+            if trigger=='before_first_command' then
+                if type(play)=='table' then play[1]=1 else managerRef.m_CurCmdPlayIndex=1 end
+            end
+            local fastOk,fastErr=pcall(managerRef.fastAnalyzeSurplusCMD,managerRef); row.fastOk=fastOk
+            if not fastOk then error('fast_analyze_failed:'..tostring(fastErr)) end
+            if not identityValid() or tostring(unwrap(managerRef.m_BattleId))~=battle
+                or tostring(unwrap(managerRef.m_CmdRound))~=tostring(round)
+                or tostring(unwrap(managerRef.m_CurRoundNum))~=tostring(cur)
+                or unwrap(managerRef.m_AnalyzeFinish)~=true then error('fast_analyze_guard_failed') end
+            managerRef:verifyRoundData(true)
+            if not identityValid() or tostring(unwrap(managerRef.m_BattleId))~=battle
+                or tostring(unwrap(managerRef.m_CmdRound))~=tostring(round)
+                or tostring(unwrap(managerRef.m_CurRoundNum))~=tostring(cur)
+                or unwrap(managerRef.m_AnalyzeFinish)~=true then error('direct_finish_guard_failed') end
+            local player=LocalPlayerMgr:getInstance():getPlayerId()
+            if tostring(unwrap(player))~=s.expectedPlayer then error('local_player_guard_failed') end
+            netconn:send(C2S_BattleCmdPlayOver,'',player,managerRef.m_CurRoundNum)
+            row.sendCount=s.sent[k] or 0
+            if row.sendCount~=1 then error('direct_finish_send_failed') end
+            if not report(s,'done',row) then error('result_write_failed:'..tostring(s.logError)) end
+            s.status='done'; return true
+        end
+        s.skip=skip
+        s.readHook=function(self,...)
+            local args=pack(...)
+            if self==s.managerRef then
+                local protected,result=pcall(function()
+                    if not identityValid() then error('binding_identity_changed') end
+                    local round=unwrap(self.m_CmdRound); local cur=unwrap(self.m_CurRoundNum)
+                    local idx=tonumber(unwrap(self.m_CurCmdPlayIndex)); local readIdx=tonumber(unwrap(self.m_CurCmdIndex))
+                    local k=tostring(unwrap(self.m_BattleId))..':'..tostring(round)
+                    if s.seen[k] and unwrap(self.m_AnalyzeFinish)==true then return true end
+                    if tostring(round)==tostring(cur) and tonumber(round) and tonumber(round)>0 and idx==0 and readIdx==0 then
+                        return s.skip(self,'before_first_command',idx,readIdx)
+                    end
+                    return false
+                end)
+                if not protected then fatal(s,tostring(result),{battle=s.battle,round=s.round}); return end
+                if result then return end
+            end
+            local result=pack(s.readOriginal(self,unpack(args,1,args.n)))
+            return unpack(result,1,result.n)
+        end
+        rawset(manager,'startReadNextCMD',s.readHook); netconn.send=s.sendHook
+    end
+    if not tonumber(battle) or tonumber(battle)<=0 or not tonumber(cmdRound) or tonumber(cmdRound)<=0 then return end
+    if tostring(cmdRound)~=tostring(curRound) or s.seen[key] then return end
+    local finished=unwrap(manager.m_AnalyzeFinish); local pause=unwrap(manager.m_PauseAnalyze)
+    local idx=tonumber(unwrap(manager.m_CurCmdPlayIndex)); local cmds=manager.m_RoundCmdList
+    local count=type(cmds)=='table' and type(table.nums)=='function' and table.nums(cmds) or 0
+    if finished~=false or pause~=false or not idx or idx<1 or not count or idx>count then return end
+    s.skip(manager,'poll',idx,tonumber(unwrap(manager.m_CurCmdIndex)))
+end)
+if not ok then
+    if type(s)~='table' then return -1 end
+    return fatal(s,tostring(err),{battle=s.battle,round=s.round})
+end
+return 0

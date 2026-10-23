@@ -1,0 +1,115 @@
+{
+  "state": "ok",
+  "identity": {
+    "pid": 28544,
+    "startTicks": 1279774,
+    "exe": "/system/bin/app_process64"
+  },
+  "battleId": 38612,
+  "round": 175,
+  "slots": {
+    "10002": {
+      "position": 10002,
+      "roleId": 567898746,
+      "local": false,
+      "alive": true,
+      "hp": 5389,
+      "mp": 439640,
+      "speed": -33,
+      "name": "单位名未确认 · RoleId 567898746",
+      "side": "对方"
+    },
+    "10003": {
+      "position": 10003,
+      "roleId": 567898747,
+      "local": false,
+      "alive": true,
+      "hp": 6997,
+      "mp": 427460,
+      "speed": 5,
+      "name": "单位名未确认 · RoleId 567898747",
+      "side": "对方"
+    },
+    "10004": {
+      "position": 10004,
+      "roleId": 567898748,
+      "local": false,
+      "alive": true,
+      "hp": 9088,
+      "mp": 433840,
+      "speed": 2,
+      "name": "单位名未确认 · RoleId 567898748",
+      "side": "对方"
+    },
+    "10005": {
+      "position": 10005,
+      "roleId": 567898749,
+      "local": false,
+      "alive": true,
+      "hp": 3365,
+      "mp": 439640,
+      "speed": 10,
+      "name": "单位名未确认 · RoleId 567898749",
+      "side": "对方"
+    },
+    "10101": {
+      "position": 10101,
+      "roleId": 567898750,
+      "local": false,
+      "alive": true,
+      "hp": 4451,
+      "mp": 439640,
+      "speed": -33,
+      "name": "单位名未确认 · RoleId 567898750",
+      "side": "对方"
+    },
+    "10102": {
+      "position": 10102,
+      "roleId": 567898751,
+      "local": false,
+      "alive": true,
+      "hp": 6107,
+      "mp": 433840,
+      "speed": 12,
+      "name": "单位名未确认 · RoleId 567898751",
+      "side": "对方"
+    },
+    "10104": {
+      "position": 10104,
+      "roleId": 567898753,
+      "local": false,
+      "alive": true,
+      "hp": 10659,
+      "mp": 433840,
+      "speed": 12,
+      "name": "单位名未确认 · RoleId 567898753",
+      "side": "对方"
+    },
+    "10105": {
+      "position": 10105,
+      "roleId": 567898754,
+      "local": false,
+      "alive": true,
+      "hp": 4730,
+      "mp": 433840,
+      "speed": 2,
+      "name": "单位名未确认 · RoleId 567898754",
+      "side": "对方"
+    }
+  },
+  "positionIds": [
+    10001,
+    10002,
+    10003,
+    10004,
+    10005,
+    10101,
+    10102,
+    10103,
+    10104,
+    10105
+  ],
+  "localPosition": 3,
+  "message": "对方主单位与宠物共十槽；单位名未确认",
+  "sampledAt": "2026-10-07T08:41:47.230982+00:00"
+}

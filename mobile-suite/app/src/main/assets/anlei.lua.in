@@ -1,0 +1,79 @@
+local cfg=__CONFIG__
+local key='__codex_anlei_v1'
+local stopKey=key..'.coolUntil'
+local function result(status,removed,why)
+ local f=io.open(cfg.resultPath,'w');if not f then return false end
+ if why~=nil then pcall(function() f:write('reason=',tostring(why):gsub('[\r\n=]',' '),'\n') end) end
+ local ok=pcall(function() f:write('status=',status,'\ncalls=0\nhooksRemoved=',tostring(removed),'\nbindingCleared=true\n') end)
+ pcall(function() f:close() end);return ok
+end
+local function restore(s)
+ if s and s.timer then pcall(scheduler.unscheduleGlobal,s.timer) end
+end
+local function progress(s,status,mapId)
+ if s.lastStatus==status and s.lastMap==mapId and s.lastProgressSent==s.sent then return end
+ s.lastStatus,s.lastMap,s.lastProgressSent=status,mapId,s.sent
+ local f=io.open(cfg.resultPath,'w');if f then f:write('status=',status,'\ncalls=',s.sent,'\nmap=',tostring(mapId or 'unknown'),'\n');f:close() end
+end
+local function finish(s,why,rebind)
+ restore(s);if rawget(_G,key)==s then rawset(_G,key,nil) end
+ if rebind then rawset(_G,stopKey,os.time()+2) end
+ result('stopped',true,why)
+end
+if cfg.mode=='stop' then local s=rawget(_G,key);if s then restore(s);rawset(_G,key,nil) end;result('stopped',true);return 0 end
+if os.time()<(rawget(_G,stopKey) or 0) then return 0 end
+local s=rawget(_G,key)
+if s and s.runId~=cfg.runId then restore(s);rawset(_G,key,nil);rawset(_G,stopKey,os.time()+2);result('stopped',true);return 0 end
+if s then return 0 end
+s={runId=cfg.runId,sent=0,routeIndex=0,sendElapsed=0,leaseElapsed=0,created=os.time()};rawset(_G,key,s)
+local path=cfg.leasePath
+local function leaseAlive()
+ for _,p in ipairs({path,cfg.workerPath}) do
+  local f=io.open(p,'r');if not f then return false end
+  local n=tonumber(f:read('*a'));f:close();if not n or os.time()-n>5 then return false end
+ end
+ return true
+end
+local function route()
+ return {{90,31},{91,31},{92,31},{93,31},{94,31},{94,32},{94,33},{94,34},{94,35},{94,36}}
+end
+local function tick(dt)
+ if rawget(_G,key)~=s then return end
+ dt=type(dt)=='number' and math.max(0,math.min(dt,0.25)) or (1/60)
+ s.leaseElapsed=s.leaseElapsed+dt
+ if s.leaseElapsed>=0.1 then s.leaseElapsed=s.leaseElapsed-0.1;if not leaseAlive() then finish(s,'lease_expired',false);return end end
+ local ok,err=pcall(function()
+  local warOk,inWar=pcall(JudgeIsInWar);if not warOk then s.sendElapsed=0;progress(s,'waiting_role');return end
+  if inWar then s.wasWar=true;s.sendElapsed=0;progress(s,'battle');return end
+  local pOk,p=pcall(function() return LocalPlayerMgr:getInstance() end);if not pOk or not p then s.sendElapsed=0;progress(s,'waiting_role');return end
+  local roleOk,role=pcall(function() return p:getPlayerId() end);if not roleOk or not role or role==0 then s.sendElapsed=0;progress(s,'waiting_role');return end
+  if s.role and s.role~=role then finish(s,'role_changed',true);return end
+  local mmOk,mm=pcall(function() return ClassIns['MapMgr.Ins'] end);if not mmOk or not mm then s.sendElapsed=0;progress(s,'waiting_map');return end
+  local viewOk,view=pcall(function() return mm.m_MapView end);if not viewOk or not view then s.sendElapsed=0;progress(s,'waiting_map');return end
+  local mapOk,mapId,loading=pcall(function() return mm.m_CurMapId,mm.m_IsMapLoading end)
+  if not mapOk or mapId==nil then s.sendElapsed=0;progress(s,'waiting_map');return end
+  if loading then s.sendElapsed=0;progress(s,'waiting_map',mapId);return end
+  local actorOk,actor=pcall(function() return view.m_Player[role] end);if not actorOk or not actor then s.sendElapsed=0;progress(s,'waiting_role',mapId);return end
+  local actorOkState,actorId,localActor=pcall(function() return actor.m_PlayerId,actor.m_IsLocalPlayer end)
+  if not actorOkState or actorId~=role or localActor~=true then s.sendElapsed=0;progress(s,'waiting_role',mapId);return end
+  if not s.role then
+   s.role,s.manager,s.actor=role,mm,actor
+   local b=assert(io.open(cfg.bindingPath,'w'));assert(b:write('runId=',cfg.runId,'\nplayer=',tostring(role):gsub('[\r\n=]',' '),'\nmanager=',tostring(mm):gsub('[\r\n=]',' '),'\n'));assert(b:close())
+  end
+  s.role,s.manager,s.actor=role,mm,actor
+  local resumeFromBattle=s.wasWar
+  if not resumeFromBattle then
+   s.sendElapsed=s.sendElapsed+dt
+   if s.sendElapsed<0.1 then progress(s,'running',mapId);return end
+  end
+  s.sendElapsed=0
+  local points=route();s.routeIndex=s.routeIndex%#points+1;local pt=points[s.routeIndex]
+  local safeOk,safe=pcall(function() return rawget(_G,key)==s and LocalPlayerMgr:getInstance()==p and p:getPlayerId()==role and ClassIns['MapMgr.Ins']==mm and mm.m_CurMapId==mapId and not mm.m_IsMapLoading and view.m_Player[role]==actor and actor.m_PlayerId==role and actor.m_IsLocalPlayer==true and not JudgeIsInWar() end)
+  if not safeOk or not safe then s.sendElapsed=0;progress(s,'waiting_map',mapId);return end
+  mm:sendPlayerPos(pt[1],pt[2]);s.wasWar=false;s.sent=s.sent+1;progress(s,'running',mapId)
+ end)
+ if not ok then finish(s,tostring(err),true) end
+end
+s.timer=scheduler.scheduleGlobal(tick,0)
+result('waiting',true)
+return 0

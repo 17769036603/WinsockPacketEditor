@@ -41,6 +41,7 @@
     <Compile Include="..\..\WPELibrary\Lib\MountSpeed\MountRefineStateMachine.cs" />
     <Compile Include="..\..\WPELibrary\Lib\MountSpeed\MountRefineRunLogStore.cs" />
     <Compile Include="..\..\WPELibrary\Lib\MountSpeed\MountRefineA050PacketTemplate.cs" />
+    <Compile Include="..\..\WPELibrary\Lib\MountSpeed\MountRideShapeResolver.cs" />
     <Compile Include="..\..\WPELibrary\Lib\MountSpeed\TestAdapters.cs" />
     <Compile Include="Program.cs" />
   </ItemGroup>

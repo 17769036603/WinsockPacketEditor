@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -1758,6 +1758,115 @@ public class Socket_Robot
                 return true;
             }
 
+            // 预设配置了目标坐骑形态时，坐骑实例 ID 由服务端临时下发并会变化，
+            // 因此先用一次只读快照（不要求完整炼化卡）解析出当前实例 ID，
+            // 再把它作为 preferredRefineRideInstanceId 走既有 refine 预检路径。
+            // 形态为空时不做额外读取、不调用形态解析，旧预设仍完全沿用包内实例 ID。
+            if (hasMountRefineTarget)
+            {
+                WPELibrary.Lib.MountSpeed.MountStatusReadOnlySnapshot shapeSnapshot = null;
+                if (WPELibrary.Lib.MountSpeed.MountRideShapeResolver.RequiresShapeResolution(
+                        preset.TargetRideShapeId))
+                {
+                    WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReadResult shapeReadResult;
+                    try
+                    {
+                        shapeReadResult = reader.ReadSnapshotAsync(
+                                CancellationToken.None,
+                                false,
+                                null)
+                            .GetAwaiter()
+                            .GetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        this.LastStartFailureReason =
+                            "坐骑形态解析失败：当前坐骑只读读取异常：" + ex.Message +
+                            "；已停止且不会发送。";
+                        Socket_Operation.DoLog(
+                            nameof(TryPrepareMountSpeedRuntime),
+                            this.LastStartFailureReason);
+                        this.WriteMountRefineDiagnostic(
+                            "preflight_failed",
+                            "mount_ride_shape_snapshot_exception",
+                            this.LastStartFailureReason,
+                            null,
+                            false);
+                        return false;
+                    }
+
+                    if (shapeReadResult == null || !shapeReadResult.Succeeded ||
+                        shapeReadResult.Snapshot == null || !shapeReadResult.Snapshot.IsValid)
+                    {
+                        this.LastStartFailureReason =
+                            "坐骑形态解析失败：当前坐骑只读读取失败：" +
+                            (shapeReadResult == null ||
+                             string.IsNullOrWhiteSpace(shapeReadResult.Error)
+                                ? "未返回有效坐骑快照。"
+                                : shapeReadResult.Error) +
+                            "；已停止且不会发送。";
+                        Socket_Operation.DoLog(
+                            nameof(TryPrepareMountSpeedRuntime),
+                            this.LastStartFailureReason);
+                        this.WriteMountRefineDiagnostic(
+                            "preflight_failed",
+                            "mount_ride_shape_snapshot_invalid",
+                            this.LastStartFailureReason,
+                            shapeReadResult == null ? null : shapeReadResult.Snapshot,
+                            false);
+                        return false;
+                    }
+
+                    shapeSnapshot = shapeReadResult.Snapshot;
+                }
+
+                string resolvedRefineRideInstanceId;
+                bool usedShapeResolution;
+                string shapeResolveErrorCode;
+                string shapeResolveErrorMessage;
+                if (!WPELibrary.Lib.MountSpeed.MountRideShapeResolver
+                        .TryResolvePreferredRideInstanceId(
+                            shapeSnapshot,
+                            preset.TargetRideShapeId,
+                            preferredRefineRideInstanceId,
+                            out resolvedRefineRideInstanceId,
+                            out usedShapeResolution,
+                            out shapeResolveErrorCode,
+                            out shapeResolveErrorMessage))
+                {
+                    this.LastStartFailureReason =
+                        "坐骑形态解析失败：" + shapeResolveErrorMessage +
+                        "；已停止且不会发送。";
+                    Socket_Operation.DoLog(
+                        nameof(TryPrepareMountSpeedRuntime),
+                        this.LastStartFailureReason);
+                    this.WriteMountRefineDiagnostic(
+                        "preflight_failed",
+                        shapeResolveErrorCode,
+                        this.LastStartFailureReason,
+                        shapeSnapshot,
+                        false);
+                    return false;
+                }
+
+                preferredRefineRideInstanceId = resolvedRefineRideInstanceId;
+                if (usedShapeResolution)
+                {
+                    this._parameters["MountRefinePreferredRideInstanceId"] =
+                        preferredRefineRideInstanceId;
+                    this.WriteMountRefineDiagnostic(
+                        "shape_resolved",
+                        "mount_ride_shape_resolved",
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "已按目标坐骑形态 {0} 解析出当前坐骑实例 {1}，本次炼化按该实例绑定。",
+                            preset.TargetRideShapeId.Value,
+                            preferredRefineRideInstanceId),
+                        shapeSnapshot,
+                        true);
+                }
+            }
+
             WPELibrary.Lib.MountSpeed.MountStatusAndroidSnapshotReadResult result;
             try
             {
@@ -2659,19 +2768,22 @@ public class Socket_Robot
 
             string robotName = (this.RobotName ?? string.Empty).Trim();
             string selectedRefineRideInstanceId = string.Empty;
-            if (string.Equals(
-                robotName,
-                Socket_Cache.Robot.ThirdRideRefinePresetName,
-                StringComparison.Ordinal))
-            {
-                selectedRefineRideInstanceId = this.GetParameter<string>(
-                    "MountRefinePreferredRideInstanceId",
-                    string.Empty);
-            }
-            else if (string.Equals(
-                robotName,
-                Socket_Cache.Robot.FourthRideRefinePresetName,
-                StringComparison.Ordinal))
+            // 三/四坐骑洗炼保持精确名称匹配（Ordinal），不得改成前缀或模糊匹配。
+            bool usesExactRideRefinePresetName =
+                string.Equals(
+                    robotName,
+                    Socket_Cache.Robot.ThirdRideRefinePresetName,
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    robotName,
+                    Socket_Cache.Robot.FourthRideRefinePresetName,
+                    StringComparison.Ordinal);
+            // 预设配置了目标坐骑形态时，实例 ID 已在启动预检里解析为当前实例，
+            // 这里必须与预检统一使用 refine_selected 绑定，否则状态机会继续要求骑乘状态。
+            // 未配置形态的旧预设仍只按精确名称走 selected，其余一律走 bound，行为不变。
+            if (usesExactRideRefinePresetName ||
+                WPELibrary.Lib.MountSpeed.MountRideShapeResolver.RequiresShapeResolution(
+                    preset.TargetRideShapeId))
             {
                 selectedRefineRideInstanceId = this.GetParameter<string>(
                     "MountRefinePreferredRideInstanceId",
